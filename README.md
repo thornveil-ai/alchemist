@@ -1,18 +1,12 @@
-<div align="center">
-
 # Alchemist
 
-### Turn any C codebase into beautiful, idiomatic, verified-correct Rust. In one command.
-
-*Algorithm-aware C→Rust translation that runs entirely on your own GPU.*
+> **Public OSS. Research-prototype.** Apache-2.0 algorithm-aware C-to-Rust translation that runs entirely on your own GPU. See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the honest maturity assessment.
 
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
 [![tests](https://img.shields.io/badge/tests-543%2F543-success.svg)](#testing)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
-
-</div>
 
 ---
 
@@ -134,7 +128,7 @@ No API keys. No network calls outside your LAN.
 
 ---
 
-## Quickstart
+## Quick Start
 
 ### Translate a whole codebase
 
@@ -249,6 +243,18 @@ docs/
 
 tests/                            201 tests pass — unit + live cargo + live gcc
 .github/workflows/                CI across Ubuntu + Windows, py3.11 + 3.12
+```
+
+```mermaid
+graph LR
+    C[C source] --> S1[1 Analyzer<br/>tree-sitter + call graph]
+    S1 --> S2[2 Extractor<br/>per-fn spec + validator]
+    S2 --> S3[3 Architect<br/>crate workspace design]
+    S3 --> S4[4 Implementer<br/>TDD + anti-stub + scrubber]
+    S4 --> S5[5 Verifier<br/>compile/anti-stub/test/differential]
+    S5 --> S6[6 Reporter<br/>metrics + dashboards]
+    S5 -.gate fails.-> Refuse[Pipeline refuses to claim success]
+    S6 --> R[Rust crate]
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for a detailed walk-through of the data flow, LLM boundaries, and extension points.
@@ -419,10 +425,8 @@ Apache-2.0. See [`LICENSE`](LICENSE).
 
 ---
 
-<div align="center">
+Alchemist is an experiment in what C-to-Rust could be if we stopped pretending syntax was enough. If you're translating a codebase, try it. If you hit a pattern that doesn't convert cleanly, [open an issue](https://github.com/thornveil-ai/alchemist/issues) — that's how the roadmap grows.
 
-**Alchemist is an experiment in what C-to-Rust could be if we stopped pretending syntax was enough.**
+---
 
-If you're translating a codebase, try it. If you hit a pattern that doesn't convert cleanly, [open an issue](https://github.com/thornveil-ai/alchemist/issues) — that's how the roadmap grows.
-
-</div>
+A Thornveil system. See [other Thornveil systems](https://github.com/thornveil-ai).
