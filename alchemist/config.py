@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 class AlchemistConfig(BaseModel):
     """Runtime configuration — loaded from env vars, CLI flags, or .alchemist/config.toml."""
 
-    # Local LLM endpoint (RigRun vLLM server)
+    # Local LLM endpoint (vLLM server)
     local_endpoint: str = Field(
         default_factory=lambda: os.environ.get(
             "ALCHEMIST_ENDPOINT", "http://localhost:8090/v1"

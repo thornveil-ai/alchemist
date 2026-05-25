@@ -73,7 +73,7 @@ class CachedContext:
 
 
 class AlchemistLLM:
-    """Local LLM client for Alchemist — all inference on RigRun."""
+    """Local LLM client for Alchemist — all inference on a local vLLM server."""
 
     def __init__(self, config: AlchemistConfig | None = None):
         self.config = config or AlchemistConfig()

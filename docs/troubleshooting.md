@@ -17,7 +17,7 @@ On Windows, use the `rustup-init.exe` installer from [rustup.rs](https://rustup.
 - **macOS**: `xcode-select --install`
 
 ### `local LLM server` unreachable
-Start the RigRun server. Health check: `curl http://your-llm-host:8090/health` must return `"deep": "up"`.
+Start the vLLM server. Health check: `curl http://your-llm-host:8090/health` must return `"deep": "up"`.
 
 If the host IP differs for your setup, set `ALCHEMIST_ENDPOINT=http://your-host:8090/v1` before running Alchemist.
 
