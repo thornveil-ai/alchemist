@@ -1,7 +1,8 @@
-"""Helpers for converting Pydantic models to tool_use schemas.
+"""Helpers for converting Pydantic models to JSON-Schema for structured output.
 
-This module bridges Pydantic model definitions to Claude's tool_use format,
-enabling structured output from LLM calls.
+This module bridges Pydantic model definitions to JSON Schema, enabling
+structured output from local OpenAI-compatible LLM calls (JSON mode +
+schema-in-prompt + Pydantic validation).
 """
 
 from __future__ import annotations
@@ -12,15 +13,15 @@ from pydantic import BaseModel
 
 
 def pydantic_to_tool_schema(model_class: type[BaseModel]) -> dict:
-    """Convert a Pydantic model to a JSON Schema suitable for Claude tool_use.
+    """Convert a Pydantic model to a JSON Schema suitable for structured output.
 
-    Claude's tool_use accepts JSON Schema for the input_schema field.
+    The schema is embedded in the prompt (JSON mode + schema-in-prompt);
     Pydantic's model_json_schema() produces compatible output.
     """
     schema = model_class.model_json_schema()
 
     # Remove $defs reference wrapper if present — inline definitions
-    # Claude handles flat schemas better than deeply nested $ref schemas
+    # flat schemas validate more reliably than deeply nested $ref schemas
     if "$defs" in schema:
         schema = _resolve_refs(schema, schema.get("$defs", {}))
         schema.pop("$defs", None)

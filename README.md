@@ -64,7 +64,7 @@ The methodology was validated by hand on **Meridian**, a from-scratch Rust re-im
 
 **1. It refuses to ship broken code.** Every stage has a hard gate. The spec validator catches `BASE = 255` before anyone writes a line of Rust. The anti-stub detector rejects `unimplemented!()` and the model's favorite evasion: `// Since we don't have the actual algorithm, we use a simple heuristic`. The differential gate runs 10,000 random inputs through both the C reference and the Rust output. If *any* gate fails, `alchemist translate` exits non-zero with a report telling you exactly which one.
 
-**2. It runs entirely on your hardware.** No cloud API. No per-token bill. No data egress. The reference setup is a single RTX PRO 6000 running Qwen3.5-122B via vLLM. Your C source never leaves your LAN.
+**2. It runs entirely on your hardware.** No cloud API. No per-token bill. No data egress. The reference setup is a single RTX PRO 6000 running Gemma 4 31B Dense (Google's open-weights model) via vLLM. Your C source never leaves your LAN.
 
 **3. It's test-driven from the first pass.** Stage 4 is TDD: emit the signatures as stubs, emit failing tests from the standards catalog (RFC 1950 Adler-32 vectors, NIST CAVP AES vectors, etc.), then per-function fill in the real impl with `cargo test` as the supervisor. The model never sees green without actually being green.
 
@@ -122,7 +122,7 @@ alchemist doctor
 - **Python** 3.11+
 - **Rust** 1.75+ (with `cargo`, `rustc`, `clippy`)
 - **A C toolchain** (gcc / clang / MinGW) — needed to build the C reference DLL for differential testing
-- **A local LLM server** serving a strong code model. The reference config runs **Qwen3.5-122B** via vLLM on port 8090. Any OpenAI-compatible endpoint serving a ≥70B code model works — set `ALCHEMIST_ENDPOINT` to point at it.
+- **A local LLM server** serving a strong code model. The reference config runs **Gemma 4 31B Dense** (Google's open-weights model) via vLLM on port 8090. Any OpenAI-compatible endpoint serving a capable code model (≈30B class or larger) works — set `ALCHEMIST_ENDPOINT` to point at it.
 
 No API keys. No network calls outside your LAN.
 

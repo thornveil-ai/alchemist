@@ -112,7 +112,7 @@ Stages 4A (skeleton) and 4B (tests) are fully deterministic. Stage 5 runs no LLM
 Key invariants:
 - An 8-character nonce is prepended to every user message so server-side response caches miss.
 - `temperature=0.15` is used everywhere to bypass vLLM prefix-cache-at-zero behavior.
-- Both `message.content` and `message.reasoning` fields are read (Qwen3.5 reasoning-parser quirk).
+- Both `message.content` and `message.reasoning` fields are read (defensive handling for reasoning-style model servers).
 - Per-function Stage 2 checkpoints land in `.alchemist/specs/_functions/<mod>/<fn>.json` — the pipeline is resumable across crashes.
 
 ## Extension points
@@ -124,5 +124,5 @@ Key invariants:
 ## What does NOT belong in the core
 
 - Hand-tuned algorithm ports. If you've got a verified-correct Rust implementation, ship it as its own crate and skip Alchemist — that's what it's FOR producing.
-- Anything that calls cloud APIs. The "local 122B only" invariant is non-negotiable.
+- Anything that calls cloud APIs. The "local open-weights only" invariant is non-negotiable.
 - Language-specific hacks (adding string-mode patches, special-casing function names). The system works because every stage is driven by schemas, not string-matching. Adding a "when the function name contains X" hack anywhere is a signal the schema is missing a field.

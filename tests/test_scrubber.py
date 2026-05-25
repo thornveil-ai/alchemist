@@ -20,7 +20,7 @@ from alchemist.implementer.scrubber import (
 class TestKeywordTypos:
     """Model-induced doubled-letter typos: `ppub` → `pub`, `ffn` → `fn`, etc.
 
-    These appear when the 122B model accidentally repeats the first letter
+    These appear when the model accidentally repeats the first letter
     of a keyword. Observed in zlib generation.
     """
 

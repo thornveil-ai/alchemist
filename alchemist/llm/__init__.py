@@ -1,1 +1,1 @@
-"""LLM integration layer — Claude API client, structured output, prompt caching."""
+"""LLM integration layer — local OpenAI-compatible client, structured output, prompt caching."""

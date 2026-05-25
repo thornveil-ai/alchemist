@@ -1,10 +1,10 @@
-"""LLM client for Alchemist — local-first via RigRun (Qwen3.5-122B).
+"""LLM client for Alchemist — local-first (Gemma 4 31B Dense via vLLM).
 
 All inference runs on the local GPU via vLLM's OpenAI-compatible API.
 No cloud API calls. No data leaves the machine.
 
 For structured output, we use JSON mode + schema-in-prompt + Pydantic validation
-instead of tool_use (which is Claude-specific).
+instead of vendor-specific tool/function-calling formats.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import httpx
 from alchemist.config import AlchemistConfig
 
 
-# Global concurrency cap across ALL AlchemistLLM instances. 122B decode is
+# Global concurrency cap across ALL AlchemistLLM instances. Single-GPU decode is
 # latency-heavy; more than a couple of in-flight requests on a single GPU
 # queues at the server and eventually hits 503 when the buffer fills.
 # Override with ALCHEMIST_MAX_INFLIGHT=N for beefier backends.
@@ -261,7 +261,7 @@ class AlchemistLLM:
         elapsed = int((time.monotonic() - start) * 1000)
 
         msg = data["choices"][0]["message"]
-        # Qwen3.5 with reasoning parser puts output in 'reasoning' when thinking,
+        # Some reasoning-style model servers put output in 'reasoning' when thinking,
         # and 'content' may be null. Grab whichever has data.
         content = msg.get("content") or msg.get("reasoning") or ""
         usage = data.get("usage", {})
@@ -389,7 +389,7 @@ class AlchemistLLM:
         """
         text = text.strip()
 
-        # Strip thinking tags if present (Qwen3.5 uses <think>...</think>)
+        # Strip thinking tags if present (some reasoning-style models emit <think>...</think>)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         # Try direct parse
