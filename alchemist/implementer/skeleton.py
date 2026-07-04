@@ -592,6 +592,11 @@ def _lib_rs_for(
     lines.append("#![allow(unused_imports)]")
     if no_std:
         lines.append("#![no_std]")
+        # `#[macro_use]` brings the alloc macros (vec!, format!) into scope
+        # crate-wide. Without it, a `#![no_std]` module that returns a
+        # Vec<u8> and builds it with `vec![...]` fails with "cannot find
+        # macro `vec`" — the type import alone isn't enough for the macro.
+        lines.append("#[macro_use]")
         lines.append("extern crate alloc;")
         lines.append("use alloc::vec::Vec;")
         lines.append("use alloc::string::String;")
