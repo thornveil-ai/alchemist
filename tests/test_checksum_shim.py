@@ -34,13 +34,15 @@ from alchemist.extractor.fuzz_vectors import (
 from alchemist.extractor.schemas import AlgorithmSpec, Parameter
 
 
-DLL_PATH = (
-    Path(__file__).parent.parent
-    / "subjects" / "zlib" / "shim" / "zlib_checksum_shim.dll"
-)
+_SHIM_DIR = Path(__file__).parent.parent / "subjects" / "zlib" / "shim"
+_CANDIDATES = [
+    _SHIM_DIR / "zlib_checksum_shim.dll",       # Windows (MinGW)
+    _SHIM_DIR / "libzlib_checksum_shim.so",     # Linux
+]
+DLL_PATH = next((p for p in _CANDIDATES if p.exists()), _CANDIDATES[0])
 
 pytestmark = pytest.mark.skipif(
-    not DLL_PATH.exists(), reason="zlib_checksum_shim.dll not built"
+    not DLL_PATH.exists(), reason="checksum shim not built for this platform"
 )
 
 
@@ -77,7 +79,7 @@ def test_locator_finds_dll(monkeypatch):
     monkeypatch.chdir(Path(__file__).parent.parent)
     found = locate_zlib_checksum_shim()
     assert found is not None
-    assert found.name == "zlib_checksum_shim.dll"
+    assert found.name in ("zlib_checksum_shim.dll", "libzlib_checksum_shim.so")
 
 
 # ---------- Known anchors: shim == corrected pure-Python reference ----------

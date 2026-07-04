@@ -181,10 +181,19 @@ def test_emit_ffi_module_escapes_rust_keywords_in_params():
     assert "r#match: *const c_char" in code
 
 
-def test_emit_build_rs():
-    out = emit_build_rs(Path("C:/Users/jesse/verify"), "z")
-    assert "cargo:rustc-link-search=native=C:/Users/jesse/verify" in out
+def test_emit_build_rs(tmp_path):
+    out = emit_build_rs(tmp_path, "z")
+    # Path must be absolute (build.rs runs with the consuming build's cwd)
+    # and forward-slashed for the emitted Rust source.
+    expected = str(tmp_path.resolve()).replace("\\", "/")
+    assert f"cargo:rustc-link-search=native={expected}" in out
     assert "cargo:rustc-link-lib=dylib=z" in out
+
+
+def test_emit_build_rs_resolves_relative_paths():
+    out = emit_build_rs(Path("verify"), "z")
+    rendered = out.split("native=", 1)[1].split('"', 1)[0]
+    assert Path(rendered).is_absolute()
 
 
 def test_emit_cargo_toml_basic():
