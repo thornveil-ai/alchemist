@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **State-mutator oracle proven on a Huffman tree-builder (Phase 2).** The
+  first *stateful* function verified end-to-end: `pqdownheap` (zlib's heap
+  sift) is model-written by Gemma 4 31B and byte-exact against a compiled-C
+  state oracle across 12 fuzzed vectors. The path: the shim exposes the
+  Huffman heap state (`shim_set/get_heap`, `heap_len`, `depth`) and a
+  `shim_run_pqdownheap` runner (verified 200/200 against a Python reference);
+  `fuzz_pqdownheap` drives it with valid fuzzed heaps and renders the tree as
+  a `Vec<TreeElement>` literal; the state-mutator test emitter borrows the
+  Vec so it coerces to the `tree: &[TreeElement]` slice the function takes.
+  This works only because the tree types are now coherent (below) and
+  because the fill feeds the model the C `smaller` macro the function
+  references (the SipHash lesson). Proof-of-life for the whole Huffman
+  tree-builder family.
 - **Whole-workspace type coherence (`architect/type_unifier.py`).** The
   extractor infers a Rust type per parameter/field independently, so one C
   type fractures into several incompatible Rust types across the workspace —
