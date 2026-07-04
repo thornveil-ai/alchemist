@@ -191,10 +191,19 @@ def _call_ident(expr: str, what: str) -> str:
     return m.group(1)
 
 
+_INT_RETURNS = {"u8", "u16", "u32", "u64", "usize", "i32", "i64"}
+_SEED_TYPES = {"u8", "u16", "u32", "u64", "usize"}
+
+
 def _resolve_checksum_rust(
     h: AlgorithmHarness, api: dict[str, list[RustFn]],
-) -> tuple[str, RustFn]:
-    """Build the body of `rust_<algo>(data: &[u8]) -> u32` from the real API."""
+) -> tuple[str, str, RustFn]:
+    """Resolve `rust_<algo>(data: &[u8]) -> RET` against the real API.
+
+    Returns (call_body, ret_type, fn). RET follows the discovered function —
+    checksums come in u16 (fletcher) through u64 widths, and the C wrapper
+    casts to the same RET so both sides compare at identical width.
+    """
     seed = h.seed or 0
     candidates = [h.algorithm, f"{h.algorithm}_z"]
     tried: list[str] = []
@@ -205,15 +214,18 @@ def _resolve_checksum_rust(
             continue
         tys = [t for _, t in fn.params]
         path = f"{fn.crate_ident}::{fn.name}"
-        if fn.ret not in _INT32:
-            tried.append(f"{cand}: returns {fn.ret or '()'}, need u32")
+        if fn.ret not in _INT_RETURNS:
+            tried.append(f"{cand}: returns {fn.ret or '()'}, need an integer type")
             continue
-        if len(tys) == 3 and tys[0] in _INT32 and tys[1] == _BYTESLICE and tys[2] == "usize":
-            return f"{path}({seed}u32, data, data.len())", fn
-        if len(tys) == 2 and tys[0] in _INT32 and tys[1] == _BYTESLICE:
-            return f"{path}({seed}u32, data)", fn
+        if (len(tys) == 3 and tys[0] in _SEED_TYPES and tys[1] == _BYTESLICE
+                and tys[2] == "usize"):
+            return f"{path}({seed}{tys[0]}, data, data.len())", fn.ret, fn
+        if len(tys) == 2 and tys[0] in _SEED_TYPES and tys[1] == _BYTESLICE:
+            return f"{path}({seed}{tys[0]}, data)", fn.ret, fn
+        if len(tys) == 2 and tys[0] == _BYTESLICE and tys[1] == "usize":
+            return f"{path}(data, data.len())", fn.ret, fn
         if len(tys) == 1 and tys[0] == _BYTESLICE:
-            return f"{path}(data)", fn
+            return f"{path}(data)", fn.ret, fn
         tried.append(f"{cand}: no adapter for signature ({', '.join(tys)}) -> {fn.ret}")
     raise AdapterError(
         f"cannot adapt rust side of '{h.algorithm}' (category {h.category}): "
@@ -221,18 +233,36 @@ def _resolve_checksum_rust(
     )
 
 
-def _resolve_checksum_c(h: AlgorithmHarness, ffi_crate: str, c_fn_names: set[str]) -> str:
+def _resolve_checksum_c(
+    h: AlgorithmHarness,
+    ffi_crate: str,
+    c_signatures: dict,
+    ret: str,
+) -> str:
     seed = h.seed or 0
-    if h.algorithm not in c_fn_names:
+    sig = c_signatures.get(h.algorithm)
+    if sig is None:
         raise AdapterError(
             f"C reference does not export '{h.algorithm}' "
-            f"(available: {', '.join(sorted(c_fn_names)) or 'none'})"
+            f"(available: {', '.join(sorted(c_signatures)) or 'none'})"
         )
-    # Raw extern shape (auto_ffi): fn <name>(seed: c_ulong, buf: *const c_uchar,
-    # len: c_uint) -> c_ulong. `as _` casts infer from the extern declaration.
-    return (
-        f"unsafe {{ {ffi_crate}::{h.algorithm}({seed} as _, data.as_ptr(), "
-        f"data.len() as _) as u32 }}"
+    nparams = len(sig.params)
+    # `as _` casts infer argument types from the extern declaration; the
+    # result is cast to the SAME width the rust wrapper returns so the
+    # comparison is width-identical on both sides.
+    if nparams == 3:
+        return (
+            f"unsafe {{ {ffi_crate}::{h.algorithm}({seed} as _, data.as_ptr(), "
+            f"data.len() as _) as {ret} }}"
+        )
+    if nparams == 2:
+        return (
+            f"unsafe {{ {ffi_crate}::{h.algorithm}(data.as_ptr(), "
+            f"data.len() as _) as {ret} }}"
+        )
+    raise AdapterError(
+        f"C export '{h.algorithm}' has {nparams} params — no checksum wrapper "
+        f"shape for that arity"
     )
 
 
@@ -363,7 +393,7 @@ def plan_adapters(
     *,
     rust_workspace: Path,
     ffi_crate_name: str,
-    c_fn_names: set[str],
+    c_signatures: list | None = None,
     packages: list[str] | None = None,
 ) -> AdapterPlan:
     """Resolve every harness against the discovered Rust API and C exports.
@@ -371,25 +401,28 @@ def plan_adapters(
     Unresolvable harnesses are collected, not raised: the caller emits
     failing tests for them so the gate stays red without hiding the ones
     that CAN be verified. `packages` restricts API discovery to the same
-    crates the compile/test gates are scoped to.
+    crates the compile/test gates are scoped to. `c_signatures` is the
+    DifferentialConfig's c_public_signatures list — wrapper shapes follow
+    the declared C arity, not an assumed one.
     """
     api = discover_rust_api(rust_workspace, packages=packages)
     ffi_ident = ffi_crate_name.replace("-", "_")
+    c_sigs = {s.name: s for s in (c_signatures or [])}
     plan = AdapterPlan()
     for h in harnesses:
         try:
             if h.category in ("checksum", "hash"):
-                rust_body, fn = _resolve_checksum_rust(h, api)
-                c_body = _resolve_checksum_c(h, ffi_ident, c_fn_names)
+                rust_body, ret, fn = _resolve_checksum_rust(h, api)
+                c_body = _resolve_checksum_c(h, ffi_ident, c_sigs, ret)
                 rust_wrapper = (
                     f"/// Full effect footprint of {fn.crate}::{fn.name}: pure fn, "
                     f"footprint == return value.\n"
-                    f"pub fn rust_{h.algorithm}(data: &[u8]) -> u32 {{\n"
+                    f"pub fn rust_{h.algorithm}(data: &[u8]) -> {ret} {{\n"
                     f"    {rust_body}\n"
                     f"}}\n"
                 )
                 c_wrapper = (
-                    f"pub fn c_{h.algorithm}(data: &[u8]) -> u32 {{\n"
+                    f"pub fn c_{h.algorithm}(data: &[u8]) -> {ret} {{\n"
                     f"    {c_body}\n"
                     f"}}\n"
                 )
@@ -417,11 +450,11 @@ def plan_adapters(
                 )
                 c_comp = _c_compression_wrapper(
                     c_c_name, c_c_name.removeprefix("c_"), ffi_ident,
-                    c_fn_names, is_compress=True,
+                    set(c_sigs), is_compress=True,
                 )
                 c_decomp = _c_compression_wrapper(
                     c_d_name, c_d_name.removeprefix("c_"), ffi_ident,
-                    c_fn_names, is_compress=False,
+                    set(c_sigs), is_compress=False,
                 )
                 plan.resolved.append(ResolvedAdapter(
                     harness=h,

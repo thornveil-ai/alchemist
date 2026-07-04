@@ -231,6 +231,9 @@ def parse_header(header_text: str, *, only_names: set[str] | None = None) -> lis
 def _strip_comments(text: str) -> str:
     text = re.sub(r"//[^\n]*", "", text)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    # Preprocessor lines (#ifdef/#endif/#include...) would otherwise bleed
+    # into the return-type capture of the prototype regex.
+    text = re.sub(r"^\s*#[^\n]*$", "", text, flags=re.MULTILINE)
     return text
 
 

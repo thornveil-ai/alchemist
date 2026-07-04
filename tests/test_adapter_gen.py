@@ -13,6 +13,20 @@ from alchemist.verifier.adapter_gen import (
     plan_adapters,
 )
 from alchemist.verifier.proptest_gen import AlgorithmHarness
+from alchemist.verifier.auto_ffi import CSignature
+
+
+def _chk_sig(name: str) -> CSignature:
+    return CSignature(name=name, return_type="uint32_t",
+                      params=[("seed", "uint32_t"), ("buf", "const uint8_t *"),
+                              ("len", "size_t")])
+
+
+def _cmp_sig(name: str) -> CSignature:
+    return CSignature(name=name, return_type="int",
+                      params=[("dest", "Bytef *"), ("destLen", "uLongf *"),
+                              ("source", "const Bytef *"), ("sourceLen", "uLong")])
+
 
 
 def _write_crate(root: Path, pkg: str, lib_rs: str) -> None:
@@ -79,7 +93,7 @@ def test_plan_resolves_checksum_against_real_signatures(tmp_path):
         [_checksum_harness("adler32", 1), _checksum_harness("crc32", 0)],
         rust_workspace=tmp_path,
         ffi_crate_name="c_ref",
-        c_fn_names={"adler32", "crc32"},
+        c_signatures=[_chk_sig("adler32"), _chk_sig("crc32")],
     )
     assert not plan.unresolved
     bodies = "\n".join(r.rust_wrapper for r in plan.resolved)
@@ -100,7 +114,7 @@ def test_ambiguous_symbol_refused_not_silently_bound(tmp_path):
         [_checksum_harness("crc32", 0)],
         rust_workspace=tmp_path,
         ffi_crate_name="c_ref",
-        c_fn_names={"crc32"},
+        c_signatures=[_chk_sig("crc32")],
     )
     assert not plan.resolved
     assert plan.unresolved
@@ -134,7 +148,7 @@ def test_compression_resolves_full_footprint_wrappers(tmp_path):
     _write_crate(tmp_path, "zlib-compression", _COMPRESSION_LIB)
     plan = plan_adapters(
         [_deflate_harness()], rust_workspace=tmp_path, ffi_crate_name="c_zlib_ref",
-        c_fn_names={"compress", "uncompress"},
+        c_signatures=[_cmp_sig("compress"), _cmp_sig("uncompress")],
     )
     assert not plan.unresolved, plan.unresolved
     r = plan.resolved[0]
@@ -155,7 +169,7 @@ def test_compression_without_rust_impl_lands_in_unresolved(tmp_path):
     _write_crate(tmp_path, "zlib-checksum", _CHECKSUM_LIB)  # no compression fns
     plan = plan_adapters(
         [_deflate_harness()], rust_workspace=tmp_path, ffi_crate_name="c_ref",
-        c_fn_names={"compress", "uncompress"},
+        c_signatures=[_cmp_sig("compress"), _cmp_sig("uncompress")],
     )
     assert not plan.resolved
     assert plan.unresolved and plan.unresolved[0][0].algorithm == "deflate"
@@ -170,7 +184,7 @@ def test_unadaptable_category_lands_in_unresolved(tmp_path):
     )
     plan = plan_adapters(
         [h], rust_workspace=tmp_path, ffi_crate_name="c_ref",
-        c_fn_names={"kalman"},
+        c_signatures=[_chk_sig("kalman")],
     )
     assert not plan.resolved
     assert plan.unresolved and "no adapter template" in plan.unresolved[0][1]
@@ -213,7 +227,7 @@ def test_emit_adapter_lib_contains_both_sides(tmp_path):
     plan = plan_adapters(
         [_checksum_harness("crc32", 0)],
         rust_workspace=tmp_path, ffi_crate_name="c_zlib_ref",
-        c_fn_names={"crc32"},
+        c_signatures=[_chk_sig("crc32")],
     )
     lib = emit_adapter_lib(plan, ffi_crate_name="c_zlib_ref")
     assert "pub fn c_crc32(data: &[u8]) -> u32" in lib

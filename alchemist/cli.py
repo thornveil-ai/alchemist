@@ -180,12 +180,6 @@ def verify(
             diff_config = zlib_diff_config(c_source_dir=c_source)
             if package:
                 diff_config.packages = list(package)
-    elif package:
-        console.print(
-            "[yellow]--package given but no differential config is auto-selectable "
-            "for this subject; the differential gate will refuse.[/yellow]"
-        )
-
     specs = None
     specs_error = None
     if (c_source / ".alchemist" / "specs").is_dir():
@@ -197,6 +191,22 @@ def verify(
             # must FAIL on this, not report itself not-run.
             specs_error = str(e)
             console.print(f"[yellow]could not load specs for semantic gate: {e}[/yellow]")
+
+    if diff_config is None and specs:
+        from alchemist.verifier.auto_config import build_diff_config
+        diff_config = build_diff_config(c_source, specs)
+        if diff_config is not None:
+            if package:
+                diff_config.packages = list(package)
+            console.print(
+                f"[cyan]auto-generated differential config: "
+                f"{len(diff_config.harnesses)} harness(es)[/cyan]"
+            )
+        elif package:
+            console.print(
+                "[yellow]--package given but no differential config could be "
+                "derived for this subject; the differential gate will refuse.[/yellow]"
+            )
 
     report = verify_workspace(out, diff_config=diff_config, specs=specs,
                               specs_error=specs_error)

@@ -456,6 +456,19 @@ def run_verify_stage(
             console.print(
                 f"[yellow]verify: could not load specs for semantic gate: {e}[/yellow]"
             )
+    if diff_config is None and specs:
+        # No curated config for this subject — derive one from its headers
+        # and specs (subject-compiled oracle, recognized checksum shapes).
+        # None back means nothing was configurable and the differential
+        # gate refuses, which is the correct fail-closed outcome.
+        from alchemist.verifier.auto_config import build_diff_config
+        diff_config = build_diff_config(Path(c_source_dir), specs)
+        if diff_config is not None:
+            console.print(
+                f"[cyan]verify: auto-generated differential config — "
+                f"{len(diff_config.harnesses)} harness(es), oracle from "
+                f"{len(diff_config.c_sources)} C source file(s)[/cyan]"
+            )
     report = verify_workspace(
         output, diff_config=diff_config, specs=specs, specs_error=specs_error,
         refuse_without_diff=refuse_without_diff,

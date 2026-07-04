@@ -1494,6 +1494,31 @@ class TDDGenerator:
         except ImportError:
             ZLIB_CHECKSUM_SHIM_PURE_BINDINGS = {}
 
+        # Non-zlib subjects: the oracle is the subject's own compiled C
+        # (built by _locate_c_dll) and the bindings derive from its headers.
+        # The zlib shim/pure-reference registries are zlib-shaped and must
+        # not leak — a name collision would fuzz the wrong ABI.
+        src_root = getattr(self, "_source_root", None)
+        generic_subject = (
+            src_root is not None and "zlib" not in Path(src_root).name.lower()
+        )
+        if generic_subject:
+            from alchemist.verifier.auto_config import (
+                collect_subject_signatures,
+                make_checksum_bindings,
+            )
+            all_algs = [a for m in specs for a in (m.algorithms or [])]
+            subject_bindings = make_checksum_bindings(
+                collect_subject_signatures(Path(src_root)), all_algs,
+            )
+            subject_pure_refs: dict = {}
+            shim_dll = None
+            inflate_shim_dll = None
+            checksum_shim_dll = None
+        else:
+            subject_bindings = ZLIB_BINDINGS
+            subject_pure_refs = ZLIB_PURE_REFERENCES
+
         added = 0
         touched_modules: set[str] = set()
         # Tagged vectors we cleared for regeneration, keyed by identity of
@@ -1579,7 +1604,7 @@ class TDDGenerator:
                 # argument or compares two slices. Runs BEFORE the generic
                 # pure-reference/catalog paths so zmem* don't fall into
                 # the scalar-only fuzz_for_spec codepath that skips them.
-                if alg.name in ZLIB_BYTE_TRANSFORMS:
+                if not generic_subject and alg.name in ZLIB_BYTE_TRANSFORMS:
                     vectors = fuzz_byte_transform(
                         alg, ZLIB_BYTE_TRANSFORMS[alg.name],
                     )
@@ -1587,7 +1612,8 @@ class TDDGenerator:
                         "pyref", ZLIB_BYTE_TRANSFORMS[alg.name]))
                     continue
                 # State-mutator path (fallback): Python reference port
-                state_binding = ZLIB_STATE_MUTATORS.get(alg.name)
+                state_binding = (None if generic_subject
+                                 else ZLIB_STATE_MUTATORS.get(alg.name))
                 if state_binding is not None:
                     vectors = fuzz_state_mutator(alg, state_binding)
                     _accept(mod, alg, vectors,
@@ -1605,12 +1631,12 @@ class TDDGenerator:
                 if _can_accept_byte_slice(alg) and lookup_test_vectors(alg.name):
                     continue
                 vectors = fuzz_for_spec(
-                    dll, alg, ZLIB_BINDINGS,
-                    pure_references=ZLIB_PURE_REFERENCES,
+                    dll, alg, subject_bindings,
+                    pure_references=subject_pure_refs,
                 )
-                if alg.name in ZLIB_PURE_REFERENCES:
+                if alg.name in subject_pure_refs:
                     tag = oracle_tag_for_callable(
-                        "pyref", ZLIB_PURE_REFERENCES[alg.name])
+                        "pyref", subject_pure_refs[alg.name])
                 else:
                     tag = oracle_tag_for_file("dll", dll_path)
                 _accept(mod, alg, vectors, tag)
@@ -1651,11 +1677,16 @@ class TDDGenerator:
                 )
 
     def _locate_c_dll(self) -> Path | None:
-        """Find a C reference library for fuzz-vector generation.
+        """Find (or build) the C reference library for fuzz-vector generation.
 
-        Today: hardcoded to verify/zlib1.dll for the zlib subject. Phase 1
-        will replace this with auto-build via `build_c_dll.py`.
+        zlib keeps its proven hand-placed artifact (verify/zlib1.dll and the
+        .so equivalents). Any other subject gets its own oracle COMPILED FROM
+        ITS OWN SOURCES into <subject>/.alchemist/oracle/ — the oracle is the
+        subject's compiled C, never a stand-in.
         """
+        src = getattr(self, "_source_root", None)
+        if src is not None and "zlib" not in Path(src).name.lower():
+            return self._build_subject_oracle(Path(src))
         candidates = [
             Path("verify/zlib1.dll"),
             Path("verify/zlib.so"),
@@ -1665,6 +1696,31 @@ class TDDGenerator:
             if c.exists():
                 return c.resolve()
         return None
+
+    def _build_subject_oracle(self, src: Path) -> Path | None:
+        """Compile the subject's .c files into a cached reference library."""
+        import sys as _sys
+        from alchemist.verifier.auto_ffi import build_c_dll
+        c_sources = sorted(
+            f for f in src.glob("*.c")
+            if "test" not in f.name.lower() and "example" not in f.name.lower()
+        )
+        if not c_sources:
+            return None
+        oracle_dir = src / ".alchemist" / "oracle"
+        ext = ".dll" if _sys.platform == "win32" else ".so"
+        out = oracle_dir / f"lib{src.name}_ref{ext}"
+        newest_src = max(f.stat().st_mtime for f in c_sources)
+        if out.exists() and out.stat().st_mtime >= newest_src:
+            return out.resolve()
+        result = build_c_dll(c_sources, out, include_dirs=[src])
+        if not result.success:
+            console.print(
+                f"  [yellow]subject oracle build failed: "
+                f"{(result.stderr or '')[:300]}[/yellow]"
+            )
+            return None
+        return out.resolve()
 
     def _build_project_context(
         self, specs: list[ModuleSpec], architecture: CrateArchitecture,

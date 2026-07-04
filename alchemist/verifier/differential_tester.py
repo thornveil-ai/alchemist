@@ -548,7 +548,7 @@ class DifferentialTester:
             cfg.harnesses,
             rust_workspace=self.rust_workspace,
             ffi_crate_name=cfg.ffi_crate_name,
-            c_fn_names={s.name for s in cfg.c_public_signatures},
+            c_signatures=cfg.c_public_signatures,
             packages=cfg.packages or None,
         )
 

@@ -124,14 +124,28 @@ def fuzz_checksum_vectors(
     return vectors
 
 
+_LEN_PARAM_NAMES = {"len", "length", "size", "n", "count", "nbytes", "buf_len",
+                    "source_len", "data_len", "input_len"}
+
+
 def _render_param_literals(alg: AlgorithmSpec, data: bytes) -> dict[str, str]:
     """Render each parameter's value as a Rust literal consuming bytes."""
     result: dict[str, str] = {}
     offset = 0
+    has_slice = any(
+        "[u8]" in (p.rust_type or "") or "Vec<u8>" in (p.rust_type or "")
+        for p in alg.inputs or []
+    )
     for p in alg.inputs or []:
         t = (p.rust_type or "").strip()
         if "[u8]" in t or "Vec<u8>" in t:
             result[p.name] = _bytes_to_rust_literal(bytes(data))
+            continue
+        # A length parameter accompanying a byte slice must BE that slice's
+        # length — deriving it from input bytes would render calls like
+        # f(&[..3 bytes..], 1633837924usize) that disagree with the adapter.
+        if has_slice and p.name.lower() in _LEN_PARAM_NAMES and t in ("usize", "u32", "u64"):
+            result[p.name] = f"{len(data)}{t}"
             continue
         if _re_scalar.fullmatch(t):
             size = _scalar_size(t)
