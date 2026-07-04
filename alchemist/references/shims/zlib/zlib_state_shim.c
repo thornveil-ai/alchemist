@@ -214,6 +214,96 @@ EXPORT void shim_run_pqdownheap(int k) {
     pqdownheap(s, s->dyn_ltree, k);
 }
 
+/* ---------- Generic tree accessors (union-slot aware) ----------
+   ct_data is { union {ush freq; ush code;} fc; union {ush dad; ush len;} dl; }.
+   fc holds Freq before gen_codes / Code after; dl holds Dad before gen_bitlen
+   / Len after. The shim exposes the raw fc/dl slots so the Python fuzzer can
+   set inputs (Freq via fc, Len via dl) and read outputs (Code via fc, Len via
+   dl) matching whichever phase the function operates in. which: 0=dyn_ltree,
+   1=dyn_dtree, 2=bl_tree. */
+static ct_data *tree_of(int which) {
+    deflate_state *s = &g_state;
+    if (which == 1) return s->dyn_dtree;
+    if (which == 2) return s->bl_tree;
+    return s->dyn_ltree;
+}
+static unsigned tree_cap(int which) {
+    if (which == 1) return 2 * D_CODES + 1;
+    if (which == 2) return 2 * BL_CODES + 1;
+    return HEAP_SIZE;
+}
+EXPORT void shim_set_tree_fc(int which, const unsigned short *v, unsigned n) {
+    ct_data *t = tree_of(which); unsigned m = tree_cap(which); if (n < m) m = n;
+    for (unsigned i = 0; i < m; i++) t[i].fc.freq = v[i];
+}
+EXPORT void shim_get_tree_fc(int which, unsigned short *o, unsigned n) {
+    ct_data *t = tree_of(which); unsigned m = tree_cap(which); if (n < m) m = n;
+    for (unsigned i = 0; i < m; i++) o[i] = t[i].fc.freq;
+}
+EXPORT void shim_set_tree_dl(int which, const unsigned short *v, unsigned n) {
+    ct_data *t = tree_of(which); unsigned m = tree_cap(which); if (n < m) m = n;
+    for (unsigned i = 0; i < m; i++) t[i].dl.len = (ush)v[i];
+}
+EXPORT void shim_get_tree_dl(int which, unsigned short *o, unsigned n) {
+    ct_data *t = tree_of(which); unsigned m = tree_cap(which); if (n < m) m = n;
+    for (unsigned i = 0; i < m; i++) o[i] = t[i].dl.len;
+}
+
+/* bl_count[0..MAX_BITS] — used by gen_codes and written by gen_bitlen. */
+EXPORT void shim_set_bl_count(const unsigned short *v, unsigned n) {
+    deflate_state *s = &g_state; unsigned m = MAX_BITS + 1; if (n < m) m = n;
+    for (unsigned i = 0; i < m; i++) s->bl_count[i] = v[i];
+}
+EXPORT void shim_get_bl_count(unsigned short *o, unsigned n) {
+    deflate_state *s = &g_state; unsigned m = MAX_BITS + 1; if (n < m) m = n;
+    for (unsigned i = 0; i < m; i++) o[i] = s->bl_count[i];
+}
+
+/* gen_codes(tree, max_code, s->bl_count): reads tree.Len (dl) + bl_count,
+   writes tree.Code (fc). No deflate_state mutation. */
+EXPORT void shim_run_gen_codes(int which, int max_code) {
+    deflate_state *s = &g_state;
+    gen_codes(tree_of(which), max_code, s->bl_count);
+}
+
+/* Wire the three tree descriptors like _tr_init but WITHOUT zeroing the
+   frequencies (so the caller's fuzzed Freq survive into build_tree). */
+static void shim_desc_setup(void) {
+    deflate_state *s = &g_state;
+    tr_static_init();
+    s->l_desc.dyn_tree = s->dyn_ltree; s->l_desc.stat_desc = &static_l_desc;
+    s->d_desc.dyn_tree = s->dyn_dtree; s->d_desc.stat_desc = &static_d_desc;
+    s->bl_desc.dyn_tree = s->bl_tree;  s->bl_desc.stat_desc = &static_bl_desc;
+}
+
+/* build_tree(s, desc): from fuzzed Freq (fc) builds the whole tree — heap,
+   Len (dl), Code (fc), opt_len, static_len, max_code. which selects the
+   descriptor/tree (0=l,1=d,2=bl). */
+EXPORT void shim_run_build_tree(int which) {
+    deflate_state *s = &g_state;
+    shim_desc_setup();
+    tree_desc *d = which == 1 ? &s->d_desc : (which == 2 ? &s->bl_desc : &s->l_desc);
+    build_tree(s, d);
+}
+EXPORT int shim_get_desc_max_code(int which) {
+    deflate_state *s = &g_state;
+    return which == 1 ? s->d_desc.max_code : (which == 2 ? s->bl_desc.max_code : s->l_desc.max_code);
+}
+EXPORT void shim_set_desc_max_code(int which, int v) {
+    deflate_state *s = &g_state;
+    if (which == 1) s->d_desc.max_code = v;
+    else if (which == 2) s->bl_desc.max_code = v;
+    else s->l_desc.max_code = v;
+}
+
+/* build_bl_tree(s): scans dyn_ltree/dyn_dtree Len, builds bl_tree, returns
+   max_blindex. Needs l_desc/d_desc.max_code + the two trees' Len set. */
+EXPORT int shim_run_build_bl_tree(void) {
+    deflate_state *s = &g_state;
+    shim_desc_setup();
+    return build_bl_tree(s);
+}
+
 /* detect_data_type returns Z_BINARY, Z_TEXT, or Z_UNKNOWN */
 EXPORT int shim_run_detect_data_type_ret(void) {
     deflate_state *s = &g_state;

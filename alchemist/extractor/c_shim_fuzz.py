@@ -652,10 +652,9 @@ ZLIB_SHIM_OBSERVER_BINDINGS: dict[str, CShimObserverBinding] = {
         fields=[
             # dyn_ltree[i].Freq is the only state this function inspects.
             # The shim's flat API sees a Vec<u16> of frequencies; Rust's
-            # DeflateState lays it out as Vec<(u16, u16)> = (freq, len).
-            # `rust_write_template` bridges the shapes: fuzz Vec<u16>,
-            # then widen into tuples where length defaults to 0 (fn only
-            # inspects freq, so len is irrelevant for the test).
+            # DeflateState lays it out as Vec<TreeElement>. `rust_write_template`
+            # bridges the shapes: fuzz Vec<u16>, then widen into TreeElements
+            # with only freq set (fn only inspects freq).
             CShimField(
                 "dyn_ltree_freq",
                 "Vec<u16>",
@@ -667,8 +666,9 @@ ZLIB_SHIM_OBSERVER_BINDINGS: dict[str, CShimObserverBinding] = {
                 max_len=128,
                 rust_field="dyn_ltree",
                 rust_write_template=(
-                    "state.dyn_ltree = {val}.iter()"
-                    ".map(|&f| (f, 0u16)).collect();"
+                    "state.dyn_ltree = {val}.iter().map(|&f| "
+                    "zlib_types::TreeElement { freq: f, ..Default::default() })"
+                    ".collect();"
                 ),
             ),
         ],
