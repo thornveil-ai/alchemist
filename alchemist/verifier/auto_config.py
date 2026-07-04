@@ -168,7 +168,12 @@ def build_diff_config(
     used_signatures: list[CSignature] = []
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
-            if (alg.category or "") != "checksum":
+            # The C signature shape is the real gate — a scalar-returning
+            # byte-slice function is differentially verifiable whether the
+            # extractor labelled it checksum or hash (FNV, CRC-16, ...). A
+            # true digest-returning hash fails classify_checksum_shape (its
+            # return type isn't a scalar int), so it's excluded here.
+            if (alg.category or "") not in ("checksum", "hash"):
                 continue
             sig = by_name.get(alg.name)
             if sig is None:
