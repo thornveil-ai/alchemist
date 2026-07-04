@@ -63,6 +63,13 @@ class AlgorithmHarness:
     # CRC-32 at 0). adapter_gen bakes this into both the C and Rust wrappers
     # so the two sides are seeded identically.
     seed: int | None = None
+    # Byte-digest hash (SipHash / SHA / HMAC family): output is a Vec<u8>
+    # digest, not a scalar. adapter_gen emits Vec<u8>-returning wrappers and
+    # the harness compares digest bytes. `key` (canonical, or None if
+    # unkeyed) and `digest_len` are baked into both wrappers.
+    digest: bool = False
+    key: bytes | None = None
+    digest_len: int = 8
     # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
     # braid alignment, batch thresholds). Random sampling rarely lands
     # exactly on these; each gets a deterministic differential test.
@@ -196,6 +203,8 @@ SMOKE_CATEGORIES = {"data_structure", "utility"}
 
 
 def _proptest_block(h: AlgorithmHarness) -> str:
+    if h.digest:
+        return _proptest_bytes_digest_block(h)
     if h.category in ("checksum", "hash"):
         return _proptest_digest_block(h)
     if h.category == "cipher":
@@ -263,6 +272,51 @@ def _proptest_digest_block(h: AlgorithmHarness) -> str:
     boundary = _boundary_block(h)
     if boundary:
         blocks.append(boundary)
+    return "\n\n".join(blocks)
+
+
+def _proptest_bytes_digest_block(h: AlgorithmHarness) -> str:
+    """Byte-digest hash: wrappers return the Vec<u8> digest; compare bytes.
+
+    The wrappers (adapter_gen) bake in the key and digest length, so the
+    harness fuzzes only the message.
+    """
+    strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..8192)"
+    blocks = [dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_digest_matches_c_reference(input in {strategy}) {{
+                let rust_out: Vec<u8> = {h.rust_call};
+                let c_out: Vec<u8> = {h.c_call};
+                prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()]
+    # Boundary lengths for digests: content-varied fixed lengths.
+    if h.boundary_lengths:
+        lengths = ", ".join(str(n) for n in h.boundary_lengths)
+        blocks.append(dedent(f"""\
+            #[test]
+            fn {h.algorithm}_digest_boundary_lengths() {{
+                let lengths: &[usize] = &[{lengths}];
+                let mut state: u64 = 0x415f_435f_5f42_4459;
+                for &len in lengths {{
+                    let mut input = vec![0u8; len];
+                    for b in input.iter_mut() {{
+                        state = state
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        *b = (state >> 33) as u8;
+                    }}
+                    let rust_out: Vec<u8> = {h.rust_call};
+                    let c_out: Vec<u8> = {h.c_call};
+                    assert_eq!(rust_out, c_out,
+                        "{h.algorithm} digest diverged from C at length {{}}", len);
+                }}
+            }}
+        """).rstrip())
     return "\n\n".join(blocks)
 
 

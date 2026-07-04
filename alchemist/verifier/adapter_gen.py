@@ -388,6 +388,75 @@ def _c_compression_wrapper(
     )
 
 
+def _byte_literal(data: bytes) -> str:
+    return "&[" + ", ".join(str(b) for b in data) + "]"
+
+
+_VEC_U8 = re.compile(r"^Result<Vec<u8>")
+
+
+def _resolve_digest(h: AlgorithmHarness, api, ffi_ident: str, c_sig):
+    """Emit `rust_<h>(&[u8]) -> Vec<u8>` and `c_<h>(&[u8]) -> Vec<u8>` for a
+    byte-digest hash. Key and digest length are baked in from the harness.
+    """
+    fn = _pick_unambiguous(h.algorithm, api)
+    if fn is None:
+        raise AdapterError(f"'{h.algorithm}': not found in generated API")
+    tys = [t for _, t in fn.params]
+    path = f"{fn.crate_ident}::{fn.name}"
+    keyed = h.key is not None
+    key_lit = _byte_literal(h.key) if keyed else None
+    dlen = h.digest_len
+    # Match the generated Rust signature: byte-slice input, optional key
+    # slice, and a usize outlen; return Result<Vec<u8>, _> or Vec<u8>.
+    slice_ct = sum(1 for t in tys if t == _BYTESLICE)
+    has_outlen = any(t == "usize" for t in tys)
+    if keyed and slice_ct >= 2 and has_outlen:
+        call = f"{path}(data, {key_lit}, {dlen})"
+    elif keyed and slice_ct >= 2:
+        call = f"{path}(data, {key_lit})"
+    elif not keyed and slice_ct >= 1 and has_outlen:
+        call = f"{path}(data, {dlen})"
+    elif not keyed and slice_ct >= 1:
+        call = f"{path}(data)"
+    else:
+        raise AdapterError(
+            f"'{h.algorithm}': digest signature ({', '.join(tys)}) -> {fn.ret} "
+            f"has no adapter (keyed={keyed})")
+    body = call if not fn.ret.startswith("Result<") else f"{call}.expect(\"{h.algorithm} failed\")"
+    rust_wrapper = (
+        f"/// Byte-digest of {fn.crate}::{fn.name} (key + length baked in).\n"
+        f"pub fn rust_{h.algorithm}(data: &[u8]) -> Vec<u8> {{\n"
+        f"    {body}\n"
+        f"}}\n"
+    )
+    # C side: call the raw extern into an out-buffer of digest_len.
+    if c_sig is None:
+        raise AdapterError(f"C reference does not export '{h.algorithm}'")
+    nparams = len(c_sig.params)
+    if keyed and nparams == 5:
+        c_call = (
+            f"unsafe {{ {ffi_ident}::{h.algorithm}(data.as_ptr() as _, data.len() as _, "
+            f"KEY.as_ptr() as _, out.as_mut_ptr(), {dlen}) }}")
+    elif not keyed and nparams == 4:
+        c_call = (
+            f"unsafe {{ {ffi_ident}::{h.algorithm}(data.as_ptr() as _, data.len() as _, "
+            f"out.as_mut_ptr(), {dlen}) }}")
+    else:
+        raise AdapterError(
+            f"C export '{h.algorithm}' arity {nparams} does not match digest shape")
+    key_const = f"    const KEY: [u8; {len(h.key)}] = {_byte_literal(h.key).lstrip('&')};\n" if keyed else ""
+    c_wrapper = (
+        f"pub fn c_{h.algorithm}(data: &[u8]) -> Vec<u8> {{\n"
+        f"{key_const}"
+        f"    let mut out = vec![0u8; {dlen}];\n"
+        f"    let _rc = {c_call};\n"
+        f"    out\n"
+        f"}}\n"
+    )
+    return rust_wrapper, c_wrapper, fn
+
+
 def plan_adapters(
     harnesses: list[AlgorithmHarness],
     *,
@@ -411,7 +480,17 @@ def plan_adapters(
     plan = AdapterPlan()
     for h in harnesses:
         try:
-            if h.category in ("checksum", "hash"):
+            if h.digest:
+                rust_wrapper, c_wrapper, fn = _resolve_digest(
+                    h, api, ffi_ident, c_sigs.get(h.algorithm))
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (digest)",
+                ))
+            elif h.category in ("checksum", "hash"):
                 rust_body, ret, fn = _resolve_checksum_rust(h, api)
                 c_body = _resolve_checksum_c(h, ffi_ident, c_sigs, ret)
                 rust_wrapper = (

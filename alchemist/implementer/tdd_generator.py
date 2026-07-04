@@ -1576,15 +1576,16 @@ class TDDGenerator:
         generic_subject = (
             src_root is not None and "zlib" not in Path(src_root).name.lower()
         )
+        subject_sigs: dict = {}
         if generic_subject:
             from alchemist.verifier.auto_config import (
                 collect_subject_signatures,
                 make_checksum_bindings,
             )
             all_algs = [a for m in specs for a in (m.algorithms or [])]
-            subject_bindings = make_checksum_bindings(
-                collect_subject_signatures(Path(src_root)), all_algs,
-            )
+            _sigs = collect_subject_signatures(Path(src_root))
+            subject_sigs = {s.name: s for s in _sigs}
+            subject_bindings = make_checksum_bindings(_sigs, all_algs)
             subject_pure_refs: dict = {}
             shim_dll = None
             inflate_shim_dll = None
@@ -1704,6 +1705,19 @@ class TDDGenerator:
                 )
                 if _can_accept_byte_slice(alg) and lookup_test_vectors(alg.name):
                     continue
+                # Byte-digest hash (SipHash / SHA / HMAC): the return is a
+                # Vec<u8> digest, not a scalar — mint {in, [k,] outlen} ->
+                # Ok(vec![...]) vectors matching the generated fn's arity.
+                sig = subject_sigs.get(alg.name)
+                if sig is not None:
+                    from alchemist.verifier.auto_config import (
+                        classify_digest_shape, fuzz_digest_vectors,
+                    )
+                    if classify_digest_shape(sig) is not None:
+                        vectors = fuzz_digest_vectors(dll, alg, sig)
+                        _accept(mod, alg, vectors,
+                                oracle_tag_for_file("dll", dll_path))
+                        continue
                 vectors = fuzz_for_spec(
                     dll, alg, subject_bindings,
                     pure_references=subject_pure_refs,
