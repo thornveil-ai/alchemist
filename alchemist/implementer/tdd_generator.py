@@ -1553,6 +1553,7 @@ class TDDGenerator:
                 ZLIB_SHIM_OBSERVER_BINDINGS, ZLIB_INFLATE_SHIM_BINDINGS,
                 locate_zlib_shim, locate_zlib_inflate_shim, _load_shim,
                 fuzz_with_shim, fuzz_pure_shim, fuzz_observer_shim,
+                TREE_BUILDER_FUZZERS,
             )
             dll = load_zlib_dll(dll_path)
             # Load the C shim DLL if present — its C-reference-based
@@ -1674,6 +1675,14 @@ class TDDGenerator:
                     vectors = fuzz_pure_shim(
                         shim_dll, alg, ZLIB_SHIM_PURE_BINDINGS[alg.name],
                     )
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", shim_path))
+                    continue
+                # Huffman tree-builder path — dedicated fuzzers for fns that
+                # take a `tree: &[TreeElement]` slice alongside the state
+                # (doesn't fit the scalar extra-arg model).
+                if shim_dll is not None and alg.name in TREE_BUILDER_FUZZERS:
+                    vectors = TREE_BUILDER_FUZZERS[alg.name](shim_dll, alg)
                     _accept(mod, alg, vectors,
                             oracle_tag_for_file("shim", shim_path))
                     continue

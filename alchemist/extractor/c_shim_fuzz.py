@@ -359,6 +359,90 @@ def fuzz_with_shim(
     return vectors
 
 
+# --- Huffman tree-builder fuzzers -----------------------------------------
+# These take a `tree: &[TreeElement]` slice parameter alongside the state,
+# which doesn't fit the scalar extra-arg model of fuzz_with_shim (the tree
+# is a struct array set through a dedicated shim setter and rendered as a
+# Vec<TreeElement> literal). Each has a purpose-built generator that drives
+# the same compiled-C shim oracle.
+
+_PQ_NMAX = 64  # node-index space for fuzzed heaps (< HEAP_SIZE=573)
+
+
+def _render_tree_elements(freqs: list[int]) -> str:
+    """Render a Vec<TreeElement> literal (only Freq set; others Default)."""
+    items = ", ".join(
+        f"zlib_types::TreeElement {{ freq: {f & 0xffff}u16, ..Default::default() }}"
+        for f in freqs
+    )
+    return f"vec![{items}]"
+
+
+def fuzz_pqdownheap(
+    dll: ctypes.CDLL,
+    alg: AlgorithmSpec,
+    *,
+    count: int = 10,
+    seed: int = 0x50_51_44_48,
+) -> list[SpecTestVector]:
+    """Vectors for pqdownheap(s, tree, k): sift s.heap[k] down by tree.Freq.
+
+    Fuzzes a VALID heap (distinct node indices, matching depth + tree
+    frequencies) so the C reference never indexes out of bounds, drives the
+    proven shim, and reads back the rearranged heap. The tree is rendered as
+    a Vec<TreeElement> the emitter clones and borrows (Rust forbids aliasing
+    &mut state with &state.dyn_ltree, so the test passes an owned tree)."""
+    rng = random.Random(seed)
+    runner = dll.shim_run_pqdownheap
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        heap_len = rng.randint(2, 20)
+        nodes = rng.sample(range(1, _PQ_NMAX), heap_len)
+        heap = [0] * (heap_len + 2)
+        for j in range(1, heap_len + 1):
+            heap[j] = nodes[j - 1]
+        freq = [0] * _PQ_NMAX
+        depth = [0] * _PQ_NMAX
+        for n in nodes:
+            freq[n] = rng.randint(0, 800)
+            depth[n] = rng.randint(0, 12)
+        k = rng.randint(1, heap_len)
+
+        dll.shim_reset()
+        dll.shim_set_heap((ctypes.c_int * len(heap))(*heap), len(heap))
+        dll.shim_set_heap_len(ctypes.c_int(heap_len))
+        dll.shim_set_dyn_ltree_freq(
+            (ctypes.c_ushort * _PQ_NMAX)(*freq), _PQ_NMAX)
+        dll.shim_set_depth((ctypes.c_ubyte * _PQ_NMAX)(*depth), _PQ_NMAX)
+        runner(ctypes.c_int(k))
+        out = (ctypes.c_int * len(heap))()
+        dll.shim_get_heap(out, len(heap))
+        post_heap = list(out)
+
+        inputs = {
+            "state.heap": _render_value(heap, "Vec<i32>"),
+            "state.heap_len": f"{heap_len}i32",
+            "state.depth": _render_value(depth, "Vec<u8>"),
+            "tree": _render_tree_elements(freq),   # borrowed by the emitter
+            "k": f"{k}usize",
+        }
+        expected = f"heap:Vec<i32>={_render_value(post_heap, 'Vec<i32>')}"
+        vectors.append(SpecTestVector(
+            description=f"pqdownheap_shim_{i}",
+            source="C reference via shim: shim_run_pqdownheap",
+            inputs=inputs,
+            expected_output=expected,
+            tolerance="state_mutator",
+        ))
+    return vectors
+
+
+# Registry of dedicated tree-builder fuzzers, keyed by algorithm name.
+TREE_BUILDER_FUZZERS: dict[str, Callable] = {
+    "pqdownheap": fuzz_pqdownheap,
+}
+
+
 def fuzz_observer_shim(
     dll: ctypes.CDLL,
     alg: AlgorithmSpec,

@@ -363,9 +363,18 @@ def _emit_state_mutator_test(fn_name: str, vec: SpecTestVector, idx: int) -> str
         lines.append(f"        state.{field_name} = {rendered};\n")
     for arg_name, rendered in extra_args:
         lines.append(f"        let {arg_name} = {rendered};\n")
-    # Build the call: state is first arg, extras after.
+    # Build the call: state is first arg, extras after. A Vec/slice-valued
+    # extra arg is borrowed (`&name`) because the function takes a slice
+    # (e.g. pqdownheap's `tree: &[TreeElement]`); scalars pass by value.
+    def _pass(name: str, rendered: str) -> str:
+        # An owned Vec literal is borrowed so it coerces to the `&[T]` the
+        # function expects. Values already rendered as slices (`&[...]`) or
+        # scalars pass through unchanged.
+        if rendered.lstrip().startswith("vec!"):
+            return f"&{name}"
+        return name
     if extra_args:
-        extra_str = ", ".join(a[0] for a in extra_args)
+        extra_str = ", ".join(_pass(n, r) for n, r in extra_args)
         lines.append(f"        super::{fn_name}(&mut state, {extra_str});\n")
     else:
         lines.append(f"        super::{fn_name}(&mut state);\n")
