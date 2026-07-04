@@ -97,6 +97,11 @@ def zlib_harnesses() -> list[AlgorithmHarness]:
             rust_call="rust_adler32(&input)",
             c_call="c_adler32(&input)",
             seed=1,  # RFC 1950: Adler-32 starts at 1
+            # NMAX=5552 is the byte count adler32 folds s1/s2 at (largest n
+            # with 255n(n+1)/2 + (n+1)(BASE-1) < 2^32). Hit both sides of
+            # every fold edge random sampling misses.
+            boundary_lengths=[0, 1, 2, 5551, 5552, 5553, 11103, 11104, 11105,
+                              16384, 65536],
             cases=5000,
         ),
         AlgorithmHarness(
@@ -105,6 +110,10 @@ def zlib_harnesses() -> list[AlgorithmHarness]:
             rust_call="rust_crc32(&input)",
             c_call="c_crc32(&input)",
             seed=0,  # RFC 1952: CRC-32 starts at 0
+            # Word (W=8) alignment, braid block (N*W=40), and Z_BATCH=3990
+            # words (31920 bytes) edges — where the braided path switches.
+            boundary_lengths=[0, 1, 7, 8, 9, 15, 16, 17, 39, 40, 41,
+                              31919, 31920, 31921, 65536],
             cases=5000,
         ),
         AlgorithmHarness(

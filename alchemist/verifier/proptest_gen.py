@@ -63,6 +63,10 @@ class AlgorithmHarness:
     # CRC-32 at 0). adapter_gen bakes this into both the C and Rust wrappers
     # so the two sides are seeded identically.
     seed: int | None = None
+    # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
+    # braid alignment, batch thresholds). Random sampling rarely lands
+    # exactly on these; each gets a deterministic differential test.
+    boundary_lengths: list[int] = field(default_factory=list)
     # Override input strategy — defaults per category
     input_strategy: str | None = None
     # Additional imports required in the emitted harness
@@ -151,13 +155,20 @@ def _fixed_roundtrip_test(h: AlgorithmHarness, v: TestVector, idx: int) -> str:
     input_lit = v.as_rust_literal("input")
     # For compression: we check decompress-compatibility with known-good blob
     expected_lit = v.as_rust_literal("expected")
-    decomp = h.rust_decompress_call or "/* no rust_decompress_call configured */"
+    if not h.rust_decompress_call:
+        return ""
+    # Bind the names the decompress expression expects (`compressed`, `input`)
+    # so the same call string compiles here and in the proptest blocks.
     return dedent(f"""\
         #[test]
         fn {fn_name}() {{
             let original: &[u8] = {input_lit};
             let reference_compressed: &[u8] = {expected_lit};
-            let decompressed = {decomp};
+            let input = original.to_vec();
+            let compressed = reference_compressed.to_vec();
+            let (status, decompressed) = {h.rust_decompress_call};
+            assert_eq!(status, 0,
+                "decompress of standards blob {v.name!r} reported failure");
             assert_eq!(decompressed.as_slice(), original,
                 "decompress of standards blob {v.name!r} did not recover input");
         }}
@@ -202,9 +213,42 @@ def _proptest_block(h: AlgorithmHarness) -> str:
     return _proptest_unverifiable_block(h)
 
 
+def _boundary_block(h: AlgorithmHarness) -> str:
+    """Deterministic differential test at algorithmic fold boundaries.
+
+    Random length sampling almost never lands exactly on NMAX block edges,
+    word alignments, or batch thresholds — the places where accumulator
+    folding and braid paths switch. Content is a fixed LCG so failures
+    reproduce byte-for-byte.
+    """
+    if not h.boundary_lengths:
+        return ""
+    lengths = ", ".join(str(n) for n in h.boundary_lengths)
+    return dedent(f"""\
+        #[test]
+        fn {h.algorithm}_boundary_lengths_match_c_reference() {{
+            let lengths: &[usize] = &[{lengths}];
+            let mut state: u64 = 0x415f_435f_5f42_4459; // fixed seed — reproducible
+            for &len in lengths {{
+                let mut input = vec![0u8; len];
+                for b in input.iter_mut() {{
+                    state = state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    *b = (state >> 33) as u8;
+                }}
+                let rust_out = {h.rust_call};
+                let c_out = {h.c_call};
+                assert_eq!(rust_out, c_out,
+                    "{h.algorithm} diverged from C reference at boundary length {{}}", len);
+            }}
+        }}
+    """).rstrip()
+
+
 def _proptest_digest_block(h: AlgorithmHarness) -> str:
     strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..8192)"
-    return dedent(f"""\
+    blocks = [dedent(f"""\
         proptest! {{
             #![proptest_config(ProptestConfig::with_cases({h.cases}))]
 
@@ -215,7 +259,11 @@ def _proptest_digest_block(h: AlgorithmHarness) -> str:
                 prop_assert_eq!(rust_out, c_out);
             }}
         }}
-    """).rstrip()
+    """).rstrip()]
+    boundary = _boundary_block(h)
+    if boundary:
+        blocks.append(boundary)
+    return "\n\n".join(blocks)
 
 
 def _proptest_cipher_block(h: AlgorithmHarness) -> str:
@@ -265,18 +313,45 @@ def _proptest_cipher_block(h: AlgorithmHarness) -> str:
 
 
 def _proptest_compression_block(h: AlgorithmHarness) -> str:
+    """Full effect-footprint compression harness.
+
+    Wrapper contract (emitted by adapter_gen): compress expressions evaluate
+    to `(i32, Vec<u8>)` given `input: Vec<u8>`; decompress expressions
+    evaluate to `(i32, Vec<u8>)` given `compressed: Vec<u8>` and `input`.
+    Status is part of the footprint: a side that "succeeds" where the
+    reference fails (the compress-returns-zeros failure class) is caught by
+    the parity test even when no roundtrip runs. Compressed bytes are NOT
+    compared byte-for-byte — DEFLATE permits multiple valid encodings — so
+    equivalence is: status parity + roundtrip recovery + cross-interop.
+    """
     strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..8192)"
-    # Needs at least one decompress side to verify roundtrip
     rust_decomp = h.rust_decompress_call or ""
     c_decomp = h.c_decompress_call or ""
     blocks = []
+    # 0. Status parity — success/failure must agree on identical inputs.
+    #    (Exact error-code parity needs an error-enum mapping that isn't
+    #    discoverable from the generated API yet; success parity already
+    #    kills silent-stub "successes".)
+    if h.c_call:
+        blocks.append(dedent(f"""\
+            #[test]
+            fn {h.algorithm}_status_parity(input in {strategy}) {{
+                let (rust_status, _rust_bytes) = {h.rust_call};
+                let (c_status, _c_bytes) = {h.c_call};
+                prop_assert_eq!(rust_status == 0, c_status == 0,
+                    "success disagreement: rust_status={{}}, c_status={{}}",
+                    rust_status, c_status);
+            }}
+        """).rstrip())
     # 1. Rust roundtrip
     if rust_decomp:
         blocks.append(dedent(f"""\
             #[test]
             fn {h.algorithm}_rust_roundtrip(input in {strategy}) {{
-                let compressed = {h.rust_call};
-                let decompressed = {rust_decomp};
+                let (c_status, compressed) = {h.rust_call};
+                prop_assert_eq!(c_status, 0, "rust compress failed: {{}}", c_status);
+                let (d_status, decompressed) = {rust_decomp};
+                prop_assert_eq!(d_status, 0, "rust decompress failed: {{}}", d_status);
                 prop_assert_eq!(decompressed.as_slice(), input.as_slice());
             }}
         """).rstrip())
@@ -285,8 +360,10 @@ def _proptest_compression_block(h: AlgorithmHarness) -> str:
         blocks.append(dedent(f"""\
             #[test]
             fn {h.algorithm}_rust_compress_c_decompress(input in {strategy}) {{
-                let compressed = {h.rust_call};
-                let decompressed = {c_decomp};
+                let (c_status, compressed) = {h.rust_call};
+                prop_assert_eq!(c_status, 0, "rust compress failed: {{}}", c_status);
+                let (d_status, decompressed) = {c_decomp};
+                prop_assert_eq!(d_status, 0, "C decompress rejected rust output: {{}}", d_status);
                 prop_assert_eq!(decompressed.as_slice(), input.as_slice());
             }}
         """).rstrip())
@@ -295,8 +372,10 @@ def _proptest_compression_block(h: AlgorithmHarness) -> str:
         blocks.append(dedent(f"""\
             #[test]
             fn {h.algorithm}_c_compress_rust_decompress(input in {strategy}) {{
-                let compressed = {h.c_call};
-                let decompressed = {rust_decomp};
+                let (c_status, compressed) = {h.c_call};
+                prop_assert_eq!(c_status, 0, "C compress failed: {{}}", c_status);
+                let (d_status, decompressed) = {rust_decomp};
+                prop_assert_eq!(d_status, 0, "rust decompress rejected C output: {{}}", d_status);
                 prop_assert_eq!(decompressed.as_slice(), input.as_slice());
             }}
         """).rstrip())

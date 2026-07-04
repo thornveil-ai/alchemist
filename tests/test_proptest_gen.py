@@ -103,6 +103,29 @@ def test_compression_harness_emits_three_roundtrip_tests():
     assert "fn fixed_deflate_hello_world" in src or "fn fixed_deflate_abc" in src
 
 
+def test_compression_harness_compares_full_footprint():
+    """Status is part of the footprint: wrappers return (i32, Vec<u8>), the
+    harness destructures both and asserts success parity — a stub that
+    'succeeds' where the C reference fails is caught without a roundtrip."""
+    h = AlgorithmHarness(
+        algorithm="deflate",
+        category="compression",
+        rust_call="rust_compress(&input)",
+        c_call="c_compress(&input)",
+        rust_decompress_call="rust_decompress(&compressed, input.len() + 32)",
+        c_decompress_call="c_uncompress(&compressed, input.len() + 32)",
+    )
+    src = emit_differential_test([h])
+    assert "fn deflate_status_parity" in src
+    assert "prop_assert_eq!(rust_status == 0, c_status == 0," in src
+    # Roundtrip blocks destructure footprint tuples and assert statuses
+    assert "let (c_status, compressed) = rust_compress(&input);" in src
+    assert "let (d_status, decompressed) = rust_decompress(&compressed, input.len() + 32);" in src
+    # Fixed vectors bind the names the decompress expression expects
+    assert "let compressed = reference_compressed.to_vec();" in src
+    assert "let (status, decompressed) =" in src
+
+
 # ---------- filter (floating-point) ----------
 
 def test_filter_harness_emits_ulp_compare():
@@ -130,6 +153,35 @@ def test_smoke_harness_for_utility_category():
     )
     src = emit_differential_test([h])
     assert "fn parse_header_smoke" in src
+
+
+# ---------- boundary-length differential tests ----------
+
+def test_boundary_lengths_emit_deterministic_differential():
+    h = AlgorithmHarness(
+        algorithm="adler32",
+        category="checksum",
+        rust_call="rust_adler32(&input)",
+        c_call="c_adler32(&input)",
+        boundary_lengths=[0, 1, 5551, 5552, 5553],
+    )
+    src = emit_differential_test([h])
+    assert "fn adler32_boundary_lengths_match_c_reference" in src
+    assert "&[0, 1, 5551, 5552, 5553]" in src
+    # Deterministic content, both sides compared
+    assert "0x415f_435f_5f42_4459" in src
+    assert "let c_out = c_adler32(&input);" in src
+
+
+def test_no_boundary_block_without_lengths():
+    h = AlgorithmHarness(
+        algorithm="adler32",
+        category="checksum",
+        rust_call="rust_adler32(&input)",
+        c_call="c_adler32(&input)",
+    )
+    src = emit_differential_test([h])
+    assert "boundary_lengths_match_c_reference" not in src
 
 
 # ---------- unverifiable categories fail closed ----------

@@ -107,18 +107,73 @@ def test_ambiguous_symbol_refused_not_silently_bound(tmp_path):
     assert "multiple crates" in plan.unresolved[0][1]
 
 
-def test_unknown_category_lands_in_unresolved(tmp_path):
-    _write_crate(tmp_path, "zlib-checksum", _CHECKSUM_LIB)
-    h = AlgorithmHarness(
+_COMPRESSION_LIB = """\
+#![forbid(unsafe_code)]
+pub struct CompressionError;
+pub struct DecompressionError;
+pub fn compress_z(dest: &mut [u8], dest_len: &mut usize, source: &[u8], source_len: usize) -> Result<(), CompressionError> {
+    let _ = (dest, dest_len, source, source_len); Ok(())
+}
+pub fn uncompress(dest: &mut [u8], dest_len: &mut usize, source: &[u8], source_len: usize) -> Result<(), DecompressionError> {
+    let _ = (dest, dest_len, source, source_len); Ok(())
+}
+"""
+
+
+def _deflate_harness() -> AlgorithmHarness:
+    return AlgorithmHarness(
         algorithm="deflate", category="compression",
-        rust_call="rust_compress(&input)", c_call="c_compress(&input)",
+        rust_call="rust_compress(&input)",
+        c_call="c_compress(&input)",
+        rust_decompress_call="rust_uncompress(&compressed, input.len() + 64)",
+        c_decompress_call="c_uncompress(&compressed, input.len() + 64)",
     )
+
+
+def test_compression_resolves_full_footprint_wrappers(tmp_path):
+    _write_crate(tmp_path, "zlib-compression", _COMPRESSION_LIB)
     plan = plan_adapters(
-        [h], rust_workspace=tmp_path, ffi_crate_name="c_ref",
-        c_fn_names={"compress"},
+        [_deflate_harness()], rust_workspace=tmp_path, ffi_crate_name="c_zlib_ref",
+        c_fn_names={"compress", "uncompress"},
+    )
+    assert not plan.unresolved, plan.unresolved
+    r = plan.resolved[0]
+    # Rust side: footprint tuples, status mapped, buffer truncated
+    assert "pub fn rust_compress(data: &[u8]) -> (i32, Vec<u8>)" in r.rust_wrapper
+    assert "pub fn rust_uncompress(data: &[u8], cap: usize) -> (i32, Vec<u8>)" in r.rust_wrapper
+    assert "zlib_compression::compress_z(&mut dest, &mut dest_len, data, data.len())" in r.rust_wrapper
+    assert "dest.truncate(dest_len);" in r.rust_wrapper
+    # C side: no asserts inside wrappers — status is RETURNED, not swallowed
+    assert "pub fn c_compress(data: &[u8]) -> (i32, Vec<u8>)" in r.c_wrapper
+    assert "pub fn c_uncompress(data: &[u8], cap: usize) -> (i32, Vec<u8>)" in r.c_wrapper
+    assert "assert" not in r.c_wrapper
+    assert "(rc as i32, dest)" in r.c_wrapper
+    assert "compress_z" in r.resolution and "uncompress" in r.resolution
+
+
+def test_compression_without_rust_impl_lands_in_unresolved(tmp_path):
+    _write_crate(tmp_path, "zlib-checksum", _CHECKSUM_LIB)  # no compression fns
+    plan = plan_adapters(
+        [_deflate_harness()], rust_workspace=tmp_path, ffi_crate_name="c_ref",
+        c_fn_names={"compress", "uncompress"},
     )
     assert not plan.resolved
     assert plan.unresolved and plan.unresolved[0][0].algorithm == "deflate"
+    assert "not found" in plan.unresolved[0][1]
+
+
+def test_unadaptable_category_lands_in_unresolved(tmp_path):
+    _write_crate(tmp_path, "zlib-checksum", _CHECKSUM_LIB)
+    h = AlgorithmHarness(
+        algorithm="kalman", category="filter",
+        rust_call="rust_kalman(&input)", c_call="c_kalman(&input)",
+    )
+    plan = plan_adapters(
+        [h], rust_workspace=tmp_path, ffi_crate_name="c_ref",
+        c_fn_names={"kalman"},
+    )
+    assert not plan.resolved
+    assert plan.unresolved and "no adapter template" in plan.unresolved[0][1]
 
 
 # ---------- emission ----------

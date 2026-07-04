@@ -162,6 +162,8 @@ class DifferentialTester:
         self.timeout_compile = timeout_compile
         self.timeout_test = timeout_test
         self.timeout_diff = timeout_diff
+        # Populated by _build_and_run_differential; consumed by the receipt.
+        self._diff_evidence: dict | None = None
 
     def _package_args(self) -> list[str]:
         pkgs = self.diff_config.packages if self.diff_config else []
@@ -466,6 +468,14 @@ class DifferentialTester:
         if plan.unresolved:
             names = ", ".join(h.algorithm for h, _ in plan.unresolved)
             adapted += f" (unresolved: {names})"
+        # Evidence for the verification receipt (see verifier/receipt.py).
+        self._diff_evidence = {
+            "verify_dir": verify_dir,
+            "dll_path": ffi_result.build.dll_path,
+            "bindings": [r.resolution for r in plan.resolved if r.resolution],
+            "unresolved": [(h.algorithm, reason) for h, reason in plan.unresolved],
+            "cargo_summary": None,
+        }
 
         # Run cargo test --test differential inside diff_dir
         try:
@@ -490,6 +500,7 @@ class DifferentialTester:
             (l for l in lines[::-1] if "test result:" in l),
             "differential pass" if passed else "differential fail",
         )
+        self._diff_evidence["cargo_summary"] = summary_line.strip()
         return GateResult(
             name="differential",
             passed=passed,
@@ -634,10 +645,36 @@ def verify_workspace(
     lints that fail closed on wrong algorithm variants. If the subject has
     specs but loading them failed, pass `specs_error` so the semantic gate
     FAILS instead of reporting itself not-run.
+
+    Every run with a differential config also writes a verification receipt
+    (verify_gen/receipt.json) recording gate results, harness bindings, and
+    the oracle's identity (compiler version + source/DLL hashes).
     """
     tester = DifferentialTester(
         rust_workspace, diff_config=diff_config, specs=specs,
         specs_error=specs_error,
     )
     report = tester.run_all()
+    if diff_config is not None:
+        try:
+            from alchemist.verifier.receipt import build_receipt, write_receipt
+            evidence = getattr(tester, "_diff_evidence", None)
+            receipt = build_receipt(
+                report=report,
+                rust_workspace=Path(rust_workspace),
+                diff_config=diff_config,
+                diff_evidence=evidence,
+                specs=specs,
+            )
+            verify_dir = (
+                (evidence or {}).get("verify_dir")
+                or diff_config.verify_dir
+                or (Path(rust_workspace).parent / "verify_gen")
+            )
+            path = write_receipt(receipt, Path(verify_dir) / "receipt.json")
+            console.print(f"[cyan]verification receipt: {path}[/cyan]")
+        except Exception as e:  # noqa: BLE001
+            # The receipt documents the claim; failing to write it must be
+            # visible but must not change the verification verdict itself.
+            console.print(f"[yellow]receipt emission failed: {e}[/yellow]")
     return report

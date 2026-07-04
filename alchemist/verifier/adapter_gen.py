@@ -174,6 +174,22 @@ _BYTESLICE = "&[u8]"
 _INT32 = {"u32", "i32"}
 _LEN_TYPES = {"usize", "u32", "u64", "uInt", "c_uint"}
 
+# Candidate generated-fn names per compression side. The harness algorithm
+# name ("deflate") names the ALGORITHM; the API functions carry zlib's
+# public names.
+_COMPRESS_CANDIDATES = ["compress", "compress_z"]
+_DECOMPRESS_CANDIDATES = ["uncompress", "uncompress_z", "decompress"]
+
+_CALL_IDENT = re.compile(r"^\s*(\w+)\s*\(")
+
+
+def _call_ident(expr: str, what: str) -> str:
+    """Leading identifier of a harness call expression (the wrapper name)."""
+    m = _CALL_IDENT.match(expr or "")
+    if not m:
+        raise AdapterError(f"cannot parse wrapper name from {what} expression {expr!r}")
+    return m.group(1)
+
 
 def _resolve_checksum_rust(
     h: AlgorithmHarness, api: dict[str, list[RustFn]],
@@ -183,19 +199,10 @@ def _resolve_checksum_rust(
     candidates = [h.algorithm, f"{h.algorithm}_z"]
     tried: list[str] = []
     for cand in candidates:
-        defs = api.get(cand) or []
-        if not defs:
+        fn = _pick_unambiguous(cand, api)
+        if fn is None:
             tried.append(f"{cand}: not found")
             continue
-        if len(defs) > 1:
-            # Refuse to guess between crates — binding to the wrong one would
-            # differentially verify code that never ships.
-            crates = ", ".join(sorted(d.crate for d in defs))
-            raise AdapterError(
-                f"'{cand}' is defined in multiple crates ({crates}) — ambiguous "
-                f"binding refused; scope the run with packages=[...] or rename"
-            )
-        fn = defs[0]
         tys = [t for _, t in fn.params]
         path = f"{fn.crate_ident}::{fn.name}"
         if fn.ret not in _INT32:
@@ -226,6 +233,128 @@ def _resolve_checksum_c(h: AlgorithmHarness, ffi_crate: str, c_fn_names: set[str
     return (
         f"unsafe {{ {ffi_crate}::{h.algorithm}({seed} as _, data.as_ptr(), "
         f"data.len() as _) as u32 }}"
+    )
+
+
+def _pick_unambiguous(name: str, api: dict[str, list[RustFn]]) -> RustFn | None:
+    defs = api.get(name) or []
+    if len(defs) > 1:
+        crates = ", ".join(sorted(d.crate for d in defs))
+        raise AdapterError(
+            f"'{name}' is defined in multiple crates ({crates}) — ambiguous "
+            f"binding refused; scope the run with packages=[...] or rename"
+        )
+    return defs[0] if defs else None
+
+
+def _resolve_compression_side(
+    candidates: list[str],
+    api: dict[str, list[RustFn]],
+    *,
+    wrapper_name: str,
+    is_compress: bool,
+) -> tuple[str, RustFn]:
+    """Emit a full-footprint wrapper `(i32, Vec<u8>)` for one compression side.
+
+    Status mapping: Ok → 0; Err → -1000, a sentinel meaning "generated error
+    enum not yet code-mapped". The harness asserts SUCCESS parity (status==0
+    vs status==0), so the sentinel never masquerades as a specific zlib code.
+    """
+    tried: list[str] = []
+    for cand in candidates:
+        fn = _pick_unambiguous(cand, api)
+        if fn is None:
+            tried.append(f"{cand}: not found")
+            continue
+        tys = [t for _, t in fn.params]
+        path = f"{fn.crate_ident}::{fn.name}"
+        # zlib out-param shape: (dest, dest_len, source, source_len) -> Result<(), E>
+        if (len(tys) == 4 and tys[0] == "&mut[u8]" and tys[1] == "&mutusize"
+                and tys[2] == _BYTESLICE and tys[3] == "usize"
+                and fn.ret.startswith("Result<()")):
+            if is_compress:
+                alloc = "vec![0u8; data.len() + data.len() / 1000 + 64]"
+                sig = f"pub fn {wrapper_name}(data: &[u8]) -> (i32, Vec<u8>)"
+            else:
+                alloc = "vec![0u8; cap]"
+                sig = f"pub fn {wrapper_name}(data: &[u8], cap: usize) -> (i32, Vec<u8>)"
+            body = (
+                f"/// Full effect footprint of {fn.crate}::{fn.name}: status + output\n"
+                f"/// buffer as written (truncated to the reported length).\n"
+                f"{sig} {{\n"
+                f"    let mut dest = {alloc};\n"
+                f"    let mut dest_len = dest.len();\n"
+                f"    let status = match {path}(&mut dest, &mut dest_len, data, data.len()) {{\n"
+                f"        Ok(()) => 0,\n"
+                f"        Err(_) => -1000, // generated error enum not yet code-mapped\n"
+                f"    }};\n"
+                f"    dest.truncate(dest_len);\n"
+                f"    (status, dest)\n"
+                f"}}\n"
+            )
+            return body, fn
+        # Owning shape: (&[u8]) -> Result<Vec<u8>, E>
+        if (len(tys) == 1 and tys[0] == _BYTESLICE
+                and fn.ret.startswith("Result<Vec<u8>")):
+            sig = (f"pub fn {wrapper_name}(data: &[u8]) -> (i32, Vec<u8>)"
+                   if is_compress else
+                   f"pub fn {wrapper_name}(data: &[u8], cap: usize) -> (i32, Vec<u8>)")
+            extra = "" if is_compress else "    let _ = cap;\n"
+            body = (
+                f"/// Full effect footprint of {fn.crate}::{fn.name}.\n"
+                f"{sig} {{\n"
+                f"{extra}"
+                f"    match {path}(data) {{\n"
+                f"        Ok(v) => (0, v),\n"
+                f"        Err(_) => (-1000, Vec::new()), // error enum not yet code-mapped\n"
+                f"    }}\n"
+                f"}}\n"
+            )
+            return body, fn
+        tried.append(f"{cand}: no adapter for signature ({', '.join(tys)}) -> {fn.ret}")
+    raise AdapterError(
+        f"cannot adapt {'compress' if is_compress else 'decompress'} side: "
+        + "; ".join(tried)
+    )
+
+
+def _c_compression_wrapper(
+    wrapper_name: str,
+    c_fn: str,
+    ffi_ident: str,
+    c_fn_names: set[str],
+    *,
+    is_compress: bool,
+) -> str:
+    if c_fn not in c_fn_names:
+        raise AdapterError(
+            f"C reference does not export '{c_fn}' "
+            f"(available: {', '.join(sorted(c_fn_names)) or 'none'})"
+        )
+    if is_compress:
+        return (
+            f"pub fn {wrapper_name}(data: &[u8]) -> (i32, Vec<u8>) {{\n"
+            f"    let mut dest = vec![0u8; data.len() + data.len() / 1000 + 64];\n"
+            f"    let mut dest_len = dest.len() as std::os::raw::c_ulong;\n"
+            f"    let rc = unsafe {{\n"
+            f"        {ffi_ident}::{c_fn}(dest.as_mut_ptr(), &mut dest_len,\n"
+            f"                            data.as_ptr(), data.len() as _)\n"
+            f"    }};\n"
+            f"    dest.truncate(dest_len as usize);\n"
+            f"    (rc as i32, dest)\n"
+            f"}}\n"
+        )
+    return (
+        f"pub fn {wrapper_name}(data: &[u8], cap: usize) -> (i32, Vec<u8>) {{\n"
+        f"    let mut dest = vec![0u8; cap];\n"
+        f"    let mut dest_len = cap as std::os::raw::c_ulong;\n"
+        f"    let rc = unsafe {{\n"
+        f"        {ffi_ident}::{c_fn}(dest.as_mut_ptr(), &mut dest_len,\n"
+        f"                            data.as_ptr(), data.len() as _)\n"
+        f"    }};\n"
+        f"    dest.truncate(dest_len as usize);\n"
+        f"    (rc as i32, dest)\n"
+        f"}}\n"
     )
 
 
@@ -270,6 +399,39 @@ def plan_adapters(
                     c_wrapper=c_wrapper,
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name}",
+                ))
+            elif h.category in ("compression", "decompression"):
+                rust_c_name = _call_ident(h.rust_call, "rust_call")
+                rust_d_name = _call_ident(h.rust_decompress_call or "",
+                                          "rust_decompress_call")
+                c_c_name = _call_ident(h.c_call, "c_call")
+                c_d_name = _call_ident(h.c_decompress_call or "",
+                                       "c_decompress_call")
+                comp_body, comp_fn = _resolve_compression_side(
+                    _COMPRESS_CANDIDATES, api,
+                    wrapper_name=rust_c_name, is_compress=True,
+                )
+                decomp_body, decomp_fn = _resolve_compression_side(
+                    _DECOMPRESS_CANDIDATES, api,
+                    wrapper_name=rust_d_name, is_compress=False,
+                )
+                c_comp = _c_compression_wrapper(
+                    c_c_name, c_c_name.removeprefix("c_"), ffi_ident,
+                    c_fn_names, is_compress=True,
+                )
+                c_decomp = _c_compression_wrapper(
+                    c_d_name, c_d_name.removeprefix("c_"), ffi_ident,
+                    c_fn_names, is_compress=False,
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=comp_body + "\n" + decomp_body,
+                    c_wrapper=c_comp + "\n" + c_decomp,
+                    rust_crates={comp_fn.crate, decomp_fn.crate},
+                    resolution=(
+                        f"{h.algorithm} -> {comp_fn.crate_ident}::{comp_fn.name} "
+                        f"+ {decomp_fn.crate_ident}::{decomp_fn.name}"
+                    ),
                 ))
             else:
                 raise AdapterError(
