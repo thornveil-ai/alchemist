@@ -196,6 +196,26 @@ def test_emit_build_rs_resolves_relative_paths():
     assert Path(rendered).is_absolute()
 
 
+def test_emit_build_rs_sets_rpath_off_windows():
+    """Non-Windows needs an rpath so the .so is found at RUNTIME, not just
+    at link time — the test binary lives under target/, not by the library."""
+    out = emit_build_rs(Path("verify"), "z")
+    assert 'target_os = "windows"' in out
+    assert "-Wl,-rpath," in out
+
+
+def test_ffi_lib_path_is_platform_correct(tmp_path):
+    import sys
+    from alchemist.verifier.auto_ffi import ffi_lib_path
+    p = ffi_lib_path(tmp_path, "c_tinychk_ref")
+    if sys.platform == "win32":
+        assert p.name == "c_tinychk_ref.dll"
+    elif sys.platform == "darwin":
+        assert p.name == "libc_tinychk_ref.dylib"
+    else:
+        assert p.name == "libc_tinychk_ref.so"
+
+
 def test_emit_cargo_toml_basic():
     toml = emit_cargo_toml("ffi_crate")
     assert 'name = "ffi_crate"' in toml

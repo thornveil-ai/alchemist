@@ -422,16 +422,41 @@ def emit_ffi_module(
 
 
 def emit_build_rs(dll_search_dir: Path, lib_name: str) -> str:
-    """Produce a build.rs that points cargo at the DLL and its import library."""
+    """Produce a build.rs that points cargo at the shared library.
+
+    On non-Windows an rpath entry is added so the .so is found at RUNTIME
+    (the test binary lives under target/, not next to the library), matching
+    the build-time search path. Windows resolves DLLs from the executable's
+    directory, so the runtime copy handles it there.
+    """
     # Absolute + forward slashes: build.rs runs with the CONSUMING build's
     # cwd, so a relative search path would silently fail to link.
     search = str(Path(dll_search_dir).resolve()).replace("\\", "/")
-    return (
-        "fn main() {\n"
-        f'    println!("cargo:rustc-link-search=native={search}");\n'
-        f'    println!("cargo:rustc-link-lib=dylib={lib_name}");\n'
-        "}\n"
-    )
+    lines = [
+        "fn main() {",
+        f'    println!("cargo:rustc-link-search=native={search}");',
+        f'    println!("cargo:rustc-link-lib=dylib={lib_name}");',
+        '    if !cfg!(target_os = "windows") {',
+        f'        println!("cargo:rustc-link-arg=-Wl,-rpath,{search}");',
+        "    }",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def ffi_lib_path(output_dir: Path, lib_name: str) -> Path:
+    """Platform-correct shared-library path for the FFI oracle.
+
+    rustc's `-l dylib=<name>` resolves to `<name>.dll` (+ MinGW import lib)
+    on Windows but `lib<name>.so` on Linux — the build must emit the name
+    the linker will look for.
+    """
+    import sys as _sys
+    if _sys.platform == "win32":
+        return output_dir / f"{lib_name}.dll"
+    if _sys.platform == "darwin":
+        return output_dir / f"lib{lib_name}.dylib"
+    return output_dir / f"lib{lib_name}.so"
 
 
 def emit_cargo_toml(
@@ -482,7 +507,7 @@ class AutoFfiResult:
 def generate_ffi_crate(req: AutoFfiRequest) -> AutoFfiResult:
     """Build a complete, self-contained FFI crate that links to the compiled C library."""
     req.output_dir.mkdir(parents=True, exist_ok=True)
-    dll_path = req.output_dir / f"{req.lib_name}.dll"
+    dll_path = ffi_lib_path(req.output_dir, req.lib_name)
     build_result = build_c_dll(req.c_sources, dll_path, include_dirs=req.include_dirs)
 
     src_dir = req.output_dir / "src"
