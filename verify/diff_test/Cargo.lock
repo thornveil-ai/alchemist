@@ -628,7 +628,6 @@ dependencies = [
 name = "zlib-compression"
 version = "0.1.0"
 dependencies = [
- "zlib-checksum",
  "zlib-deflate",
  "zlib-inflate",
  "zlib-types",
@@ -648,7 +647,6 @@ name = "zlib-inflate"
 version = "0.1.0"
 dependencies = [
  "zlib-checksum",
- "zlib-trees",
  "zlib-types",
 ]
 

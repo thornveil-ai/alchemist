@@ -73,6 +73,5 @@ pub fn c_uncompress(compressed: &[u8], expected_size: usize) -> Vec<u8> {
 
 /// Wrapper: compute Adler-32 via Alchemist Rust.
 pub fn rust_adler32(data: &[u8]) -> u32 {
-    use zlib_checksum::Adler32;
-    Adler32::compute(1, data, data.len())
+    zlib_checksum::adler32_z(1, data, data.len())
 }

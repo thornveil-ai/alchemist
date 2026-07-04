@@ -11,12 +11,8 @@ zlib-compression = { path = "../../subjects/zlib/.alchemist/output/zlib-compress
 [dev-dependencies]
 proptest = "1.4"
 
-[[bin]]
-name = "smoke"
-path = "src/smoke.rs"
-
-[[bin]]
-name = "roundtrip"
-path = "src/roundtrip.rs"
+# Exploratory dev tools from the first hand-verification pass live in attic/.
+# They target a since-changed generated API and are not compiled; restore as
+# [[bin]] targets after porting them to the current zlib-compression API.
 
 [workspace]
