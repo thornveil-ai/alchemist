@@ -81,6 +81,27 @@ _CT_DATA = CanonicalType(
 DEFAULT_CANONICAL: dict[str, CanonicalType] = {c.c_type: c for c in (_CT_DATA,)}
 
 
+# Explicit (struct, field) → Rust type corrections for state fields the
+# extractor collapsed to a scalar (losing the struct). The struct-field
+# parser drops field names, so these cannot be recovered by C-type
+# correlation; they are curated per-subject knowledge, like the canonical
+# registry. zlib's deflate_state embeds three tree_desc VALUE members which
+# the tree-builders access as `s.l_desc.max_code` — collapsing them to u32
+# makes that access uncompilable.
+@dataclass(frozen=True)
+class FieldOverride:
+    struct: str
+    field: str
+    rust_type: str
+
+
+DEFAULT_FIELD_OVERRIDES: tuple[FieldOverride, ...] = (
+    FieldOverride("DeflateState", "l_desc", "TreeDesc"),
+    FieldOverride("DeflateState", "d_desc", "TreeDesc"),
+    FieldOverride("DeflateState", "bl_desc", "TreeDesc"),
+)
+
+
 # ---------------------------------------------------------------------------
 # Rust type surgery: swap an element type while keeping the container shape.
 # ---------------------------------------------------------------------------
@@ -242,11 +263,46 @@ def _analysis_param_types(analysis: dict) -> dict[str, list[tuple[str, str]]]:
     return out
 
 
+def _apply_field_overrides(specs, overrides) -> int:
+    """Rewrite specific `pub <field>: <type>` inside named struct definitions.
+
+    For state fields the extractor collapsed to a scalar (DeflateState.l_desc
+    → u32 instead of TreeDesc), which no correlation or alias can recover
+    because the struct-field parser drops names. Rewrites both the raw
+    rust_definition and any structured TypeField."""
+    by_struct: dict[str, dict[str, str]] = defaultdict(dict)
+    for ov in overrides:
+        by_struct[ov.struct][ov.field] = ov.rust_type
+    n = 0
+    for module in specs:
+        for st in getattr(module, "shared_types", None) or []:
+            fixes = by_struct.get(st.name)
+            if not fixes:
+                continue
+            rd = getattr(st, "rust_definition", None)
+            if rd:
+                lines = rd.splitlines(keepends=True)
+                for i, line in enumerate(lines):
+                    m = re.match(r"^(\s*(?:pub\s+)?([A-Za-z_]\w*)\s*:\s*)(.+?)(,?\s*)$",
+                                 line.rstrip("\n"))
+                    if m and m.group(2) in fixes and m.group(3).strip() != fixes[m.group(2)]:
+                        nl = m.group(1) + fixes[m.group(2)] + m.group(4)
+                        lines[i] = nl + ("\n" if line.endswith("\n") else "")
+                        n += 1
+                st.rust_definition = "".join(lines)
+            for tf in getattr(st, "fields", None) or []:
+                if tf.name in fixes and tf.rust_type != fixes[tf.name]:
+                    tf.rust_type = fixes[tf.name]
+                    n += 1
+    return n
+
+
 def unify_types(
     specs: list,
     analysis: dict,
     *,
     registry: dict[str, CanonicalType] | None = None,
+    field_overrides: tuple[FieldOverride, ...] | None = None,
 ) -> UnifyReport:
     """Canonicalize Rust types across the workspace, in place on `specs`.
 
@@ -255,6 +311,8 @@ def unify_types(
     mapped to more than one distinct Rust element type across the specs.
     """
     registry = {**DEFAULT_CANONICAL, **(registry or {})}
+    overrides = (DEFAULT_FIELD_OVERRIDES if field_overrides is None
+                 else field_overrides)
     c_params = _analysis_param_types(analysis)
     report = UnifyReport()
 
@@ -367,6 +425,10 @@ def unify_types(
             kept.append(st)
         module.shared_types = kept
     report.dropped_structs = tuple(dict.fromkeys(dropped))
+
+    # Pass 6 — explicit field-type overrides for scalar-collapsed state
+    # fields (DeflateState.l_desc/d_desc/bl_desc → TreeDesc).
+    report.field_rewrites += _apply_field_overrides(specs, overrides)
 
     return report
 

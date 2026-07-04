@@ -196,3 +196,24 @@ def test_param_and_state_field_are_now_call_compatible():
     rd = specs[0].shared_types[0].rust_definition
     assert param == "&[TreeElement]"
     assert "dyn_ltree: Vec<TreeElement>" in rd  # &state.dyn_ltree coerces to &[TreeElement]
+
+
+def test_field_overrides_fix_scalar_collapsed_descriptors():
+    """DeflateState.l_desc/d_desc/bl_desc collapsed to u32; build_bl_tree
+    does s.l_desc.max_code, which needs TreeDesc. No correlation/alias can
+    reach it — only an explicit override."""
+    ds = _shared("DeflateState", rust_def=(
+        "pub struct DeflateState {\n"
+        "    pub opt_len: u64,\n"
+        "    pub l_desc: u32,\n"
+        "    pub d_desc: u32,\n"
+        "    pub bl_desc: u32,\n"
+        "}"))
+    specs = [ModuleSpec(name="types", display_name="", description="",
+                        algorithms=[], shared_types=[ds])]
+    unify_types(specs, {"files": {}})
+    rd = specs[0].shared_types[0].rust_definition
+    assert "pub l_desc: TreeDesc," in rd
+    assert "pub d_desc: TreeDesc," in rd
+    assert "pub bl_desc: TreeDesc," in rd
+    assert "pub opt_len: u64," in rd   # untouched
