@@ -10,6 +10,12 @@ gets it to "contract-ready" status. Live tracking lives on the
 [Thornveil Roadmap project](https://github.com/orgs/thornveil-ai/projects/1)
 with `Repository = alchemist` filter.
 
+Beyond contract-ready, the assurance end-state — what it would take to
+honestly print the word "flawless" — is specified in
+[`docs/PATH_TO_FLAWLESS.md`](docs/PATH_TO_FLAWLESS.md): a per-function
+assurance ladder (L0 compiles → L5 bounded proof) ending in
+**flawless-or-refused** with signed verification receipts.
+
 ---
 
 ## What "contract-ready" means for Alchemist

@@ -20,6 +20,9 @@ All notable changes to this project are documented here. The format is based on 
   so a completed crate can be verified while sibling crates are still
   skeletons.
 - `zlib_checksum_diff_config()` — checksum-crate-scoped differential config.
+- `docs/PATH_TO_FLAWLESS.md` — the assurance roadmap: per-function
+  verification levels (L0–L6), the oracle-integrity/fuzzing/proof gap
+  program, and the "flawless-or-refused" end-state with signed receipts.
 - Initial CHANGELOG.md — establishes Keep-a-Changelog format
 
 ### Fixed
