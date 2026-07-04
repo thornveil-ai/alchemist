@@ -324,3 +324,51 @@ def test_tests_fail_on_skeleton_by_design(tmp_path):
     assert "unimplemented" in combined.lower() or "panic" in combined.lower(), (
         f"expected panic-on-unimplemented, got:\n{combined[:2000]}"
     )
+
+
+# ---------- static-table initializer no-op + const-scope prompt (M09) ----------
+
+def test_noop_table_init_recognizes_lazy_static_initializers():
+    from alchemist.implementer.init_templates import (
+        is_noop_table_init, noop_table_init_template,
+    )
+    from alchemist.extractor.schemas import AlgorithmSpec
+    for name in ("crc32_init_table", "make_crc_table", "init_hash_table"):
+        alg = AlgorithmSpec(name=name, display_name=name, category="checksum",
+                            description="", inputs=[], return_type="()")
+        assert is_noop_table_init(alg), name
+        code = noop_table_init_template(alg)
+        assert code.startswith(f"pub fn {name}()")
+        assert "no-op" in code
+
+
+def test_noop_table_init_rejects_functions_with_inputs_or_returns():
+    from alchemist.implementer.init_templates import is_noop_table_init
+    from alchemist.extractor.schemas import AlgorithmSpec, Parameter
+    # crc32 itself (has inputs) must NOT be no-op'd
+    with_inputs = AlgorithmSpec(
+        name="crc32", display_name="", category="checksum", description="",
+        inputs=[Parameter(name="buf", rust_type="&[u8]", description="")],
+        return_type="u32")
+    assert not is_noop_table_init(with_inputs)
+    # A "table" fn that returns data is not a no-op initializer
+    returns_data = AlgorithmSpec(
+        name="get_crc_table", display_name="", category="checksum",
+        description="", inputs=[], return_type="&'static [u32]")
+    assert not is_noop_table_init(returns_data)
+
+
+def test_consts_in_scope_lists_module_constants():
+    from alchemist.implementer.tdd_generator import TDDGenerator
+    src = ("pub const CRC32_TABLE: [u32; 256] = [0; 256];\n"
+           "const NMAX: usize = 5552;\n"
+           "static POLY: u32 = 0xEDB88320;\n"
+           "pub fn crc32() {}\n")
+    listed = TDDGenerator._consts_in_scope(src)
+    assert "CRC32_TABLE" in listed and "NMAX" in listed and "POLY" in listed
+
+
+def test_consts_in_scope_empty_when_none():
+    from alchemist.implementer.tdd_generator import TDDGenerator
+    listed = TDDGenerator._consts_in_scope("pub fn f() {}\n")
+    assert "compute" in listed.lower()

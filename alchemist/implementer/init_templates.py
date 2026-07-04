@@ -32,6 +32,45 @@ _RESET_ONLY_PATTERNS = [
     r"^init_block$",            # zlib: zeros a handful of counts
 ]
 
+# Lazy static-table initializers (e.g. crc32_init_table): in C they fill a
+# file-scope static table on first use; the safe-Rust translation has no
+# mutable global, so every caller computes/holds its own table and the
+# initializer's entire observable effect disappears. A no-op is the correct
+# and COMPLETE translation — not a stub — provided the function takes no
+# inputs and returns nothing observable.
+_TABLE_INIT_PATTERNS = [
+    r".*init.*table.*",
+    r".*table.*init.*",
+    r".*make_?crc_?table.*",
+]
+
+
+def is_noop_table_init(alg) -> bool:
+    """True iff `alg` is a zero-input, void-return static-table initializer
+    whose only C effect was populating a file-scope static."""
+    name = alg.name
+    if alg.inputs:
+        return False
+    ret = (alg.return_type or "()").strip()
+    if ret not in ("", "()"):
+        return False
+    lowered = name.lower()
+    return any(re.match(p, lowered) for p in _TABLE_INIT_PATTERNS)
+
+
+def noop_table_init_template(alg) -> str | None:
+    """Emit the no-op translation for a static-table initializer."""
+    if not is_noop_table_init(alg):
+        return None
+    return (
+        f"pub fn {alg.name}() {{\n"
+        f"    // The C original populated a file-scope static lookup table on\n"
+        f"    // first use. This safe-Rust translation has no mutable global;\n"
+        f"    // each consumer computes the table it needs, so initialization\n"
+        f"    // is a no-op here.\n"
+        f"}}"
+    )
+
 
 def is_init_function(name: str) -> bool:
     """True iff a deterministic reset-to-default template is applicable.

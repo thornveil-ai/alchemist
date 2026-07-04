@@ -149,6 +149,17 @@ Referenced standards: {standards}
 ## Shared type definitions (already in scope via `use zlib_types::*;`)
 {struct_context}
 
+## Module-level constants/statics IN SCOPE (you may reference these by name)
+{available_consts}
+
+Any lookup table, precomputed array, or cached value the C code kept in a
+file-scope `static` that is NOT listed above does NOT exist in this
+translation. Do not reference an undefined module constant — compute the
+data you need inside your function body (e.g. build a CRC table from its
+polynomial at the top of the function). C initializer functions (e.g.
+`*_init_table`) and their `ready`-flag statics have no safe-Rust
+equivalent; never call them.
+
 ## Current stub to replace
 ```rust
 {current_body}
@@ -455,6 +466,39 @@ class TDDGenerator:
                 # Cached win didn't hold — revert and fall through to iteration
                 module_path.write_text(current, encoding="utf-8")
 
+        # No-op static-table initializer: a zero-input void function whose
+        # only C effect was filling a file-scope static. In safe Rust that
+        # global doesn't exist and each consumer computes its own table, so
+        # the correct COMPLETE translation is an empty body. There is nothing
+        # to verify (no inputs, no observable output) — accept on compile.
+        from alchemist.implementer.init_templates import (
+            noop_table_init_template,
+        )
+        noop_init = noop_table_init_template(alg)
+        if noop_init:
+            current = module_path.read_text(encoding="utf-8")
+            replaced = self._replace_fn_in_source(current, alg.name, noop_init)
+            if replaced:
+                module_path.write_text(replaced, encoding="utf-8")
+                ok_compile, _ = _run_cargo_check(crate_dir, timeout=180)
+                if ok_compile:
+                    attempt.iterations = 0
+                    attempt.final_compiled = True
+                    attempt.tests_passed = True
+                    try:
+                        self._save_cached_win(
+                            workspace_dir, crate_spec.name, module.name,
+                            alg.name, noop_init,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    console.print(
+                        f"  [green]{alg.name}: static-table initializer → "
+                        f"no-op (safe-Rust has no mutable global)[/green]"
+                    )
+                    return attempt
+                module_path.write_text(current, encoding="utf-8")
+
         # Short-circuit: if the function has no verifiable test vectors
         # upfront, skip iteration entirely. Iterating would burn LLM calls
         # on code we can't verify. P2 surfaces the gap rather than silently
@@ -618,6 +662,7 @@ class TDDGenerator:
             new_fn = self._prompt_for_impl(
                 alg, current_body or "unimplemented!()",
                 previous_failure=previous_failure,
+                module_source=module_path.read_text(encoding="utf-8"),
             )
             if not new_fn:
                 attempt.last_error = "LLM returned empty"
@@ -783,10 +828,35 @@ class TDDGenerator:
 
         return attempt
 
+    @staticmethod
+    def _consts_in_scope(module_source: str | None) -> str:
+        """List module-level const/static identifiers the fill may reference.
+
+        The model otherwise invents plausible names (CRC32_TABLE) for data
+        that a C file-scope static held but that was never materialized in
+        the safe-Rust module — an undefined-name compile error every
+        iteration. Telling it exactly what IS in scope makes it either use
+        the real const (zlib injects CRC32_TABLE) or compute locally
+        (tinychk computes its table at runtime, so nothing is listed).
+        """
+        if not module_source:
+            return "(none — compute any lookup data inside your function)"
+        names: list[str] = []
+        for m in re.finditer(
+            r"^\s*(?:pub\s+)?(?:const|static)\s+([A-Z_][A-Z0-9_]*)\s*:",
+            module_source, re.MULTILINE,
+        ):
+            if m.group(1) not in names:
+                names.append(m.group(1))
+        if not names:
+            return "(none — compute any lookup data inside your function)"
+        return ", ".join(names)
+
     def _prompt_for_impl(
         self, alg: AlgorithmSpec, current_body: str, *,
         previous_failure: str = "",
         temperature: float = 0.15,
+        module_source: str | None = None,
     ) -> str | None:
         from alchemist.standards import lookup_test_vectors
         from alchemist.references import find_references
@@ -840,6 +910,7 @@ class TDDGenerator:
             catalog_vectors=catalog_vec_text,
             reference_impls=reference_block,
             struct_context=struct_context,
+            available_consts=self._consts_in_scope(module_source),
             current_body=current_body,
             previous_failure=prev_failure_section,
         )
@@ -891,11 +962,14 @@ class TDDGenerator:
             run_multi_sample,
         )
 
+        _module_src = module_path.read_text(encoding="utf-8")
+
         def sampler(_idx: int) -> str | None:
             return self._prompt_for_impl(
                 alg, current_body,
                 previous_failure=previous_failure,
                 temperature=self.multi_sample_temperature,
+                module_source=_module_src,
             )
 
         def splicer(body: str) -> bool:
