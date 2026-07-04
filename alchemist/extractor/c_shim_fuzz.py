@@ -437,9 +437,72 @@ def fuzz_pqdownheap(
     return vectors
 
 
+_MAX_BITS = 15
+
+
+def _tree_lit(field_vals: dict[str, list[int]], n: int) -> str:
+    """Render `vec![TreeElement { <field>: v, ... }, ...]` for n elements."""
+    items = []
+    for i in range(n):
+        fields = ", ".join(f"{k}: {field_vals[k][i] & 0xffff}u16"
+                           for k in field_vals)
+        items.append(f"zlib_types::TreeElement {{ {fields}, ..Default::default() }}")
+    return "vec![" + ", ".join(items) + "]"
+
+
+def fuzz_gen_codes(
+    dll: ctypes.CDLL,
+    alg: AlgorithmSpec,
+    *,
+    count: int = 10,
+    seed: int = 0x47_43_44_53,
+) -> list[SpecTestVector]:
+    """Vectors for gen_codes(tree, max_code, bl_count): from per-node bit
+    lengths (tree.Len) + the length histogram bl_count, assign canonical
+    Huffman codes (tree.Code). No deflate_state. Drives the shim (validated
+    100/100 vs a Python reference) and emits a fully-rendered rust_body test
+    that mutates the tree and asserts the resulting codes."""
+    rng = random.Random(seed)
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        n = rng.randint(4, 40)
+        max_code = n - 1
+        lens = [rng.randint(0, _MAX_BITS) for _ in range(n)]
+        bl_count = [0] * (_MAX_BITS + 1)
+        for L in lens:
+            if L > 0:
+                bl_count[L] += 1
+        dll.shim_reset()
+        dll.shim_set_tree_dl(0, (ctypes.c_ushort * n)(*lens), n)
+        dll.shim_set_bl_count(
+            (ctypes.c_ushort * (_MAX_BITS + 1))(*bl_count), _MAX_BITS + 1)
+        dll.shim_run_gen_codes(0, max_code)
+        out = (ctypes.c_ushort * n)()
+        dll.shim_get_tree_fc(0, out, n)
+        codes = list(out)
+
+        tree_lit = _tree_lit({"len": lens}, n)
+        bl_lit = "vec![" + ", ".join(f"{c}u16" for c in bl_count) + "]"
+        codes_lit = "vec![" + ", ".join(f"{c}u16" for c in codes) + "]"
+        body = (
+            f"let mut tree = {tree_lit};\n"
+            f"let bl_count: Vec<u16> = {bl_lit};\n"
+            f"super::gen_codes(&mut tree, {max_code}usize, &bl_count);\n"
+            f"let codes: Vec<u16> = tree.iter().map(|e| e.code).collect();\n"
+            f'assert_eq!(codes, {codes_lit}, "gen_codes body {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"gen_codes_shim_{i}",
+            source="C reference via shim: shim_run_gen_codes",
+            inputs={}, expected_output=body, tolerance="rust_body",
+        ))
+    return vectors
+
+
 # Registry of dedicated tree-builder fuzzers, keyed by algorithm name.
 TREE_BUILDER_FUZZERS: dict[str, Callable] = {
     "pqdownheap": fuzz_pqdownheap,
+    "gen_codes": fuzz_gen_codes,
 }
 
 

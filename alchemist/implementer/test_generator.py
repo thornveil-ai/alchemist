@@ -504,6 +504,17 @@ def _emit_spec_test(
     can't be rendered emits a test that FAILS with an explanation, so the
     gate stays red instead of the module failing to compile.
     """
+    # Fully-rendered Rust test body: the fuzzer authored the complete
+    # statements (let-bindings + call + asserts). Used by tree-builders whose
+    # shape (no &mut state, mutated slice params, field-projected output
+    # comparison) doesn't fit the field-by-field templates. `inputs` is
+    # ignored; `expected_output` IS the body.
+    if vec.tolerance == "rust_body":
+        body = vec.expected_output or ""
+        indented = "\n".join(
+            ("        " + ln if ln.strip() else ln) for ln in body.splitlines())
+        return (f"    #[test]\n    fn test_{fn_name}_body_{idx}() {{\n"
+                f"{indented}\n    }}\n")
     # State-mutator vectors use a different test shape
     if vec.tolerance == "state_mutator":
         return _emit_state_mutator_test(fn_name, vec, idx)

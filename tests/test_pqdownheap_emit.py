@@ -36,3 +36,14 @@ def test_scalar_only_mutator_not_borrowed():
           expected_output="bi_buf:u16=8u16", tolerance="state_mutator")
     out = _emit_state_mutator_test("send_bits", v, 0)
     assert "super::send_bits(&mut state, value, length);" in out  # no & prefix
+
+
+def test_rust_body_emitter_wraps_authored_body():
+    from alchemist.extractor.schemas import TestVector as V
+    from alchemist.implementer.test_generator import _emit_spec_test
+    body = "let mut tree = vec![];\nsuper::gen_codes(&mut tree, 0usize, &[]);\nassert_eq!(1, 1, \"x\");"
+    v = V(description="d", source="s", inputs={}, expected_output=body, tolerance="rust_body")
+    out = _emit_spec_test("gen_codes", v, 3)
+    assert "fn test_gen_codes_body_3()" in out
+    assert "super::gen_codes(&mut tree, 0usize, &[]);" in out
+    assert out.count("#[test]") == 1
