@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **A real external cryptographic library, translated end-to-end.**
+  `alchemist translate subjects/siphash` — the genuine veorq/SipHash-2-4
+  reference (CC0, not authored here) — reaches **OVERALL: PASS** with
+  Gemma 4 31B Dense in the loop: byte-exact against the compiled reference
+  (canonical vector and thousands of fuzzed messages), zero hand-edits.
+  Receipt: `docs/receipts/siphash-2026-07-04.json`. Getting there taught
+  the pipeline to handle a keyed byte-digest hash with an out-param
+  (a whole hash family: SipHash/SHA/HMAC/BLAKE) and — the decisive fix —
+  to feed the model the C `#define` macros a function references
+  (`SIPROUND`, `ROTL`), which is why the model finally produced the exact
+  ARX rounds instead of guessing them. It also surfaced eleven general
+  pipeline fixes (below), none SipHash-specific.
 - **Generalization proven on a second, independent subject.**
   `alchemist translate subjects/hashkit` — FNV-1a (u32), CRC-16/CCITT-FALSE
   (u16) and the BSD rotate-add sum (u16), algorithms and widths distinct from

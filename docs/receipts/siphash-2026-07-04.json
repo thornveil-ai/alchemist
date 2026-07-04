@@ -1,0 +1,92 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-04T21:30:55.853504+00:00",
+  "workspace": "/data/rigrun/projects/alchemist/subjects/siphash/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (3 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 3 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s [1/1 harnesses adapted (siphash -> siphash::siphash (digest))]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "siphash",
+        "category": "hash",
+        "cases": 5000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "siphash -> siphash::siphash (digest)"
+      }
+    ],
+    "cargo_summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s"
+  },
+  "oracle": {
+    "ffi_crate": "c_siphash_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/data/rigrun/projects/alchemist/subjects/siphash/siphash.c",
+        "sha256": "94b6c1f3a24072a8a5afc4fea7fb9e95c5fc2e99657b6b712d991029ffdaa88c"
+      }
+    ],
+    "dll": {
+      "path": "/data/rigrun/projects/alchemist/subjects/siphash/.alchemist/verify_gen/c_siphash_ref/libc_siphash_ref.so",
+      "sha256": "8a1e22e78643418810202d24ece24a06e9658d96f833c813ece67f9daa1d4580"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 1
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "aedcdc5f06394a76730ef37a1cfc242faf2060f43d381ab663929608073f04de",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}
