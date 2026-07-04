@@ -19,8 +19,12 @@ Examples of what these lints catch:
 
 Each lint returns a list of `SemanticFinding` with file, line, rule
 name, severity, and a message. Findings are fed back into the TDD
-prompt as "previous attempt violated this invariant" hints, and a
-final sweep blocks success when any finding is severity=error.
+prompt as "previous attempt violated this invariant" hints
+(tdd_generator fill loop), and `scan_workspace_semantics` sweeps the
+whole generated workspace at verify time — wired as the semantic gate
+in differential_tester, which fails closed on any severity=error
+finding regardless of which path (fill loop, multi-sample, cached win,
+holistic patch, hand edit) produced the code.
 """
 
 from __future__ import annotations
@@ -129,6 +133,71 @@ def lint_crc32(source: str, alg: AlgorithmSpec) -> list[SemanticFinding]:
             message=(
                 "source contains BOTH 0xEDB88320 and 0x04C11DB7 polynomials. "
                 "Pick one — the variant resolver should have resolved this."
+            ),
+        ))
+    return findings
+
+
+def lint_crc32_braid(source: str, alg: AlgorithmSpec) -> list[SemanticFinding]:
+    """Big-endian word-braid variant disambiguation (zlib crc_word_big shape).
+
+    This is the project's #1 named failure mode: multi-variant algorithm
+    disambiguation. zlib's braided CRC has TWO word-level table conventions:
+
+      * crc_word     (little): data = (data >> 8) ^ crc_table[data & 0xff]
+      * crc_word_big (big):    data = (data << 8) ^ crc_big_table[data >> ((W-1)<<3)]
+
+    where crc_big_table[i] = byte_swap(crc_table[i]) over z_word_t. For the
+    W=8 build the swapped 32-bit entry occupies the HIGH 32 bits of the
+    64-bit word (zlib crc32.h: crc_big_table[1] == 0x9630077700000000).
+
+    A translation that keeps the MSB-first shape but XORs the little-endian
+    table entry in directly compiles, runs, and produces stable garbage that
+    matches NO zlib configuration. `lint_crc32` can't see this — it skips
+    functions that don't take byte buffers, and word-braid helpers take a
+    scalar word. This lint owns that shape.
+    """
+    findings: list[SemanticFinding] = []
+    # Shape gate: MSB-first word processing — shifts the word left by 8 and
+    # indexes its top byte (>>56 for a 64-bit word, >>24 for 32-bit).
+    top_idx = re.search(r">>\s*(56|24)\b", source)
+    shifts_left_8 = re.search(r"<<\s*8\b", source)
+    if not (top_idx and shifts_left_8):
+        return findings
+
+    has_swap = bool(re.search(r"\.swap_bytes\s*\(|\bbyte_swap\s*\(", source))
+    has_big_table = bool(re.search(
+        r"\b(?:CRC32_BIG_TABLE|CRC_BIG_TABLE|crc_big_table|BIG_TABLE)\b", source
+    ))
+    indexes_little_table = bool(re.search(
+        r"\b(?:CRC32_TABLE|CRC_TABLE|crc_table)\b\s*\[", source
+    ))
+    if indexes_little_table and not (has_swap or has_big_table):
+        findings.append(SemanticFinding(
+            rule="crc32_braid_missing_byteswap",
+            severity="error",
+            message=(
+                "big-endian word-braid CRC XORs a little-endian table entry "
+                "without byte-swapping it. zlib defines crc_big_table[i] = "
+                "byte_swap(crc_table[i]); for the W=8 build the swapped entry "
+                "sits in the high 32 bits. Apply .swap_bytes() to the widened "
+                "entry (or use a dedicated big-endian table) — the unswapped "
+                "form matches no zlib variant."
+            ),
+        ))
+
+    # Word-width consistency: the top-byte index shift pins the word size
+    # (56 → 8-byte word, 24 → 4-byte word); the byte loop must match it.
+    width = 8 if top_idx.group(1) == "56" else 4
+    loop = re.search(r"for\s+\w+\s+in\s+0\s*\.\.=?\s*(\d+)", source)
+    if loop and int(loop.group(1)) != width:
+        findings.append(SemanticFinding(
+            rule="crc32_braid_word_size_mismatch",
+            severity="error",
+            message=(
+                f"word-braid CRC indexes the top byte with >> {top_idx.group(1)} "
+                f"(a {width}-byte word) but iterates {loop.group(1)} times. "
+                f"W={width} requires exactly {width} byte rounds per word."
             ),
         ))
     return findings
@@ -259,7 +328,7 @@ def lint_unused_input(source: str, alg: AlgorithmSpec) -> list[SemanticFinding]:
 # ---------------------------------------------------------------------------
 
 _FAMILY_LINTS: dict[str, list[Callable[[str, AlgorithmSpec], list[SemanticFinding]]]] = {
-    "crc32":    [lint_crc32, lint_unused_input],
+    "crc32":    [lint_crc32_braid, lint_crc32, lint_unused_input],
     "adler32":  [lint_adler32, lint_unused_input],
     "sha":      [lint_sha256, lint_unused_input],
     "md5":      [lint_md5, lint_unused_input],
@@ -272,7 +341,10 @@ _FAMILY_LINTS: dict[str, list[Callable[[str, AlgorithmSpec], list[SemanticFindin
 def _family_key(alg: AlgorithmSpec) -> str:
     name = alg.name.lower()
     standards_blob = " ".join(alg.referenced_standards or []).lower()
-    if re.search(r"crc[_-]?32", name + " " + standards_blob):
+    # `crc32`/`crc-32` anywhere, or a crc_* helper name (crc_word, crc_word_big,
+    # make_crc_table, ...) — the braid helpers don't carry "32" in their names.
+    if re.search(r"crc[_-]?32", name + " " + standards_blob) or \
+            re.search(r"(?:^|_)crc(?:_|$)", name):
         return "crc32"
     if "adler" in name:
         return "adler32"
@@ -311,6 +383,80 @@ def lint_function(source: str, alg: AlgorithmSpec) -> list[SemanticFinding]:
                 message=f"{lint.__name__} raised: {e}",
             ))
     return out
+
+
+def _fn_sources(text: str) -> dict[str, tuple[int, str]]:
+    """Map fn name → (1-based start line, full source incl. signature).
+
+    Reuses anti_stub's comment/string-aware span collector for body ends and
+    pairs each body with its `fn` header so lints see the whole function.
+    """
+    from alchemist.implementer.anti_stub import _FN_HEADER, _collect_fn_spans
+
+    # Everything is keyed off headers that OWN a body. A semicolon-terminated
+    # declaration (trait method, extern-block decl) has no body: naively
+    # taking the next `{` after it lands on a LATER fn's brace and poisons
+    # both the source attribution and the reported line (_collect_fn_spans
+    # has that blind spot, so its names are not trusted here — only its
+    # brace-matched body-end positions are used).
+    body_end_by_start: dict[int, int] = {
+        bs: be for bs, be, _name in _collect_fn_spans(text)
+    }
+    out: dict[str, tuple[int, str]] = {}
+    for m in _FN_HEADER.finditer(text):
+        brace = text.find("{", m.end())
+        semi = text.find(";", m.end())
+        if brace == -1 or (semi != -1 and semi < brace):
+            continue  # bodyless declaration — nothing to lint
+        body_end = body_end_by_start.get(brace + 1)
+        if body_end is None:
+            continue
+        src = text[m.start():body_end + 1]
+        line = text.count("\n", 0, m.start()) + 1
+        out.setdefault(m.group(1), (line, src))
+    return out
+
+
+def scan_workspace_semantics(
+    workspace_dir: Path,
+    specs: list,
+) -> list[SemanticFinding]:
+    """Lint every generated function in a workspace against its spec.
+
+    This is the workspace-level sweep the module docstring promises: code
+    that arrived via any path (fill loop, multi-sample, cached win, holistic
+    patch, or a hand edit) gets the same family lints, so a wrong algorithm
+    variant fails closed at verify time instead of shipping.
+
+    `specs` is a list of ModuleSpec. Function names are resolved with the
+    same `_snake` pass the skeleton uses, so `super::`-visible names line up.
+    """
+    from alchemist.implementer.skeleton import _snake
+
+    alg_by_fn: dict[str, AlgorithmSpec] = {}
+    for module in specs or []:
+        for alg in getattr(module, "algorithms", None) or []:
+            alg_by_fn[_snake(alg.name)] = alg
+
+    findings: list[SemanticFinding] = []
+    for rs in sorted(Path(workspace_dir).rglob("*.rs")):
+        if "target" in rs.parts:
+            continue
+        try:
+            text = rs.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name, (line, src) in _fn_sources(text).items():
+            alg = alg_by_fn.get(name)
+            if alg is None:
+                continue
+            for f in lint_function(src, alg):
+                if not f.file:
+                    f.file = str(rs)
+                if not f.line:
+                    f.line = line
+                findings.append(f)
+    return findings
 
 
 def has_errors(findings: list[SemanticFinding]) -> bool:

@@ -205,6 +205,129 @@ def test_used_buf_clean():
     assert not findings
 
 
+# ---------- CRC-32 big-endian word braid (multi-variant disambiguation) ----------
+
+def _braid_alg():
+    return _alg(
+        "crc_word_big",
+        standards=["IEEE 802.3", "variant:ieee_reflected"],
+        inputs=[Parameter(name="data", rust_type="u64", description="")],
+        return_type="u64",
+    )
+
+
+_BRAID_WRONG = """
+pub fn crc_word_big(mut data: u64) -> u64 {
+    for _ in 0..8 {
+        let idx = ((data >> 56) & 0xff) as usize;
+        data = (data << 8) ^ (CRC32_TABLE[idx] as u64);
+    }
+    data
+}
+"""
+
+_BRAID_RIGHT_SWAP = """
+pub fn crc_word_big(mut data: u64) -> u64 {
+    for _ in 0..8 {
+        let idx = ((data >> 56) & 0xff) as usize;
+        data = (data << 8) ^ (CRC32_TABLE[idx] as u64).swap_bytes();
+    }
+    data
+}
+"""
+
+_BRAID_RIGHT_BIG_TABLE = """
+pub fn crc_word_big(mut data: u64) -> u64 {
+    for _ in 0..8 {
+        let idx = ((data >> 56) & 0xff) as usize;
+        data = (data << 8) ^ CRC32_BIG_TABLE[idx];
+    }
+    data
+}
+"""
+
+_BRAID_WIDTH_MISMATCH = """
+pub fn crc_word_big(mut data: u64) -> u64 {
+    for _ in 0..4 {
+        let idx = ((data >> 56) & 0xff) as usize;
+        data = (data << 8) ^ (CRC32_TABLE[idx] as u64).swap_bytes();
+    }
+    data
+}
+"""
+
+
+def test_braid_unswapped_little_table_flagged():
+    """The zlib crc_word_big failure mode: MSB-first braid XORing the
+    little-endian table entry directly. Compiles, runs, matches nothing."""
+    from alchemist.implementer.semantic_lints import lint_crc32_braid
+    findings = lint_crc32_braid(_BRAID_WRONG, _braid_alg())
+    assert any(f.rule == "crc32_braid_missing_byteswap" for f in findings)
+    assert has_errors(findings)
+
+
+def test_braid_with_swap_bytes_clean():
+    from alchemist.implementer.semantic_lints import lint_crc32_braid
+    assert not lint_crc32_braid(_BRAID_RIGHT_SWAP, _braid_alg())
+
+
+def test_braid_with_dedicated_big_table_clean():
+    from alchemist.implementer.semantic_lints import lint_crc32_braid
+    assert not lint_crc32_braid(_BRAID_RIGHT_BIG_TABLE, _braid_alg())
+
+
+def test_braid_word_size_mismatch_flagged():
+    """>>56 pins an 8-byte word; a 4-iteration loop is a W=4/W=8 chimera."""
+    from alchemist.implementer.semantic_lints import lint_crc32_braid
+    findings = lint_crc32_braid(_BRAID_WIDTH_MISMATCH, _braid_alg())
+    assert any(f.rule == "crc32_braid_word_size_mismatch" for f in findings)
+
+
+def test_braid_lint_ignores_non_braid_crc():
+    """Plain byte-at-a-time crc32 (shift right, no top-byte index) is not
+    this lint's business."""
+    from alchemist.implementer.semantic_lints import lint_crc32_braid
+    src = """
+    pub fn crc32(crc: u32, buf: &[u8], len: usize) -> u32 {
+        let mut c = !crc;
+        for i in 0..len.min(buf.len()) {
+            let idx = (c ^ buf[i] as u32) as u8;
+            c = CRC32_TABLE[idx as usize] ^ (c >> 8);
+        }
+        !c
+    }
+    """
+    assert not lint_crc32_braid(src, _braid_alg())
+
+
+def test_braid_lint_routed_for_crc_family():
+    """lint_function must reach the braid lint for crc-family algorithms
+    even though the input is a scalar word, not a byte buffer."""
+    findings = lint_function(_BRAID_WRONG, _braid_alg())
+    assert any(f.rule == "crc32_braid_missing_byteswap" for f in findings)
+
+
+def test_scan_workspace_semantics_flags_wrong_variant(tmp_path):
+    """Workspace sweep: a planted wrong-variant fn is found and attributed."""
+    from alchemist.implementer.semantic_lints import scan_workspace_semantics
+    from alchemist.extractor.schemas import ModuleSpec
+    crate = tmp_path / "crc-crate"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname = "crc-crate"\nversion = "0.1.0"\n', encoding="utf-8")
+    (crate / "src" / "lib.rs").write_text(
+        "pub const CRC32_TABLE: [u32; 256] = [0u32; 256];\n" + _BRAID_WRONG,
+        encoding="utf-8",
+    )
+    module = ModuleSpec(name="crc32", display_name="", description="",
+                        algorithms=[_braid_alg()])
+    findings = scan_workspace_semantics(tmp_path, [module])
+    errs = [f for f in findings if f.rule == "crc32_braid_missing_byteswap"]
+    assert errs, "workspace sweep missed the planted wrong variant"
+    assert errs[0].file.endswith("lib.rs")
+    assert errs[0].line > 0
+
+
 # ---------- lint_function routing ----------
 
 def test_lint_function_routes_crc32():
