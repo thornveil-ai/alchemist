@@ -173,6 +173,66 @@ class TranslationReport:
         return "\n".join(lines) + "\n" + ("OVERALL: PASS" if self.ok else "OVERALL: FAIL")
 
 
+def _reconcile_module_placement(arch, specs) -> None:
+    """Ensure every spec module is claimed by exactly one crate's `modules`.
+
+    The skeleton keys module emission off `crate.modules` containing real
+    module names. When the architect lists function names there, or leaves a
+    module unclaimed, the module's functions never get emitted. This rewrites
+    `modules` to reference real module names: each module stays where the
+    architect put it if a crate already references one of its functions or
+    its name; otherwise it lands in the best-named crate (or the first).
+    Empty crates are dropped.
+    """
+    spec_module_names = [m.name for m in specs]
+    fn_to_module = {
+        a.name: m.name for m in specs for a in (m.algorithms or [])
+    }
+    if not spec_module_names:
+        return
+
+    # Which crate should own each module? Prefer a crate that already names
+    # the module or one of its functions; fall back by name affinity.
+    placement: dict[str, str] = {}
+    for mod_name in spec_module_names:
+        chosen = None
+        for c in arch.crates:
+            listed = set(c.modules or [])
+            if mod_name in listed or any(
+                fn_to_module.get(x) == mod_name for x in listed
+            ):
+                chosen = c.name
+                break
+        if chosen is None and arch.crates:
+            # Name affinity: a crate whose name shares a token with the module.
+            for c in arch.crates:
+                if mod_name.lower() in c.name.lower() or c.name.lower() in mod_name.lower():
+                    chosen = c.name
+                    break
+        if chosen is None and arch.crates:
+            chosen = arch.crates[0].name
+        if chosen is not None:
+            placement[mod_name] = chosen
+
+    # Rewrite every crate's module list to the real module names it owns.
+    for c in arch.crates:
+        c.modules = [m for m in spec_module_names if placement.get(m) == c.name]
+
+    # Drop crates that ended up owning no modules AND declaring no types/traits
+    # (a pure type/error crate legitimately has no modules).
+    def _keeps(c) -> bool:
+        if c.modules:
+            return True
+        has_types = any(e.crate == c.name for e in (arch.error_types or []))
+        has_traits = any(t.crate == c.name for t in (arch.traits or []))
+        # Keep if another crate depends on it, else it's dead weight.
+        depended = any(
+            c.name in (o.dependencies or []) for o in arch.crates if o is not c
+        )
+        return has_types or has_traits or depended
+    arch.crates = [c for c in arch.crates if _keeps(c)]
+
+
 def run_architect_stage(
     source: Path,
     name: str,
@@ -246,6 +306,15 @@ def run_architect_stage(
                 f"[cyan]trait extractor: added {len(added)} trait(s): "
                 f"{', '.join(t.name for t in added)}[/cyan]"
             )
+
+    # Reconcile module placement: the skeleton emits a module's functions
+    # into whichever crate lists that module in `modules`. The architect
+    # (LLM-driven) sometimes lists FUNCTION names there instead of the real
+    # module name, or scatters one source module's functions across several
+    # crates — either way the module matches no crate and the skeleton emits
+    # empty crates (0 functions). Guarantee every spec module is claimed by
+    # exactly one crate; drop crates left with nothing.
+    _reconcile_module_placement(arch, specs)
 
     (source / ".alchemist" / "architecture.json").write_text(
         arch.model_dump_json(indent=2), encoding="utf-8"
