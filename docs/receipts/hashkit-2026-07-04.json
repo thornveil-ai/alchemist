@@ -1,0 +1,126 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-04T11:34:58.669645+00:00",
+  "workspace": "/data/rigrun/projects/alchemist/subjects/hashkit/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (4 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 4 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s [3/3 harnesses adapted (fnv1a32 -> hashkit_core::fnv1a32; crc16_ccitt -> hashkit_core::crc16_ccitt; bsd_sum16 -> hashkit_core::bsd_sum16)]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "fnv1a32",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "fnv1a32 -> hashkit_core::fnv1a32"
+      },
+      {
+        "algorithm": "crc16_ccitt",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "crc16_ccitt -> hashkit_core::crc16_ccitt"
+      },
+      {
+        "algorithm": "bsd_sum16",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "bsd_sum16 -> hashkit_core::bsd_sum16"
+      }
+    ],
+    "cargo_summary": "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s"
+  },
+  "oracle": {
+    "ffi_crate": "c_hashkit_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/data/rigrun/projects/alchemist/subjects/hashkit/hashkit.c",
+        "sha256": "471ec0e14a960f5c0a2431d0559531fdf667bfc72e7ad9055b3c834532a72f8a"
+      }
+    ],
+    "dll": {
+      "path": "/data/rigrun/projects/alchemist/subjects/hashkit/.alchemist/verify_gen/c_hashkit_ref/libc_hashkit_ref.so",
+      "sha256": "5fc328533c1be161989d197fe438c93b329781382ec1dbfb7bd06ef4d40abcd7"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 3
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "040d4ad2c24871c36d814d88e2f3c3fe4d1a184208a89105961cb13cc7eb6ab0",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}

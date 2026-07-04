@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **Generalization proven on a second, independent subject.**
+  `alchemist translate subjects/hashkit` — FNV-1a (u32), CRC-16/CCITT-FALSE
+  (u16) and the BSD rotate-add sum (u16), algorithms and widths distinct from
+  tinychk — runs end-to-end with Gemma 4 31B Dense and prints **OVERALL:
+  PASS**, all three functions model-written on the first iteration and
+  byte-exact against a compiled hashkit oracle. Getting there fixed three
+  general pipeline bugs (below), none tinychk- or hashkit-specific. Receipt:
+  `docs/receipts/hashkit-2026-07-04.json`.
 - **First complete automated C→Rust translation (ROADMAP M09).**
   `alchemist translate subjects/tinychk` runs all six stages with the local
   model (Gemma 4 31B Dense) in the loop and prints **OVERALL: PASS** — zero
@@ -69,6 +77,30 @@ All notable changes to this project are documented here. The format is based on 
 - Initial CHANGELOG.md — establishes Keep-a-Changelog format
 
 ### Fixed
+- Architecture module placement: the LLM architect sometimes listed function
+  names (or scattered one source module's functions) in crate `modules`
+  lists, so the module matched no crate and the skeleton emitted empty
+  crates — nothing to fill, nothing to differentially adapt.
+  `_reconcile_module_placement` now guarantees every spec module is claimed
+  by exactly one crate and drops crates left empty.
+- Standards-catalog false oracle: a boundary-blind prefix match handed
+  CRC-32 (32-bit) vectors to `crc16_ccitt` (a 16-bit function), failing a
+  correct implementation every iteration. Catalog matching now respects word
+  boundaries — `crc32_z`/`adler32_impl` still resolve, `crc16_ccitt` matches
+  nothing.
+- Scalar-hash fuzzing: hash-category functions were always routed to the
+  byte-digest fuzzer, which rejected FNV-1a's scalar u32 and left it
+  unverifiable. A scalar-integer return is now fuzzed as a checksum.
+- FFI oracle library naming and loader path: the differential oracle was
+  built with a hardcoded Windows `.dll` name and no runtime library path, so
+  on Linux the diff crate failed to link (`-lc_*_ref` not found) and, once
+  linked, failed to load the `.so`. Names are now platform-correct
+  (`.dll`/`.so`/`.dylib`) with a build.rs rpath and the oracle directory
+  prepended to the loader-path variable for the test subprocess.
+- The lazy-static-table idiom (a C function that fills a file-scope static on
+  first use) now translates: the initializer becomes a no-op and consumers
+  compute their own table, driven by a fill prompt that lists the
+  module-level constants actually in scope.
 - crc_word_big translation and its pure-Python fuzz reference implemented a
   chimera of zlib's W=4 and W=8 braid configurations (32-bit-swapped table
   entries in the low half driving a 64-bit loop). Both now implement the real
