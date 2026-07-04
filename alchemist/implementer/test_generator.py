@@ -57,9 +57,8 @@ _PARENTHESIZED_TYPED = re.compile(
 )
 
 
-def _literal_from_spec_value(value: str) -> str:
-    """Return a Rust literal. Accepts already-valid Rust literals, or falls
-    back to wrapping a bare string in quotes."""
+def _try_literal(value: str) -> str | None:
+    """Return `value` if it is a recognizable Rust literal, else None."""
     v = value.strip()
     if v.startswith(("&", "b\"", "b'", "0x", "0b", "\"", "[", "vec!")):
         return v
@@ -71,8 +70,50 @@ def _literal_from_spec_value(value: str) -> str:
     # Hex literal with suffix like `0xffu64`
     if re.match(r"^0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*(?:u\d+|i\d+|usize|isize)?$", v):
         return v
+    return None
+
+
+def _literal_from_spec_value(value: str) -> str:
+    """Return a Rust literal. Accepts already-valid Rust literals, or falls
+    back to wrapping a bare string in quotes."""
+    lit = _try_literal(value)
+    if lit is not None:
+        return lit
     # Fallback: treat as byte-string literal
-    return f'b"{v}"'
+    return f'b"{value.strip()}"'
+
+
+_BYTES_LIKE_RETURN = re.compile(r"\[\s*u8\b|Vec<\s*u8\s*>")
+_STR_LIKE_RETURN = re.compile(r"&\s*str\b|\bString\b")
+
+
+def _render_expected_value(value: str, return_type: str | None) -> str | None:
+    """Render an expected-output value against the fn's actual Rust return type.
+
+    Unlike `_literal_from_spec_value`, this never mangles: a value that can't
+    be rendered as valid Rust for the given type returns None, and the caller
+    emits a test that FAILS with an explanation instead of a byte-string
+    fallback like `b"Some(18usize)"` that poisons the whole module's compile.
+    """
+    v = value.strip()
+    rt = (return_type or "").strip()
+    # Constructor expressions for Option/Result returns — already valid Rust.
+    m = re.fullmatch(r"(Some|Ok|Err)\((.*)\)", v, flags=re.DOTALL)
+    if m:
+        inner = _render_expected_value(m.group(2), None)
+        return f"{m.group(1)}({inner})" if inner is not None else None
+    if v in ("None", "true", "false"):
+        return v
+    lit = _try_literal(v)
+    if lit is not None:
+        return lit
+    # A bare string only renders as a byte/str literal when the return type
+    # actually is one.
+    if _BYTES_LIKE_RETURN.search(rt):
+        return f'b"{v}"'
+    if _STR_LIKE_RETURN.search(rt):
+        return f'"{v}"'
+    return None
 
 
 # Default values for well-known checksum/hash parameter names.
@@ -427,8 +468,21 @@ def _emit_state_observer_test(fn_name: str, vec: SpecTestVector, idx: int) -> st
     return "".join(lines)
 
 
-def _emit_spec_test(fn_name: str, vec: SpecTestVector, idx: int) -> str:
-    """Emit a test from a spec.test_vectors entry."""
+def _emit_spec_test(
+    fn_name: str,
+    vec: SpecTestVector,
+    idx: int,
+    *,
+    return_type: str | None = None,
+) -> str:
+    """Emit a test from a spec.test_vectors entry.
+
+    `return_type` is the algorithm's actual Rust return type; expected values
+    are rendered against it (Option/Result constructors pass through, bare
+    strings only become byte-strings for byte-like returns). A value that
+    can't be rendered emits a test that FAILS with an explanation, so the
+    gate stays red instead of the module failing to compile.
+    """
     # State-mutator vectors use a different test shape
     if vec.tolerance == "state_mutator":
         return _emit_state_mutator_test(fn_name, vec, idx)
@@ -449,7 +503,23 @@ def _emit_spec_test(fn_name: str, vec: SpecTestVector, idx: int) -> str:
     if expected:
         # Try as a Rust literal
         if vec.tolerance in ("exact", ""):
-            lines.append(f"        assert_eq!(got, {_literal_from_spec_value(expected)}, "
+            rendered = _render_expected_value(expected, return_type)
+            if rendered is None:
+                # Escape for a panic!() FORMAT string: quotes, backslashes,
+                # and braces (struct-literal values are the archetypal
+                # unrenderable shape and always contain braces).
+                safe = (expected.replace("\\", "\\\\").replace('"', "'")
+                        .replace("{", "{{").replace("}", "}}"))
+                return (
+                    f"    #[test]\n    fn {test_name}() {{\n"
+                    f"        panic!(\"UNRENDERABLE expected value `{safe}` for return "
+                    f"type `{(return_type or 'unknown').strip()}` — the vector source "
+                    f"(fuzz_vectors / spec) emitted a value the test renderer cannot "
+                    f"express as Rust. Fix the renderer or the vector; do not ship "
+                    f"unverified.\");\n"
+                    f"    }}\n"
+                )
+            lines.append(f"        assert_eq!(got, {rendered}, "
                          f'"{vec.description or vec.source or f"vector {idx}"}");\n')
         else:
             # Numeric tolerance
@@ -509,7 +579,7 @@ def emit_module_test_block(
         fn_name = _rust_fn_name(alg.name)
         # 1. Spec-provided test vectors
         for i, v in enumerate(alg.test_vectors or []):
-            lines.append(_emit_spec_test(fn_name, v, i))
+            lines.append(_emit_spec_test(fn_name, v, i, return_type=alg.return_type))
             stats["spec"] += 1
             emitted_any = True
         # 2. Standards catalog — only when the signature matches a recognizable

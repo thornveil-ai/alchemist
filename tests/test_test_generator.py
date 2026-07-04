@@ -82,6 +82,94 @@ def test_emit_test_block_uses_spec_test_vectors():
     assert "super::custom_add(a, b)" in src
 
 
+def _option_alg(expected: str) -> ModuleSpec:
+    alg = AlgorithmSpec(
+        name="compress_bound_z",
+        display_name="compressBound_z",
+        category="utility",
+        description="",
+        inputs=[Parameter(name="source_len", rust_type="usize", description="")],
+        return_type="Option<usize>",
+        test_vectors=[
+            TestVector(
+                description="fuzz_input_len_0",
+                inputs={"source_len": "0usize"},
+                expected_output=expected,
+                tolerance="exact",
+            ),
+        ],
+    )
+    return ModuleSpec(name="compress", display_name="", description="", algorithms=[alg])
+
+
+def test_option_some_expected_renders_as_constructor_not_byte_string():
+    """Regression: Some(18usize) vs Option<usize> return must render verbatim,
+    not as b\"Some(18usize)\" (which poisoned the whole module's compile)."""
+    src, stats = emit_module_test_block(_option_alg("Some(18usize)"))
+    assert stats["spec"] == 1
+    assert "assert_eq!(got, Some(18usize)," in src
+    assert 'b"Some(' not in src
+
+
+def test_option_none_expected_renders_verbatim():
+    src, _ = emit_module_test_block(_option_alg("None"))
+    assert "assert_eq!(got, None," in src
+    assert 'b"None"' not in src
+
+
+def test_unrenderable_expected_emits_failing_test_not_mangled_literal():
+    """A value the renderer can't express for the return type must produce a
+    test that FAILS with an explanation — never a mangled byte-string that
+    breaks compilation and vacuously skips the gate."""
+    alg = AlgorithmSpec(
+        name="mystery",
+        display_name="",
+        category="utility",
+        description="",
+        inputs=[Parameter(name="x", rust_type="u32", description="")],
+        return_type="u32",
+        test_vectors=[
+            TestVector(
+                description="bad",
+                inputs={"x": "1u32"},
+                expected_output="SomeOpaqueStruct { a: 1 }",
+                tolerance="exact",
+            ),
+        ],
+    )
+    module = ModuleSpec(name="m", display_name="", description="", algorithms=[alg])
+    src, _ = emit_module_test_block(module)
+    assert "UNRENDERABLE" in src
+    assert "panic!" in src
+    assert 'b"SomeOpaqueStruct' not in src
+    # Braces must be escaped for the panic! FORMAT string, or the failing
+    # test itself becomes a compile error and poisons the module.
+    assert "{{ a: 1 }}" in src
+    assert "` for return" in src  # message still readable
+
+
+def test_bytes_like_return_keeps_byte_string_fallback():
+    alg = AlgorithmSpec(
+        name="render_bytes",
+        display_name="",
+        category="utility",
+        description="",
+        inputs=[Parameter(name="x", rust_type="u32", description="")],
+        return_type="Vec<u8>",
+        test_vectors=[
+            TestVector(
+                description="bytes out",
+                inputs={"x": "1u32"},
+                expected_output="abc",
+                tolerance="exact",
+            ),
+        ],
+    )
+    module = ModuleSpec(name="m", display_name="", description="", algorithms=[alg])
+    src, _ = emit_module_test_block(module)
+    assert 'assert_eq!(got, b"abc",' in src
+
+
 def test_build_call_single_slice_fn():
     """Adler-32-style one-slice signature gets a one-arg call."""
     alg = AlgorithmSpec(
