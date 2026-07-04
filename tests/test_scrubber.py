@@ -262,3 +262,22 @@ ppub fn build() {
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_nonexistent_wrapping_bitops_rewritten():
+    """Models invent wrapping_xor/or/and by analogy with wrapping_add.
+    Bitwise ops can't overflow — rewrite to the plain operator. Real
+    wrapping methods (add/sub/mul/shl/shr) are left alone."""
+    src = (
+        "let a = v1.rotate_left(13).wrapping_xor(v0);\n"
+        "let b = x.wrapping_or(y);\n"
+        "let c = p.wrapping_and(q);\n"
+        "let d = m.wrapping_add(n);\n"
+        "let e = s.wrapping_shl(2);\n"
+    )
+    out, _ = scrub_rust(src)
+    assert ".wrapping_xor(" not in out and "v1.rotate_left(13) ^ (v0)" in out
+    assert ".wrapping_or(" not in out and "x ^" not in out and "x | (y)" in out
+    assert ".wrapping_and(" not in out and "p & (q)" in out
+    assert "m.wrapping_add(n)" in out   # real method preserved
+    assert "s.wrapping_shl(2)" in out   # real method preserved

@@ -236,6 +236,21 @@ def scrub_rust(code: str) -> tuple[str, list[str]]:
             fixes.append(f"{pattern.pattern} → {replacement} ({n}x)")
             code = new_code
 
+    # Non-existent wrapping bitwise methods. Bitwise ops can't overflow, so
+    # Rust has no `wrapping_xor`/`wrapping_or`/`wrapping_and` — but models
+    # invent them by analogy with `wrapping_add` (observed on SipHash's
+    # SIPROUND: `v1.rotate_left(13).wrapping_xor(v0)`). Rewrite to the plain
+    # operator. `wrapping_shl`/`wrapping_shr` DO exist and are left alone.
+    _WRAP_BITOPS = {"wrapping_xor": "^", "wrapping_or": "|", "wrapping_and": "&"}
+    for meth, op in _WRAP_BITOPS.items():
+        # `<expr>.meth(<arg>)` -> `(<expr> op (<arg>))`. Match a single
+        # balanced-paren argument (no nested parens in the SipHash usage).
+        pat = re.compile(rf"\.{meth}\(([^()]*)\)")
+        new_code, n = pat.subn(rf" {op} (\1)", code)
+        if n > 0:
+            fixes.append(f"nonexistent .{meth}() → {op} ({n}x)")
+            code = new_code
+
     # Strip `static mut` declarations — these require unsafe blocks and violate
     # the zero-unsafe policy. Replace with a compile-time const or remove.
     static_mut = re.compile(r"^\s*static\s+mut\s+\w+\b[^;]*;.*$\n?", re.MULTILINE)
