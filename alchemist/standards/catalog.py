@@ -131,9 +131,11 @@ def match_algorithm(name: str) -> str | None:
     n2 = n.replace("_", "").replace("-", "")
     if n2 in _ALIASES:
         return _ALIASES[n2]
-    # Try prefix: `adler32_impl` → `adler32`
+    # Try prefix at a WORD BOUNDARY: `adler32_impl` / `crc32_z` → their base,
+    # but NOT `crc16_ccitt` → `crc32` (a bare `crc` prefix must not swallow a
+    # different-width variant and hand it 32-bit vectors — a false oracle).
     for alias, canonical in sorted(_ALIASES.items(), key=lambda x: -len(x[0])):
-        if n.startswith(alias):
+        if n == alias or n.startswith(alias + "_"):
             return canonical
     return None
 

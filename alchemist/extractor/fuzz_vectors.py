@@ -339,7 +339,13 @@ def fuzz_for_spec(
     if binding is None:
         return []
     cat = alg.category or ""
-    if cat == "checksum":
+    ret = (alg.return_type or "").strip()
+    scalar_return = bool(_re_scalar.fullmatch(ret))
+    # A scalar-integer return is a checksum shape regardless of whether the
+    # extractor labelled it checksum or hash (FNV-1a returns a u32, not a
+    # digest). The hash-digest fuzzer expects bytes and would reject every
+    # vector, leaving the function unverifiable.
+    if cat == "checksum" or (cat == "hash" and scalar_return):
         return fuzz_checksum_vectors(dll, alg, binding, count=count, seed=seed)
     if cat == "hash":
         return fuzz_hash_vectors(dll, alg, binding, count=count, seed=seed)
