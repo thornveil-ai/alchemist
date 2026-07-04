@@ -87,6 +87,17 @@ _BYTES_LIKE_RETURN = re.compile(r"\[\s*u8\b|Vec<\s*u8\s*>")
 _STR_LIKE_RETURN = re.compile(r"&\s*str\b|\bString\b")
 
 
+def _msg(s: str) -> str:
+    """Escape arbitrary text for an assert!/panic! message FORMAT string.
+
+    Descriptions come from specs and fuzz descriptors; quotes break the
+    string literal and unescaped braces are format-string syntax errors
+    that kill the whole module's compile.
+    """
+    return (s.replace("\\", "\\\\").replace('"', "'")
+            .replace("{", "{{").replace("}", "}}"))
+
+
 def _render_expected_value(value: str, return_type: str | None) -> str | None:
     """Render an expected-output value against the fn's actual Rust return type.
 
@@ -508,8 +519,7 @@ def _emit_spec_test(
                 # Escape for a panic!() FORMAT string: quotes, backslashes,
                 # and braces (struct-literal values are the archetypal
                 # unrenderable shape and always contain braces).
-                safe = (expected.replace("\\", "\\\\").replace('"', "'")
-                        .replace("{", "{{").replace("}", "}}"))
+                safe = _msg(expected)
                 return (
                     f"    #[test]\n    fn {test_name}() {{\n"
                     f"        panic!(\"UNRENDERABLE expected value `{safe}` for return "
@@ -520,14 +530,14 @@ def _emit_spec_test(
                     f"    }}\n"
                 )
             lines.append(f"        assert_eq!(got, {rendered}, "
-                         f'"{vec.description or vec.source or f"vector {idx}"}");\n')
+                         f'"{_msg(vec.description or vec.source or f"vector {idx}")}");\n')
         else:
             # Numeric tolerance
             lines.append(f"        let eps: f64 = {vec.tolerance};\n")
             lines.append(f"        let expected: f64 = {_literal_from_spec_value(expected)};\n")
             lines.append(f"        let got_f: f64 = got as f64;\n")
             lines.append(f"        assert!((got_f - expected).abs() < eps, "
-                         f'"{vec.description or f"vector {idx}"}");\n')
+                         f'"{_msg(vec.description or f"vector {idx}")}");\n')
     lines.append("    }\n")
     return "".join(lines)
 
