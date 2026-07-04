@@ -149,6 +149,9 @@ Referenced standards: {standards}
 ## Shared type definitions (already in scope via `use zlib_types::*;`)
 {struct_context}
 
+## Error type variants IN SCOPE (construct these with the EXACT shape shown)
+{error_context}
+
 ## Module-level constants/statics IN SCOPE (you may reference these by name)
 {available_consts}
 
@@ -215,6 +218,11 @@ class TDDGenerator:
         self._source_root = source_root
         self._probe_refs: dict = {}
         self._probe_attempted: set[str] = set()
+        # Error enum definitions, so the fill prompt can tell the model the
+        # exact variant shapes it constructs (InvalidKeyLength(usize), not a
+        # unit variant). Without this the model guesses the arity and hits
+        # E0308 constructing Err(...).
+        self._error_types = list(architecture.error_types or [])
 
         # Phase A: skeleton
         console.print("[bold cyan]TDD Phase A: skeleton generation[/bold cyan]")
@@ -828,6 +836,33 @@ class TDDGenerator:
 
         return attempt
 
+    def _error_context_for(self, alg: AlgorithmSpec) -> str:
+        """List the variants of any error enum this function's return type
+        references, so the model constructs them with the right arity."""
+        error_types = getattr(self, "_error_types", None) or []
+        if not error_types:
+            return "(no error enums in scope)"
+        rt = alg.return_type or ""
+        referenced = {e.name for e in error_types if e.name in rt}
+        # If the return type doesn't name a known error, show them all —
+        # the model may still reference one.
+        show = [e for e in error_types if not referenced or e.name in referenced]
+        lines: list[str] = []
+        for e in show:
+            variants = []
+            for v in e.variants:
+                if not v.fields:
+                    variants.append(v.name)
+                elif any(":" in f for f in v.fields):
+                    fields = ", ".join(
+                        f if ":" in f else f"f{i}: {f}"
+                        for i, f in enumerate(v.fields))
+                    variants.append(f"{v.name} {{ {fields} }}")
+                else:
+                    variants.append(f"{v.name}({', '.join(v.fields)})")
+            lines.append(f"enum {e.name} {{ {'; '.join(variants)} }}")
+        return "\n".join(lines) if lines else "(no error enums in scope)"
+
     @staticmethod
     def _consts_in_scope(module_source: str | None) -> str:
         """List module-level const/static identifiers the fill may reference.
@@ -910,6 +945,7 @@ class TDDGenerator:
             catalog_vectors=catalog_vec_text,
             reference_impls=reference_block,
             struct_context=struct_context,
+            error_context=self._error_context_for(alg),
             available_consts=self._consts_in_scope(module_source),
             current_body=current_body,
             previous_failure=prev_failure_section,

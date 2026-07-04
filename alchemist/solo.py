@@ -199,6 +199,7 @@ def run_solo(
     gen._probe_refs = {}
     gen._probe_attempted = set()
     gen._workspace_dir = output_dir
+    gen._error_types = list(getattr(arch, "error_types", None) or [])
     # Fuzz backfill populates alg.test_vectors for state-mutator /
     # byte-transform / pure-fn shapes, and persists them (oracle-tagged)
     # into the spec checkpoints so later runs and reviewers see them.
