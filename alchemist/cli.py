@@ -153,19 +153,56 @@ def implement(
 @app.command()
 def verify(
     c_source: Path = typer.Argument(..., help="Path to original C source"),
-    rust_output: Path = typer.Argument(..., help="Path to generated Rust project"),
+    rust_output: Path = typer.Argument(None, help="Path to generated Rust workspace (default: <c_source>/.alchemist/output)"),
+    package: list[str] = typer.Option(
+        None, "--package", "-p",
+        help="Restrict compile/anti-stub/test gates to these workspace packages "
+             "(repeatable). Differential harnesses are filtered to algorithms "
+             "those packages implement.",
+    ),
 ):
-    """Stage 5: Differential verification — fuzz both, compare outputs."""
+    """Stage 5: run every verification gate — compile, anti-stub, no-unsafe,
+    semantic lints, cargo test, and the differential oracle against the
+    compiled C reference. Exits non-zero unless every gate passes."""
     _banner()
-    from alchemist.verifier.differential_tester import DifferentialTester
+    from alchemist.verifier.differential_tester import verify_workspace
 
-    tester = DifferentialTester(c_source, rust_output)
-    results = tester.run_all()
+    c_source = c_source.resolve()
+    out = (rust_output or (c_source / ".alchemist" / "output")).resolve()
 
-    if results.get("rust_tests", {}).get("success"):
-        console.print("[green]Verification passed.[/green]")
-    else:
-        console.print("[yellow]Verification had failures — check output.[/yellow]")
+    diff_config = None
+    if "zlib" in c_source.name.lower():
+        if package and set(package) == {"zlib-checksum"}:
+            from alchemist.verifier.zlib_config import zlib_checksum_diff_config
+            diff_config = zlib_checksum_diff_config(c_source_dir=c_source)
+        else:
+            from alchemist.verifier.zlib_config import zlib_diff_config
+            diff_config = zlib_diff_config(c_source_dir=c_source)
+            if package:
+                diff_config.packages = list(package)
+    elif package:
+        console.print(
+            "[yellow]--package given but no differential config is auto-selectable "
+            "for this subject; the differential gate will refuse.[/yellow]"
+        )
+
+    specs = None
+    specs_error = None
+    if (c_source / ".alchemist" / "specs").is_dir():
+        try:
+            from alchemist.solo import _load_specs_and_arch
+            specs, _arch, _o = _load_specs_and_arch(c_source)
+        except Exception as e:  # noqa: BLE001
+            # Subject has specs but they can't be read: the semantic gate
+            # must FAIL on this, not report itself not-run.
+            specs_error = str(e)
+            console.print(f"[yellow]could not load specs for semantic gate: {e}[/yellow]")
+
+    report = verify_workspace(out, diff_config=diff_config, specs=specs,
+                              specs_error=specs_error)
+    console.print(report.summary())
+    if not report.passed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

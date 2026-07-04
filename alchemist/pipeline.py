@@ -435,10 +435,30 @@ def run_verify_stage(
     When diff_config is None and refuse_without_diff=True (the production
     default), the differential gate FAILS with reason 'no config'. This
     enforces the 'refuse success without verification' rule.
+
+    Specs are loaded from `<c_source_dir>/.alchemist/specs` when present so
+    the semantic gate (family lints, wrong-variant detection) runs; a subject
+    without specs skips that gate but can still never pass overall without a
+    differential config.
     """
     from alchemist.verifier.differential_tester import verify_workspace
+
+    specs = None
+    specs_error = None
+    if (Path(c_source_dir) / ".alchemist" / "specs").is_dir():
+        try:
+            from alchemist.solo import _load_specs_and_arch
+            specs, _arch, _out = _load_specs_and_arch(Path(c_source_dir))
+        except Exception as e:  # noqa: BLE001
+            # The subject HAS specs but they can't be read — that must fail
+            # the semantic gate, not silently disarm it.
+            specs_error = str(e)
+            console.print(
+                f"[yellow]verify: could not load specs for semantic gate: {e}[/yellow]"
+            )
     report = verify_workspace(
-        output, diff_config=diff_config, refuse_without_diff=refuse_without_diff
+        output, diff_config=diff_config, specs=specs, specs_error=specs_error,
+        refuse_without_diff=refuse_without_diff,
     )
     ok = report.passed
     first = report.first_failure

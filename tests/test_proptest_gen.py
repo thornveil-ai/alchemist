@@ -132,6 +132,39 @@ def test_smoke_harness_for_utility_category():
     assert "fn parse_header_smoke" in src
 
 
+# ---------- unverifiable categories fail closed ----------
+
+@pytest.mark.parametrize("category", ["transform", "protocol", "scheduler", "other"])
+def test_category_without_comparator_emits_failing_harness(category):
+    """Recognized categories with no comparator must emit a harness that
+    FAILS, never a smoke check. The weakest check must never be the default."""
+    h = AlgorithmHarness(
+        algorithm="mystery_fn",
+        category=category,
+        rust_call="rust_mystery(&input)",
+        c_call="c_mystery(&input)",
+    )
+    src = emit_differential_test([h])
+    assert "fn mystery_fn_unverifiable" in src
+    assert "UNVERIFIABLE" in src
+    assert "panic!" in src
+    # And specifically NOT the vacuous smoke shape
+    assert "fn mystery_fn_smoke" not in src
+    assert "let _ = rust_mystery(&input);" not in src
+
+
+def test_smoke_stays_opt_in_for_data_structure():
+    h = AlgorithmHarness(
+        algorithm="hash_map_ops",
+        category="data_structure",
+        rust_call="rust_hash_map_ops(&input)",
+        c_call="",
+    )
+    src = emit_differential_test([h])
+    assert "fn hash_map_ops_smoke" in src
+    assert "UNVERIFIABLE" not in src
+
+
 # ---------- Validation ----------
 
 def test_unknown_category_raises():

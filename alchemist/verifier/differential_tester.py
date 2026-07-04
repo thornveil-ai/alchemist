@@ -1,23 +1,29 @@
 """Stage 5 — mandatory differential verification gate.
 
 Contract: the pipeline CANNOT declare success unless every generated crate
-passes four layers of checks:
+passes these layers of checks:
 
-  1. COMPILE   — `cargo check --workspace` exits clean.
+  1. COMPILE   — `cargo check` exits clean.
   2. ANTI-STUB — no stub markers, no fake code (anti_stub.scan_workspace).
-  3. TEST      — `cargo test --workspace` passes.
-  4. DIFFERENTIAL — every configured harness passes against C reference.
+  3. SEMANTIC  — family lints against the specs (semantic_lints); a wrong
+                 algorithm variant fails closed here. Runs when specs are
+                 supplied; reports itself as not-run otherwise.
+  4. TEST      — `cargo test` passes.
+  5. DIFFERENTIAL — every configured harness passes against C reference.
 
 If any layer fails, `run_all()` returns a VerificationReport with `passed=False`
 and a reason populated. Stage 5 callers MUST refuse to declare success when
 this returns False.
 
-This module leverages the sibling auto_ffi.py and proptest_gen.py: those
-build the C DLL and emit the Rust harness, this module sequences the gate.
+This module leverages the sibling auto_ffi.py, adapter_gen.py and
+proptest_gen.py: those build the C DLL, emit the c_*/rust_* wrapper crate
+against the REAL generated API, and emit the Rust harness; this module
+sequences the gate.
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +31,12 @@ from pathlib import Path
 from rich.console import Console
 
 from alchemist.implementer.anti_stub import ScanReport, scan_workspace
+from alchemist.verifier.adapter_gen import (
+    AdapterPlan,
+    emit_adapter_lib,
+    emit_unresolved_tests,
+    plan_adapters,
+)
 from alchemist.verifier.auto_ffi import (
     AutoFfiRequest,
     AutoFfiResult,
@@ -34,7 +46,7 @@ from alchemist.verifier.auto_ffi import (
 )
 from alchemist.verifier.proptest_gen import (
     AlgorithmHarness,
-    write_differential_test,
+    emit_differential_test,
 )
 
 console = Console(force_terminal=True, legacy_windows=False)
@@ -61,6 +73,7 @@ class VerificationReport:
     compile: GateResult
     anti_stub: GateResult
     no_unsafe: GateResult
+    semantic: GateResult
     test: GateResult
     differential: GateResult
 
@@ -70,13 +83,15 @@ class VerificationReport:
             self.compile.passed
             and self.anti_stub.passed
             and self.no_unsafe.passed
+            and self.semantic.passed
             and self.test.passed
             and self.differential.passed
         )
 
     @property
     def first_failure(self) -> GateResult | None:
-        for g in (self.compile, self.anti_stub, self.no_unsafe, self.test, self.differential):
+        for g in (self.compile, self.anti_stub, self.no_unsafe, self.semantic,
+                  self.test, self.differential):
             if not g.passed:
                 return g
         return None
@@ -88,6 +103,7 @@ class VerificationReport:
             f"[compile    {mark(self.compile)}] {self.compile.summary}\n"
             f"[anti-stub  {mark(self.anti_stub)}] {self.anti_stub.summary}\n"
             f"[no-unsafe  {mark(self.no_unsafe)}] {self.no_unsafe.summary}\n"
+            f"[semantic   {mark(self.semantic)}] {self.semantic.summary}\n"
             f"[test       {mark(self.test)}] {self.test.summary}\n"
             f"[diff       {mark(self.differential)}] {self.differential.summary}\n"
             f"OVERALL: {'PASS' if self.passed else 'FAIL'}"
@@ -110,35 +126,60 @@ class DifferentialConfig:
     # Used as the name of the generated FFI crate + DLL.
     ffi_crate_name: str = "c_reference"
     # Optional path under which to emit the FFI crate + differential test crate.
-    # If None, uses `<rust_workspace>/verify/`.
+    # If None, uses `<rust_workspace>.parent/verify_gen/`.
     verify_dir: Path | None = None
+    # Restrict the compile/anti-stub/test gates to these workspace packages
+    # (crate dir name == package name in generated workspaces). Empty = whole
+    # workspace. The differential gate is always harness-driven and the
+    # semantic gate always sweeps the whole workspace regardless of scoping.
+    packages: list[str] = field(default_factory=list)
 
 
 class DifferentialTester:
-    """Stage 5 gate: compile → anti-stub → test → differential."""
+    """Stage 5 gate: compile → anti-stub → semantic → test → differential."""
 
     def __init__(
         self,
         rust_workspace: Path,
         *,
         diff_config: DifferentialConfig | None = None,
+        specs: list | None = None,
+        specs_error: str | None = None,
         timeout_compile: int = 300,
         timeout_test: int = 600,
         timeout_diff: int = 900,
     ):
         self.rust_workspace = Path(rust_workspace)
         self.diff_config = diff_config
+        # ModuleSpec list for the semantic gate. None = the subject has no
+        # specs; the gate reports itself as not-run (the differential gate
+        # still fails closed without config, so overall success stays
+        # impossible for an unconfigured run). If the subject HAS specs but
+        # loading them crashed, pass specs_error instead — the gate must
+        # FAIL rather than silently disarm on infrastructure rot.
+        self.specs = specs
+        self.specs_error = specs_error
         self.timeout_compile = timeout_compile
         self.timeout_test = timeout_test
         self.timeout_diff = timeout_diff
 
+    def _package_args(self) -> list[str]:
+        pkgs = self.diff_config.packages if self.diff_config else []
+        if pkgs:
+            out: list[str] = []
+            for p in pkgs:
+                out.extend(["-p", p])
+            return out
+        return ["--workspace"]
+
     # --- Individual gates ---
 
     def gate_compile(self) -> GateResult:
-        console.print("[cyan]gate 1/4: cargo check --workspace[/cyan]")
+        scope = self._package_args()
+        console.print(f"[cyan]gate 1/5: cargo check {' '.join(scope)}[/cyan]")
         try:
             r = subprocess.run(
-                ["cargo", "check", "--workspace", "--all-targets"],
+                ["cargo", "check", *scope, "--all-targets"],
                 cwd=str(self.rust_workspace),
                 capture_output=True,
                 text=True,
@@ -217,8 +258,23 @@ class DifferentialTester:
         )
 
     def gate_anti_stub(self) -> GateResult:
-        console.print("[cyan]gate 2/4: anti-stub scan[/cyan]")
-        report = scan_workspace(self.rust_workspace)
+        console.print("[cyan]gate 2/5: anti-stub scan[/cyan]")
+        pkgs = self.diff_config.packages if self.diff_config else []
+        if pkgs:
+            # Generated workspaces name each member dir after its package.
+            # If any scoped dir is missing, fall back to the full scan —
+            # scanning too much is safe, scanning too little is not.
+            pkg_dirs = [self.rust_workspace / p for p in pkgs]
+            if all(d.is_dir() for d in pkg_dirs):
+                report = ScanReport()
+                for d in pkg_dirs:
+                    sub = scan_workspace(d)
+                    report.files_scanned += sub.files_scanned
+                    report.violations.extend(sub.violations)
+            else:
+                report = scan_workspace(self.rust_workspace)
+        else:
+            report = scan_workspace(self.rust_workspace)
         return GateResult(
             name="anti-stub",
             passed=report.ok,
@@ -226,11 +282,71 @@ class DifferentialTester:
             anti_stub_report=report,
         )
 
+    def gate_semantic(self) -> GateResult:
+        """Family lints (semantic_lints) against the specs, workspace-wide.
+
+        Catches code that compiles and runs but implements the wrong
+        algorithm variant — the failure differential fixed vectors may miss
+        when the vectors were derived from the same wrong assumption.
+        """
+        console.print("[cyan]gate 3/5: semantic lints[/cyan]")
+        if self.specs_error:
+            return GateResult(
+                name="semantic",
+                passed=False,
+                summary=(
+                    f"spec loading failed ({self.specs_error}) — the subject has "
+                    f"specs but they could not be read; REFUSING to claim success"
+                ),
+                stderr=self.specs_error,
+            )
+        if self.specs is None:
+            return GateResult(
+                name="semantic",
+                passed=True,
+                summary="not run — no specs supplied (pass specs= to enable)",
+            )
+        if not self.specs:
+            return GateResult(
+                name="semantic",
+                passed=False,
+                summary=(
+                    "specs supplied but contain 0 module specs — nothing would be "
+                    "linted; REFUSING to claim success"
+                ),
+            )
+        from alchemist.implementer.semantic_lints import (
+            format_findings,
+            has_errors,
+            scan_workspace_semantics,
+        )
+        try:
+            findings = scan_workspace_semantics(self.rust_workspace, self.specs)
+        except Exception as e:
+            return GateResult(
+                name="semantic",
+                passed=False,
+                summary=f"semantic sweep crashed: {e} — REFUSING to claim success",
+                stderr=str(e),
+            )
+        errors = [f for f in findings if f.severity == "error"]
+        return GateResult(
+            name="semantic",
+            passed=not has_errors(findings),
+            summary=(
+                f"{len(errors)} error finding(s)" if errors
+                else f"clean ({len(findings)} advisory finding(s))" if findings
+                else "clean"
+            ),
+            stdout=format_findings(findings),
+        )
+
     def gate_test(self) -> GateResult:
-        console.print("[cyan]gate 3/4: cargo test --workspace[/cyan]")
+        scope = self._package_args()
+        console.print(f"[cyan]gate 4/5: cargo test {' '.join(scope)}[/cyan]")
         try:
             r = subprocess.run(
-                ["cargo", "test", "--workspace", "--", "--nocapture"],
+                ["cargo", "test", *scope, "--", "--nocapture"],
                 cwd=str(self.rust_workspace),
                 capture_output=True,
                 text=True,
@@ -259,7 +375,7 @@ class DifferentialTester:
         )
 
     def gate_differential(self) -> GateResult:
-        console.print("[cyan]gate 4/4: differential tests[/cyan]")
+        console.print("[cyan]gate 5/5: differential tests[/cyan]")
         if not self.diff_config or not self.diff_config.harnesses:
             return GateResult(
                 name="differential",
@@ -285,12 +401,14 @@ class DifferentialTester:
         # report is complete.
         anti_r = self.gate_anti_stub()
         no_unsafe_r = self.gate_no_unsafe()
+        semantic_r = self.gate_semantic()
         if not compile_r.passed:
             # Can't run tests if it doesn't compile
             return VerificationReport(
                 compile=compile_r,
                 anti_stub=anti_r,
                 no_unsafe=no_unsafe_r,
+                semantic=semantic_r,
                 test=GateResult(
                     name="test", passed=False,
                     summary="skipped — compile failed",
@@ -309,6 +427,7 @@ class DifferentialTester:
             compile=compile_r,
             anti_stub=anti_r,
             no_unsafe=no_unsafe_r,
+            semantic=semantic_r,
             test=test_r,
             differential=diff_r,
         )
@@ -338,8 +457,15 @@ class DifferentialTester:
                 stderr=ffi_result.build.stderr,
             )
 
-        # Emit test crate
-        self._write_test_crate(diff_dir, cfg, ffi_result)
+        # Emit test crate (adapters discovered from the real generated API)
+        plan = self._write_test_crate(diff_dir, cfg, ffi_result)
+        adapted = f"{len(plan.resolved)}/{len(cfg.harnesses)} harnesses adapted"
+        bindings = "; ".join(r.resolution for r in plan.resolved if r.resolution)
+        if bindings:
+            adapted += f" ({bindings})"
+        if plan.unresolved:
+            names = ", ".join(h.algorithm for h, _ in plan.unresolved)
+            adapted += f" (unresolved: {names})"
 
         # Run cargo test --test differential inside diff_dir
         try:
@@ -367,30 +493,82 @@ class DifferentialTester:
         return GateResult(
             name="differential",
             passed=passed,
-            summary=summary_line.strip(),
+            summary=f"{summary_line.strip()} [{adapted}]",
             stdout=r.stdout,
             stderr=r.stderr,
         )
+
+    def _workspace_crate_dirs(self) -> dict[str, Path]:
+        """Map generated-workspace package name → crate directory."""
+        import re as _re
+        out: dict[str, Path] = {}
+        for cargo_toml in sorted(self.rust_workspace.glob("*/Cargo.toml")):
+            m = _re.search(
+                r'^name\s*=\s*"([^"]+)"',
+                cargo_toml.read_text(encoding="utf-8"),
+                _re.MULTILINE,
+            )
+            if m:
+                out[m.group(1)] = cargo_toml.parent
+        return out
 
     def _write_test_crate(
         self,
         diff_dir: Path,
         cfg: DifferentialConfig,
         ffi: AutoFfiResult,
-    ) -> None:
-        """Emit a tiny test crate with the differential harness."""
+    ) -> AdapterPlan:
+        """Emit the differential test crate against the REAL generated API.
+
+        The crate consists of:
+          - Cargo.toml path-depending on the FFI crate AND on every generated
+            crate an adapter resolved into;
+          - src/lib.rs with auto-generated c_*/rust_* wrappers (adapter_gen),
+            discovered from the generated sources — never assumed;
+          - tests/differential.rs with proptest harnesses for every RESOLVED
+            algorithm plus one always-failing test per UNRESOLVED one, so an
+            un-adaptable harness turns the gate red instead of vanishing.
+        """
         diff_dir.mkdir(parents=True, exist_ok=True)
         (diff_dir / "tests").mkdir(parents=True, exist_ok=True)
         (diff_dir / "src").mkdir(parents=True, exist_ok=True)
 
-        # Cargo.toml — depends on ffi crate (by path)
+        plan = plan_adapters(
+            cfg.harnesses,
+            rust_workspace=self.rust_workspace,
+            ffi_crate_name=cfg.ffi_crate_name,
+            c_fn_names={s.name for s in cfg.c_public_signatures},
+            packages=cfg.packages or None,
+        )
+
+        # Cargo.toml — path-deps on the FFI crate + every resolved generated
+        # crate. Paths MUST be absolute: a relative path would resolve
+        # against the emitted manifest's own directory, not the caller's cwd.
+        crate_dirs = self._workspace_crate_dirs()
+        dep_lines = [
+            f'{cfg.ffi_crate_name} = '
+            f'{{ path = "{ffi.cargo_toml_path.parent.resolve().as_posix()}" }}'
+        ]
+        for pkg in sorted(plan.rust_crates):
+            d = crate_dirs.get(pkg)
+            if d is None:
+                # Discovery produced a crate we can't locate — configuration
+                # rot. Surface it as an unresolved harness-level failure.
+                plan.unresolved.extend(
+                    (r.harness, f"crate dir for package {pkg!r} not found under "
+                                f"{self.rust_workspace}")
+                    for r in list(plan.resolved) if pkg in r.rust_crates
+                )
+                plan.resolved = [r for r in plan.resolved if pkg not in r.rust_crates]
+                continue
+            dep_lines.append(f'{pkg} = {{ path = "{d.resolve().as_posix()}" }}')
         cargo = (
             "[package]\n"
-            f'name = "diff_test"\n'
+            'name = "diff_test"\n'
             'version = "0.1.0"\n'
             'edition = "2021"\n\n'
             "[dependencies]\n"
-            f'{cfg.ffi_crate_name} = {{ path = "{ffi.cargo_toml_path.parent.as_posix()}" }}\n'
+            + "\n".join(dep_lines) + "\n"
             "\n"
             "[dev-dependencies]\n"
             'proptest = "1.4"\n'
@@ -398,18 +576,39 @@ class DifferentialTester:
             "[workspace]\n"
         )
         (diff_dir / "Cargo.toml").write_text(cargo, encoding="utf-8")
-        # Empty lib.rs
+
+        # src/lib.rs — the adapter wrappers.
         (diff_dir / "src" / "lib.rs").write_text(
-            "//! differential test crate — harness lives in tests/differential.rs\n",
+            emit_adapter_lib(plan, ffi_crate_name=cfg.ffi_crate_name),
             encoding="utf-8",
         )
 
-        # Write the harness
-        write_differential_test(
-            cfg.harnesses,
-            diff_dir / "tests" / "differential.rs",
-            module_doc="Auto-generated differential tests (Stage 5 gate).",
+        # tests/differential.rs — harnesses for resolved algorithms, failing
+        # tests for unresolved ones.
+        resolved_harnesses = [r.harness for r in plan.resolved]
+        parts: list[str] = []
+        if resolved_harnesses:
+            parts.append(emit_differential_test(
+                resolved_harnesses,
+                extra_imports=["use diff_test::*;"],
+                module_doc="Auto-generated differential tests (Stage 5 gate).",
+            ))
+        else:
+            parts.append("//! Auto-generated differential tests (Stage 5 gate).\n")
+        unresolved_block = emit_unresolved_tests(plan)
+        if unresolved_block:
+            parts.append("// === unresolved harnesses (fail closed) ===\n")
+            parts.append(unresolved_block)
+        (diff_dir / "tests" / "differential.rs").write_text(
+            "\n".join(parts), encoding="utf-8",
         )
+
+        # The test binary loads the C DLL at runtime; Windows resolves it via
+        # the process CWD (cargo test runs with cwd=diff_dir) — same proven
+        # layout as the hand-written verify/diff_test crate.
+        if ffi.build.dll_path and ffi.build.dll_path.exists():
+            shutil.copy2(ffi.build.dll_path, diff_dir / ffi.build.dll_path.name)
+        return plan
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +619,8 @@ def verify_workspace(
     rust_workspace: Path,
     diff_config: DifferentialConfig | None = None,
     *,
+    specs: list | None = None,
+    specs_error: str | None = None,
     refuse_without_diff: bool = True,
 ) -> VerificationReport:
     """Public API — run all gates and return report.
@@ -428,7 +629,15 @@ def verify_workspace(
     is supplied, the differential gate will FAIL with the reason "no
     differential config". This enforces the rule that Alchemist refuses to
     claim success without verification.
+
+    Pass `specs` (list of ModuleSpec) to enable the semantic gate — family
+    lints that fail closed on wrong algorithm variants. If the subject has
+    specs but loading them failed, pass `specs_error` so the semantic gate
+    FAILS instead of reporting itself not-run.
     """
-    tester = DifferentialTester(rust_workspace, diff_config=diff_config)
+    tester = DifferentialTester(
+        rust_workspace, diff_config=diff_config, specs=specs,
+        specs_error=specs_error,
+    )
     report = tester.run_all()
     return report

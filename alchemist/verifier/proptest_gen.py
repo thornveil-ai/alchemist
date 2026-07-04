@@ -8,7 +8,11 @@ For each algorithm Alchemist extracts, this emits:
       * cipher           → encrypt(C) → decrypt(Rust) == plaintext, CAVP vectors
       * compression      → roundtrip equivalence, C↔Rust interop
       * filter / control → ULP-bounded numeric equality
-      * data_structure / utility → smoke calls only
+      * data_structure / utility → smoke calls only (explicitly opted in —
+        the ONLY categories where a no-comparison harness is acceptable)
+      * anything else    → an "unverifiable" harness that FAILS. A category
+        with no verifying comparator must fail the differential gate, not
+        silently pass a smoke check. The weakest check is never the default.
 
 The result is written to a test crate's `tests/differential.rs`. The FFI
 crate (see auto_ffi.py) is expected to already provide the C wrappers.
@@ -55,6 +59,10 @@ class AlgorithmHarness:
     c_decompress_call: str | None = None
     # For floating-point tolerance
     ulp_tolerance: int = 0
+    # Standard initial value for checksum-style APIs (Adler-32 seeds at 1,
+    # CRC-32 at 0). adapter_gen bakes this into both the C and Rust wrappers
+    # so the two sides are seeded identically.
+    seed: int | None = None
     # Override input strategy — defaults per category
     input_strategy: str | None = None
     # Additional imports required in the emitted harness
@@ -170,6 +178,12 @@ def _fixed_generic_test(h: AlgorithmHarness, v: TestVector, idx: int) -> str:
 
 # ----- Proptest blocks -----
 
+# Categories where a smoke-only harness is an explicit, documented choice.
+# Smoke calls the Rust side and discards the result — it verifies nothing
+# about equivalence. It must never be reachable by fall-through.
+SMOKE_CATEGORIES = {"data_structure", "utility"}
+
+
 def _proptest_block(h: AlgorithmHarness) -> str:
     if h.category in ("checksum", "hash"):
         return _proptest_digest_block(h)
@@ -179,8 +193,13 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_compression_block(h)
     if h.category in ("filter", "controller"):
         return _proptest_float_block(h)
-    # data_structure / utility → smoke
-    return _proptest_smoke_block(h)
+    if h.category in SMOKE_CATEGORIES:
+        return _proptest_smoke_block(h)
+    # Recognized category with no verifying comparator (transform, protocol,
+    # scheduler, other, ...). Emitting a smoke check here would let the
+    # differential gate pass without ever consulting the C reference — the
+    # exact false-green this pipeline exists to prevent. Fail closed instead.
+    return _proptest_unverifiable_block(h)
 
 
 def _proptest_digest_block(h: AlgorithmHarness) -> str:
@@ -313,6 +332,28 @@ def _proptest_float_block(h: AlgorithmHarness) -> str:
                 prop_assert!(within_ulps(rust_out, c_out, {ulp}),
                     "rust={{}}, c={{}}", rust_out, c_out);
             }}
+        }}
+    """).rstrip()
+
+
+def _proptest_unverifiable_block(h: AlgorithmHarness) -> str:
+    """Emit a harness that always fails: this algorithm cannot be verified.
+
+    Categories without a verifying comparator get a #[test] that panics with
+    an explanation instead of a smoke check that would vacuously pass. The
+    differential gate stays red until someone either assigns a verifiable
+    category or writes a real comparator for this one.
+    """
+    return dedent(f"""\
+        #[test]
+        fn {h.algorithm}_unverifiable() {{
+            panic!(
+                "UNVERIFIABLE: algorithm '{h.algorithm}' has category '{h.category}', \\
+        which has no differential comparator. Refusing to emit a smoke-only check \\
+        that would pass without consulting the C reference. Assign a verifiable \\
+        category (checksum, hash, cipher, compression, filter) or add a comparator \\
+        for '{h.category}' to alchemist/verifier/proptest_gen.py."
+            );
         }}
     """).rstrip()
 

@@ -323,8 +323,10 @@ def build_c_dll(
     cmd.extend(["-o", str(output_dll)])
 
     # Request an import library on Windows. gcc ignores this flag on non-Windows.
+    # Name it lib<name>.dll.a — the MinGW convention `-l<name>` resolves, and
+    # the exact layout proven by verify/libz.dll.a with the hand-written crate.
     if output_dll.suffix.lower() in (".dll", ""):
-        import_lib = output_dll.with_suffix(".dll.a")
+        import_lib = output_dll.parent / f"lib{output_dll.stem}.dll.a"
         cmd.extend(["-Wl,--out-implib," + str(import_lib)])
     else:
         import_lib = None
@@ -418,8 +420,9 @@ def emit_ffi_module(
 
 def emit_build_rs(dll_search_dir: Path, lib_name: str) -> str:
     """Produce a build.rs that points cargo at the DLL and its import library."""
-    # Use forward slashes for cross-platform paths in the emitted source
-    search = str(dll_search_dir).replace("\\", "/")
+    # Absolute + forward slashes: build.rs runs with the CONSUMING build's
+    # cwd, so a relative search path would silently fail to link.
+    search = str(Path(dll_search_dir).resolve()).replace("\\", "/")
     return (
         "fn main() {\n"
         f'    println!("cargo:rustc-link-search=native={search}");\n'

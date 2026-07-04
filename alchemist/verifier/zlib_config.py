@@ -83,17 +83,12 @@ def zlib_typedefs() -> TypedefMap:
 def zlib_harnesses() -> list[AlgorithmHarness]:
     """Per-algorithm differential harnesses for the zlib translation.
 
-    Each harness assumes:
-      - The Rust translation exposes top-level fns `rust_adler32`, `rust_crc32`,
-        `rust_compress`, `rust_uncompress` in a `zlib_rs` glue crate OR
-        reachable under the generated crates (zlib-checksum, zlib-compression).
-      - The FFI crate `c_reference` exposes `c_adler32`, `c_crc32`,
-        `c_compress`, `c_uncompress` with byte-slice / Vec<u8> shapes.
-
-    The diff_test crate that differential_tester.py synthesizes will import
-    from both — so these call expressions reference symbols at the crate root
-    of `c_reference` and expect companion `rust_*` helpers to be defined in
-    the diff_test crate's own `lib.rs` (added below).
+    The `rust_*` / `c_*` wrapper fns these call expressions reference are
+    EMITTED by alchemist.verifier.adapter_gen into the synthesized diff_test
+    crate's lib.rs: the c_* side wraps the FFI crate's raw externs, the
+    rust_* side is resolved against the actual generated API by scanning the
+    workspace sources. A harness that can't be resolved becomes a failing
+    test — never a silent skip.
     """
     return [
         AlgorithmHarness(
@@ -101,6 +96,7 @@ def zlib_harnesses() -> list[AlgorithmHarness]:
             category="checksum",
             rust_call="rust_adler32(&input)",
             c_call="c_adler32(&input)",
+            seed=1,  # RFC 1950: Adler-32 starts at 1
             cases=5000,
         ),
         AlgorithmHarness(
@@ -108,6 +104,7 @@ def zlib_harnesses() -> list[AlgorithmHarness]:
             category="checksum",
             rust_call="rust_crc32(&input)",
             c_call="c_crc32(&input)",
+            seed=0,  # RFC 1952: CRC-32 starts at 0
             cases=5000,
         ),
         AlgorithmHarness(
@@ -120,89 +117,6 @@ def zlib_harnesses() -> list[AlgorithmHarness]:
             cases=1000,
         ),
     ]
-
-
-# ---------------------------------------------------------------------------
-# Glue file — put alongside the FFI crate to give harnesses their `rust_*` fns
-# ---------------------------------------------------------------------------
-
-WRAPPERS_RS = """\
-//! Differential-test wrappers that bridge the generated workspace and C.
-//!
-//! The generated `zlib-*` crates live alongside this file in the verify tree.
-//! Each `rust_*` wrapper here calls into the generated Rust and returns the
-//! same shape the C wrapper returns, so proptest_gen's harnesses compare
-//! apples to apples.
-
-#![allow(dead_code)]
-
-// Generated crates — these must be declared as path deps in Cargo.toml
-// of the diff_test crate that differential_tester.py emits.
-use std::os::raw::{c_int, c_uchar, c_uint, c_ulong};
-
-// -------- C wrappers --------
-
-extern "C" {
-    pub fn adler32(adler: c_ulong, buf: *const c_uchar, len: c_uint) -> c_ulong;
-    pub fn crc32(crc: c_ulong, buf: *const c_uchar, len: c_uint) -> c_ulong;
-    pub fn compress(dest: *mut c_uchar, dest_len: *mut c_ulong,
-                    source: *const c_uchar, source_len: c_ulong) -> c_int;
-    pub fn uncompress(dest: *mut c_uchar, dest_len: *mut c_ulong,
-                      source: *const c_uchar, source_len: c_ulong) -> c_int;
-}
-
-pub fn c_adler32(data: &[u8]) -> u32 {
-    unsafe { adler32(1, data.as_ptr(), data.len() as c_uint) as u32 }
-}
-
-pub fn c_crc32(data: &[u8]) -> u32 {
-    unsafe { crc32(0, data.as_ptr(), data.len() as c_uint) as u32 }
-}
-
-pub fn c_compress(data: &[u8]) -> Vec<u8> {
-    let mut dest_len: c_ulong = (data.len() as c_ulong) + (data.len() as c_ulong) / 1000 + 12;
-    let mut dest = vec![0u8; dest_len as usize];
-    let rc = unsafe {
-        compress(dest.as_mut_ptr(), &mut dest_len, data.as_ptr(), data.len() as c_ulong)
-    };
-    assert_eq!(rc, 0, "C compress failed: rc={}", rc);
-    dest.truncate(dest_len as usize);
-    dest
-}
-
-pub fn c_uncompress(compressed: &[u8], expected_size: usize) -> Vec<u8> {
-    let mut dest_len: c_ulong = expected_size as c_ulong;
-    let mut dest = vec![0u8; expected_size];
-    let rc = unsafe {
-        uncompress(dest.as_mut_ptr(), &mut dest_len,
-                   compressed.as_ptr(), compressed.len() as c_ulong)
-    };
-    assert_eq!(rc, 0, "C uncompress failed: rc={}", rc);
-    dest.truncate(dest_len as usize);
-    dest
-}
-
-// -------- Rust side wrappers (adjust if generated API names differ) --------
-
-pub fn rust_adler32(data: &[u8]) -> u32 {
-    // Expected shape: generated zlib-checksum exposes fn adler32(seed, &[u8]) -> u32
-    // or a free fn `adler32` at the crate root.
-    zlib_checksum::adler32(1, data)
-}
-
-pub fn rust_crc32(data: &[u8]) -> u32 {
-    zlib_checksum::crc32(0, data)
-}
-
-pub fn rust_compress(data: &[u8]) -> Vec<u8> {
-    zlib_compression::compress(data).expect("rust compress failed")
-}
-
-pub fn rust_uncompress(compressed: &[u8], expected_size: usize) -> Vec<u8> {
-    let _ = expected_size;
-    zlib_compression::uncompress(compressed).expect("rust uncompress failed")
-}
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -234,3 +148,22 @@ def zlib_diff_config(
         harnesses=zlib_harnesses(),
         ffi_crate_name="c_zlib_ref",
     )
+
+
+def zlib_checksum_diff_config(
+    c_source_dir: Path,
+    *,
+    include_dirs: list[Path] | None = None,
+) -> DifferentialConfig:
+    """Checksum-crate-scoped DifferentialConfig.
+
+    Runs the compile/anti-stub/test gates against the zlib-checksum package
+    only, with the adler32 + crc32 differential harnesses. Use this to verify
+    the checksum crate while the compression/inflate crates are still
+    skeletons — their gates stay red under the full config, which is correct,
+    but shouldn't mask a genuinely verifiable checksum crate.
+    """
+    cfg = zlib_diff_config(c_source_dir, include_dirs=include_dirs)
+    cfg.harnesses = [h for h in cfg.harnesses if h.category == "checksum"]
+    cfg.packages = ["zlib-checksum"]
+    return cfg
