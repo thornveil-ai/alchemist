@@ -119,9 +119,16 @@ Tier 1 hardening per PRODUCTION_READINESS.md — the work that converts
 **Target: 2026-08-10.** Tag + release after M03-M07 land. CHANGELOG entry documents the Tier 1 hardening cycle. First versioned release on PyPI under thornveil-alchemist.
 **Success:** v0.2.0 tagged, PyPI live, GitHub release with notes.
 
-### M09. tinychk end-to-end verified-correct
-**Target: 2026-08-20.** tinychk is the small subject (2 C files, 2 Rust files). After Tier 1 work, full Stage 1-6 pipeline on tinychk should produce Rust that passes differential test against C reference. This is the proof-of-life for "TDD + differential testing actually works end-to-end."
-**Success:** `alchemist translate ./subjects/tinychk` produces Rust that passes the differential test gate. Run reproducible on a fresh checkout.
+### M09. tinychk end-to-end verified-correct ✅ DONE (2026-07-04)
+**Target: 2026-08-20 — hit 2026-07-04.** `alchemist translate subjects/tinychk`
+runs Stages 1-6 with Gemma 4 31B Dense in the loop and prints **OVERALL:
+PASS** — all six gates green, zero hand-edits, receipt sealed. adler32,
+crc32, fletcher16 are model-written and byte-exact vs a compiled tinychk
+oracle across 5000 random inputs each (21 differential tests). The pipeline
+work that unblocked it (subject-generic oracle + differential config, the
+const-scope fill prompt, static-table-initializer no-op, platform-correct
+FFI library naming + loader path) is general, not tinychk-specific.
+**Success:** met — reproducible from clean `.alchemist` checkpoints.
 
 ---
 

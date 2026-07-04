@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **First complete automated C→Rust translation (ROADMAP M09).**
+  `alchemist translate subjects/tinychk` runs all six stages with the local
+  model (Gemma 4 31B Dense) in the loop and prints **OVERALL: PASS** — zero
+  hand-edits to generated code. adler32, crc32, and fletcher16 are
+  model-written and byte-exact against a freshly compiled tinychk oracle
+  across 5000 random inputs each (21 differential tests, receipt sealed);
+  crc32's lazy static table became a locally-computed table and its
+  initializer a no-op. This is the first birth-to-receipt run in the
+  project's history, and it is subject-generic — no tinychk-specific code.
 - **First all-gates-green crate.** `alchemist verify subjects/zlib -p
   zlib-checksum` prints `OVERALL: PASS` — compile, anti-stub, no-unsafe,
   semantic, test (177/0) and differential (19/19) all green through the

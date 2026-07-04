@@ -1,0 +1,128 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-04T11:08:50.291292+00:00",
+  "workspace": "/data/rigrun/projects/alchemist/subjects/tinychk/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (3 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 3 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s [3/3 harnesses adapted (adler32 -> tinychk_checksums::adler32; crc32 -> tinychk_checksums::crc32; fletcher16 -> tinychk_checksums::fletcher16)]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "adler32",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": 1,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          5551,
+          5552,
+          5553,
+          11103,
+          11104,
+          11105,
+          65536
+        ],
+        "binding": "adler32 -> tinychk_checksums::adler32"
+      },
+      {
+        "algorithm": "crc32",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": 0,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "crc32 -> tinychk_checksums::crc32"
+      },
+      {
+        "algorithm": "fletcher16",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "fletcher16 -> tinychk_checksums::fletcher16"
+      }
+    ],
+    "cargo_summary": "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s"
+  },
+  "oracle": {
+    "ffi_crate": "c_tinychk_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/data/rigrun/projects/alchemist/subjects/tinychk/tinychk.c",
+        "sha256": "263f2632f7b7e787513579a1373694661e5434a4ddb1e975ba49dc31d9a48e31"
+      }
+    ],
+    "dll": {
+      "path": "/data/rigrun/projects/alchemist/subjects/tinychk/.alchemist/verify_gen/c_tinychk_ref/libc_tinychk_ref.so",
+      "sha256": "347673d851da957e55d08dd0266429b281ad26bcf878c874e90b73fb46d794cd"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 4
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "376fadc3a3bc1b1403e8e7bec5f87e322d9a8cd05beaee99717a51ba52f0cee7",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}
