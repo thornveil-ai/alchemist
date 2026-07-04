@@ -330,13 +330,26 @@ def emit_error_enum(err: ErrorType) -> str:
     lines = [f"#[derive(Debug, Clone, PartialEq, Eq)]",
              f"pub enum {err.name} {{"]
     for v in err.variants:
-        if v.fields:
-            field_list = ", ".join(v.fields)
-            lines.append(f"    /// {v.description}")
-            lines.append(f"    {v.name}({field_list}),")
-        else:
-            lines.append(f"    /// {v.description}")
+        lines.append(f"    /// {v.description}")
+        if not v.fields:
             lines.append(f"    {v.name},")
+            continue
+        # Fields may arrive as bare types (`usize`) → tuple variant, or as
+        # `name: type` (the architect commonly does this) → struct variant.
+        # Mixing `name: type` inside parens is invalid Rust, so pick one
+        # shape by whether ANY field carries a `:` name separator.
+        named = any(":" in f for f in v.fields)
+        if named:
+            parts = []
+            for i, f in enumerate(v.fields):
+                if ":" in f:
+                    name, ty = f.split(":", 1)
+                    parts.append(f"{name.strip()}: {ty.strip()}")
+                else:
+                    parts.append(f"field{i}: {f.strip()}")
+            lines.append(f"    {v.name} {{ {', '.join(parts)} }},")
+        else:
+            lines.append(f"    {v.name}({', '.join(f.strip() for f in v.fields)}),")
     lines.append("}")
     lines.append("")
     # impl Display

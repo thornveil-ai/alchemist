@@ -275,3 +275,21 @@ def test_workspace_skeleton_compiles_with_errors_and_traits(tmp_path):
     )
     result = generate_workspace_skeleton([module], arch, tmp_path, cargo_check=True)
     assert result.ok, f"skeleton w/ errors+traits did not compile:\n{result.workspace_stderr[:3000]}"
+
+
+def test_error_enum_named_fields_become_struct_variant():
+    """Architect variant fields carrying `name: type` must emit a struct
+    variant, not `Variant(name: type)` which is a parse error."""
+    from alchemist.implementer.skeleton import emit_error_enum
+    from alchemist.architect.schemas import ErrorType, ErrorVariant
+    e = ErrorType(name="HashError", crate="c", variants=[
+        ErrorVariant(name="InvalidKeyLength", description="k",
+                     fields=["expected: usize", "actual: usize"]),
+        ErrorVariant(name="BadTuple", description="t", fields=["usize", "u32"]),
+        ErrorVariant(name="None_", description="n", fields=[]),
+    ])
+    out = emit_error_enum(e)
+    assert "InvalidKeyLength { expected: usize, actual: usize }," in out
+    assert "BadTuple(usize, u32)," in out
+    assert "None_," in out
+    assert "InvalidKeyLength(expected:" not in out  # the invalid form is gone
