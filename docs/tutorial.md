@@ -26,7 +26,7 @@ That's it. The single command runs the full pipeline with every safety gate:
 | 2 Extract | per-function LLM spec extraction, then spec validator | **blocks** on wrong constants (e.g. Adler-32 BASE=255 vs 65521) |
 | 3 Architect | LLM designs Rust workspace, validator runs | **blocks** on dep cycles, orphan-rule violations, unassigned modules |
 | 4 Implement | skeleton → failing tests → per-fn TDD loop | **blocks** on anti-stub matches, API completeness misses |
-| 5 Verify | compile + anti-stub + cargo test + differential (10K cases vs C) | **blocks** unless all four gates pass |
+| 5 Verify | compile + anti-stub + no-unsafe + semantic lints + cargo test + differential (random cases vs C) | **blocks** unless all six gates pass |
 | 6 Report | metrics dashboard | informational |
 
 If any gate fails, `alchemist translate` exits non-zero with a report telling you exactly which gate caught the problem.

@@ -13,7 +13,7 @@
 /alchemist/verifier/      @thornveil-ai/engineering
 /alchemist/reporter/      @thornveil-ai/engineering
 
-# LLM integration — agents team review (this is where vLLM/Qwen wiring lives)
+# LLM integration — agents team review (this is where the local vLLM wiring lives)
 /alchemist/llm/           @thornveil-ai/agents
 
 # Anti-stub + scrubber — security-relevant (anti-evasion)

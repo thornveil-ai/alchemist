@@ -112,7 +112,7 @@ Stages 4A (skeleton) and 4B (tests) are fully deterministic. Stage 5 runs no LLM
 Key invariants:
 - An 8-character nonce is prepended to every user message so server-side response caches miss.
 - `temperature=0.15` is used everywhere to bypass vLLM prefix-cache-at-zero behavior.
-- Both `message.content` and `message.reasoning` fields are read (Qwen3.5 reasoning-parser quirk).
+- Both `message.content` and `message.reasoning` fields are read (vLLM reasoning-parser quirk).
 - Per-function Stage 2 checkpoints land in `.alchemist/specs/_functions/<mod>/<fn>.json` — the pipeline is resumable across crashes.
 
 ## Extension points

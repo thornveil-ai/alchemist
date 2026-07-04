@@ -1,7 +1,50 @@
 # Alchemist Production Readiness Report
 
-**Date**: 2026-04-14
+**Date**: 2026-04-14 (addendum 2026-07-03)
 **Status**: Research prototype with proven methodology, NOT production-ready
+
+## Addendum 2026-07-03 — the differential gate is now real for checksums
+
+What changed since the report below was written:
+
+- **The automated differential path produced its first genuine green.**
+  `alchemist verify subjects/zlib -p zlib-checksum` builds the C reference
+  DLL, generates FFI bindings and c_*/rust_* adapter wrappers against the
+  *actual* generated API (discovered from source, not assumed), and runs
+  adler32 + crc32 through 5000 random inputs each against C zlib: 17/17
+  differential tests pass with zero hand-editing. Previously the emitted
+  diff crate could not even compile (empty lib.rs, orphaned wrappers,
+  missing path-deps).
+- **crc32's big-endian word braid is fixed at all three layers.** The
+  generated `crc_word_big`, the pure-Python fuzz reference, and the locked-in
+  regression invariant all implemented (different) wrong variants; all now
+  implement zlib's W=8 configuration, anchored against zlib's shipped
+  crc32.h table values. zlib-checksum: 183/183 tests pass (was 166/17).
+- **Two soundness holes closed.** Unhandled algorithm categories used to fall
+  through to a smoke-only "check" that never consulted the C reference —
+  they now emit a failing UNVERIFIABLE harness. The test emitter used to
+  mangle `Some(18usize)` into `b"Some(18usize)"`, which broke compilation of
+  the whole zlib-compression test module and vacuously skipped its gate —
+  expected values are now rendered against the function's return type, and
+  those 20 tests compile, run, and honestly FAIL against the stub impls.
+- **A semantic-lint gate now fails closed on wrong algorithm variants.**
+  `scan_workspace_semantics` sweeps every generated fn against its spec at
+  verify time; a deliberately-wrong CRC braid variant fails the gate
+  (proven by negative test). This is the first real defense against the #1
+  failure mode (multi-variant disambiguation) for code that compiles and
+  passes vector tests derived from the same wrong assumption.
+
+What did NOT change: `verify` for the full zlib workspace still fails —
+correctly — on 42 anti-stub violations (6 of them in zlib-checksum itself:
+`make_crc_table`, `braid`, `get_crc_table`, and the other table-generation
+helpers are still skeletons) and on the 20 now-honest zlib-compression test
+failures. compress/uncompress/inflate/deflate remain non-functional stubs.
+**Verified-equivalent today: `adler32_z` and `crc32` (byte-at-a-time public
+API), via the automated differential oracle; `crc_word_big` via fixed
+vectors against the corrected pure reference (it is `local` in C — not
+FFI-observable).**
+
+---
 
 ## Executive Summary
 
@@ -17,7 +60,7 @@ This report catalogs every bug found, defines what Alchemist needs to be a turnk
 - **Stage 4 produces compilable output**: After Phase 1 fixes (scrubber, holistic fixer, validator), 7/7 crates compile with 0 unsafe
 - **Adler-32**: After fixing wrong constants, **bit-exact match with C zlib across 30,000+ random byte arrays**
 - **The methodology is sound**: algorithm-first translation produces 9.2× LOC compression and clean idiomatic code
-- **Local-only inference works**: Qwen3.5-122B at your-llm-host:8090, zero cloud cost
+- **Local-only inference works**: Gemma 4 31B Dense at your-llm-host:8090, zero cloud cost
 
 ## What's broken (verification findings)
 

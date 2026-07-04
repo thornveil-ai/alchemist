@@ -58,7 +58,7 @@ The baseline. These are facts on the ground, including the honest gaps.
 - **3 translation subjects** in `subjects/`: tinychk (small), zlib (full, with bugs documented), zlib-dll (DLL variant scaffolded).
 - **Reference binaries** in `verify/`: libz.dll.a + zlib1.dll for differential testing on Windows.
 - **6 docs files**: api_reference, architecture, phase_d_playbook (the verification playbook), plugins, troubleshooting, tutorial.
-- **Local-only inference** at Qwen3.5-122B on operator hardware. Zero cloud cost, no data egress.
+- **Local-only inference** at Gemma 4 31B Dense on operator hardware. Zero cloud cost, no data egress.
 - **Apache-2.0**, NOTICE present, org transfer to `thornveil-ai` complete.
 
 ### What's honestly broken (per PRODUCTION_READINESS.md)

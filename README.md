@@ -35,7 +35,7 @@ That's the whole pitch. Point it at C, get Rust back that compiles, passes every
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [The six stages](#the-six-stages)
-- [The five gates](#the-five-gates)
+- [The six gates](#the-six-gates)
 - [Architecture](#architecture)
 - [Comparison vs alternatives](#comparison-vs-alternatives)
 - [Plugins](#plugins)
@@ -64,7 +64,7 @@ The methodology was validated by hand on **Meridian**, a from-scratch Rust re-im
 
 **1. It refuses to ship broken code.** Every stage has a hard gate. The spec validator catches `BASE = 255` before anyone writes a line of Rust. The anti-stub detector rejects `unimplemented!()` and the model's favorite evasion: `// Since we don't have the actual algorithm, we use a simple heuristic`. The differential gate runs 10,000 random inputs through both the C reference and the Rust output. If *any* gate fails, `alchemist translate` exits non-zero with a report telling you exactly which one.
 
-**2. It runs entirely on your hardware.** No cloud API. No per-token bill. No data egress. The reference setup is a single RTX PRO 6000 running Qwen3.5-122B via vLLM. Your C source never leaves your LAN.
+**2. It runs entirely on your hardware.** No cloud API. No per-token bill. No data egress. The reference setup is a single RTX PRO 6000 running Gemma 4 31B Dense via vLLM. Your C source never leaves your LAN.
 
 **3. It's test-driven from the first pass.** Stage 4 is TDD: emit the signatures as stubs, emit failing tests from the standards catalog (RFC 1950 Adler-32 vectors, NIST CAVP AES vectors, etc.), then per-function fill in the real impl with `cargo test` as the supervisor. The model never sees green without actually being green.
 
@@ -122,7 +122,7 @@ alchemist doctor
 - **Python** 3.11+
 - **Rust** 1.75+ (with `cargo`, `rustc`, `clippy`)
 - **A C toolchain** (gcc / clang / MinGW) — needed to build the C reference DLL for differential testing
-- **A local LLM server** serving a strong code model. The reference config runs **Qwen3.5-122B** via vLLM on port 8090. Any OpenAI-compatible endpoint serving a ≥70B code model works — set `ALCHEMIST_ENDPOINT` to point at it.
+- **A local LLM server** serving a strong code model. The reference config runs **Gemma 4 31B Dense** via vLLM on port 8090. Any OpenAI-compatible endpoint serving a ≥70B code model works — set `ALCHEMIST_ENDPOINT` to point at it.
 
 No API keys. No network calls outside your LAN.
 
@@ -190,7 +190,7 @@ alchemist translate ./src --no-tdd       # use the legacy per-file generator
 
 ---
 
-## The five gates
+## The six gates
 
 The production bar. Every gate must pass before `TranslationReport.ok == True`.
 
@@ -199,10 +199,11 @@ The production bar. Every gate must pass before `TranslationReport.ok == True`.
 | 1 | **Spec validator** | Mathematical lies in the extracted spec — "Adler-32 uses `BASE = 255`" when RFC 1950 says `65521`. Cross-checked against the standards catalog at extract time, before any Rust is written. |
 | 2 | **Architecture validator** | Dep cycles, orphan-rule violations, modules that don't map to any spec, type producers that don't exist. Rejected before code generation starts. |
 | 3 | **Anti-stub** | `unimplemented!()`, `todo!()`, `panic!("not implemented")`, and the model's favorite stealth moves: `// Since we don't have the actual algorithm`, `// For this spec, we simulate the process`, functions that take `&[u8]` input but return `Ok(())` without ever reading the slice. |
-| 4 | **Test gate** | `cargo test --workspace` must exit 0. Tests come from RFC/NIST/IEEE standards, not from the model's imagination. |
-| 5 | **Differential gate** | 10,000+ random inputs fed through both the C reference (via FFI to a compiled DLL) and the generated Rust. Byte-exact for deterministic algos, ULP-bounded for floats, roundtrip-equivalent for compression/cipher. |
+| 4 | **Semantic lints** | Code that compiles and runs but implements the wrong algorithm *variant* — a big-endian CRC braid XORing unswapped little-endian table entries, Adler-32 seeded at 0, SHA-256 with little-endian length padding. Family-specific invariants checked against each function's spec, workspace-wide. |
+| 5 | **Test gate** | `cargo test --workspace` must exit 0. Tests come from RFC/NIST/IEEE standards, not from the model's imagination. |
+| 6 | **Differential gate** | Thousands of random inputs fed through both the C reference (via FFI to a compiled DLL) and the generated Rust, through wrappers generated against the *actual* generated API. A harness that can't be adapted becomes a failing test, never a silent skip. |
 
-Want to ship Rust that's actually correct? All five must be green. Any one fails → the whole translation fails → the pipeline exits non-zero. No exceptions.
+Want to ship Rust that's actually correct? All six must be green. Any one fails → the whole translation fails → the pipeline exits non-zero. No exceptions.
 
 ---
 
@@ -269,7 +270,7 @@ See [`docs/architecture.md`](docs/architecture.md) for a detailed walk-through o
 | **Corrode** | C99 subset | ~0% | Compile only | Free | Small utilities |
 | **ENCRUST** (academic) | Small C utils | ~85% | Test-based | LLM API | Coreutils subset |
 | **CRUST-Bench SOTA** (o3 + repair) | Benchmark C | ~60% | Test-based | ~$10/fn | 48% test pass |
-| **Alchemist** | **Real-world C libs** | **Target >95%** | **4-gate incl. differential vs C** | **$0** (local GPU) | **zlib 23K LOC + TDD-verified small subjects** |
+| **Alchemist** | **Real-world C libs** | **Target >95%** | **6-gate incl. differential vs C** | **$0** (local GPU) | **zlib 23K LOC + TDD-verified small subjects** |
 
 Alchemist is slower per function than c2rust and costs more upfront (the local GPU). What you get back is Rust you can actually read, review, and ship.
 
