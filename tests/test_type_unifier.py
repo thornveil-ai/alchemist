@@ -118,3 +118,81 @@ def test_no_analysis_is_a_noop():
         _alg("f", [("tree", "&[TreeElement]")])])]
     rep = unify_types(specs, {"files": {}})
     assert rep.rewrites == 0
+
+
+def _shared(name, rust_def=None, fields=None):
+    from alchemist.extractor.schemas import SharedType, TypeField
+    return SharedType(
+        name=name, rust_definition=rust_def or "", description="",
+        fields=[TypeField(name=n, rust_type=t, description="") for n, t in (fields or [])])
+
+
+def test_state_fields_in_rust_definition_are_unified():
+    """DeflateState tree fields live in a raw rust_definition string as
+    Vec<(u16,u16)> — the leak the param pass alone can't reach."""
+    ds = _shared("DeflateState", rust_def=(
+        "#[derive(Debug, Default)]\n"
+        "pub struct DeflateState {\n"
+        "    pub status: i32,\n"
+        "    pub dyn_ltree: Vec<(u16, u16)>,\n"
+        "    pub dyn_dtree: Vec<(u16, u16)>,\n"
+        "    pub bl_tree: Vec<(u16, u16)>,\n"
+        "    pub heap: Vec<i32>,\n"
+        "}"))
+    specs = [ModuleSpec(name="types", display_name="", description="",
+                        algorithms=[], shared_types=[ds])]
+    rep = unify_types(specs, {"files": {}})
+    rd = specs[0].shared_types[0].rust_definition
+    assert "dyn_ltree: Vec<TreeElement>" in rd
+    assert "dyn_dtree: Vec<TreeElement>" in rd
+    assert "bl_tree: Vec<TreeElement>" in rd
+    assert "Vec<(u16" not in rd            # no tuple leak left
+    assert "heap: Vec<i32>" in rd          # non-tree field untouched
+    assert rep.field_rewrites == 3
+
+
+def test_duplicate_struct_is_dropped_and_references_rewritten():
+    """HuffmanNode is a byte-identical duplicate of TreeElement — its
+    references become TreeElement and its definition is dropped."""
+    huff = _shared("HuffmanNode", rust_def="pub struct HuffmanNode { pub freq: u16 }")
+    tdesc = _shared("TreeDesc", rust_def=(
+        "pub struct TreeDesc {\n    pub dyn_tree: Vec<HuffmanNode>,\n"
+        "    pub max_code: i32,\n}"))
+    tree_el = _shared("TreeElement", rust_def=(
+        "pub struct TreeElement { pub freq: u16, pub code: u16, pub len: u8 }"))
+    specs = [ModuleSpec(name="types", display_name="", description="",
+                        algorithms=[], shared_types=[tree_el, huff, tdesc])]
+    rep = unify_types(specs, {"files": {}})
+    names = {s.name for s in specs[0].shared_types}
+    assert "HuffmanNode" not in names          # dropped
+    assert "HuffmanNode" in rep.dropped_structs
+    td = next(s for s in specs[0].shared_types if s.name == "TreeDesc")
+    assert "dyn_tree: Vec<TreeElement>" in td.rust_definition
+    # Canonical struct materialized with the COMPLETE field set (dad added)
+    te = next(s for s in specs[0].shared_types if s.name == "TreeElement")
+    assert "pub dad: u16," in te.rust_definition
+
+
+def test_typefield_shared_types_are_unified():
+    st = _shared("S", fields=[("tree", "Vec<(u16, u16)>"), ("n", "u32")])
+    specs = [ModuleSpec(name="m", display_name="", description="",
+                        algorithms=[], shared_types=[st])]
+    unify_types(specs, {"files": {}})
+    fields = {f.name: f.rust_type for f in specs[0].shared_types[0].fields}
+    assert fields["tree"] == "Vec<TreeElement>"
+    assert fields["n"] == "u32"
+
+
+def test_param_and_state_field_are_now_call_compatible():
+    """The whole point: pqdownheap(&[TreeElement]) can be fed
+    state.dyn_ltree (Vec<TreeElement>) after unification."""
+    ds = _shared("DeflateState", rust_def=(
+        "pub struct DeflateState {\n    pub dyn_ltree: Vec<(u16, u16)>,\n}"))
+    specs = [ModuleSpec(name="trees", display_name="", description="", shared_types=[ds],
+                        algorithms=[_alg("pqdownheap", [("tree", "&HuffmanTree")])])]
+    analysis = _analysis({"pqdownheap": [("tree", "ct_data")]})
+    unify_types(specs, analysis)
+    param = specs[0].algorithms[0].inputs[0].rust_type
+    rd = specs[0].shared_types[0].rust_definition
+    assert param == "&[TreeElement]"
+    assert "dyn_ltree: Vec<TreeElement>" in rd  # &state.dyn_ltree coerces to &[TreeElement]

@@ -317,6 +317,29 @@ def run_architect_stage(
         ModuleSpec.model_validate(json.loads(f.read_text(encoding="utf-8")))
         for f in sorted(specs_dir.glob("*.json"))
     ]
+    # Whole-workspace type coherence: the extractor infers a Rust type per
+    # parameter/field independently, fracturing one C type into several
+    # incompatible Rust types (zlib ct_data → TreeElement / HuffmanNode /
+    # Vec<(u16,u16)>). Unify registered types across params, fields, and
+    # struct definitions BEFORE the architecture is designed or the skeleton
+    # emitted, and persist the rewritten specs so Stage 4 reads coherent
+    # types. Registry-only, so context-polymorphic C types (int, void*,
+    # z_streamp) are never corrupted.
+    analysis_path = source / ".alchemist" / "analysis.json"
+    if analysis_path.exists():
+        try:
+            from alchemist.architect.type_unifier import unify_types
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+            urep = unify_types(specs, analysis)
+            if urep.rewrites or urep.field_rewrites or urep.dropped_structs:
+                console.print(f"[cyan]type unifier: {urep.summary()}[/cyan]")
+                # Persist every module (types + affected function modules).
+                for module in specs:
+                    (specs_dir / f"{module.name}.json").write_text(
+                        module.model_dump_json(indent=2), encoding="utf-8"
+                    )
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[yellow]type unifier skipped: {e}[/yellow]")
     # Cache-load: architecture is a one-shot LLM call that doesn't benefit
     # from re-running once the shape is stable. If architecture.json exists
     # and parses cleanly, re-use it. This also means a transient LLM hiccup

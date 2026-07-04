@@ -48,6 +48,15 @@ class CanonicalType:
     # mutability taken from the extractor's existing choice; "value" leaves
     # the extractor's container as-is and only fixes the element type.
     container: str = "value"
+    # Rust element spellings that are known stand-ins or byte-identical
+    # duplicates for this canonical. The extractor emits a 2-tuple like
+    # `(u16, u16)` when it cannot name a small struct, and it duplicated
+    # ct_data as both `TreeElement` and `HuffmanNode`. Any field/param whose
+    # element matches an alias is rewritten to the canonical, and the
+    # duplicate struct definitions are dropped. The C-type correlation
+    # cannot reach struct FIELDS (the parser drops their names), so aliases
+    # are how state-field coherence is achieved.
+    aliases: tuple[str, ...] = ()
 
 
 # zlib's ct_data: `struct { union {ush freq; ush code;} fc; union {ush dad;
@@ -66,6 +75,7 @@ _CT_DATA = CanonicalType(
     doc="zlib ct_data — Huffman tree node (freq/code and dad/len are the two "
         "union slots, used at disjoint tree-building phases).",
     container="slice",  # ct_data is always `tree[n]` — an array/slice
+    aliases=("HuffmanNode", "(u16, u16)", "(u16,u16)"),
 )
 
 DEFAULT_CANONICAL: dict[str, CanonicalType] = {c.c_type: c for c in (_CT_DATA,)}
@@ -116,6 +126,41 @@ def _rewrite_element(rust_type: str, canonical_rust: str) -> str:
     return f"{pre}{canonical_rust}{suf}"
 
 
+def _norm_elem(s: str) -> str:
+    """Normalize an element spelling for alias matching (whitespace-insensitive)."""
+    return re.sub(r"\s+", "", s or "")
+
+
+_FIELD_LINE = re.compile(
+    r"^(?P<pre>\s*(?:pub\s+)?[A-Za-z_]\w*\s*:\s*)(?P<ty>.+?)(?P<suf>,?\s*)$")
+
+
+def _canon_rust_definition(
+    rust_def: str, alias_to_canon: dict[str, str],
+) -> tuple[str, int]:
+    """Rewrite `pub name: <type>,` field types inside a raw struct-definition
+    string, canonicalizing any field whose element is a known alias. Returns
+    (new_definition, num_rewritten)."""
+    out: list[str] = []
+    n = 0
+    for line in rust_def.splitlines(keepends=True):
+        m = _FIELD_LINE.match(line.rstrip("\n"))
+        if not m:
+            out.append(line)
+            continue
+        ty = m.group("ty")
+        pre_c, elem, suf_c = _element_of(ty)
+        canon = alias_to_canon.get(_norm_elem(elem))
+        if canon:
+            newline = (m.group("pre") + f"{pre_c}{canon}{suf_c}"
+                       + m.group("suf") + ("\n" if line.endswith("\n") else ""))
+            out.append(newline)
+            n += 1
+        else:
+            out.append(line)
+    return "".join(out), n
+
+
 # ---------------------------------------------------------------------------
 # Correlation + unification
 # ---------------------------------------------------------------------------
@@ -123,6 +168,8 @@ def _rewrite_element(rust_type: str, canonical_rust: str) -> str:
 @dataclass
 class UnifyReport:
     rewrites: int = 0
+    field_rewrites: int = 0
+    dropped_structs: tuple[str, ...] = ()
     # C base type -> {rust element types seen}
     conflicts: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     canonical: dict[str, str] = field(default_factory=dict)  # c_type -> rust_name
@@ -132,8 +179,11 @@ class UnifyReport:
         parts = []
         for c, rusts in sorted(self.conflicts.items()):
             if len(rusts) > 1:
-                parts.append(f"{c}→{{{', '.join(sorted(rusts))}}}⇒{self.canonical.get(c, '?')}")
-        head = f"{self.rewrites} type(s) unified"
+                parts.append(f"{c}:{{{','.join(sorted(rusts))}}}=>{self.canonical.get(c, '?')}")
+        head = (f"{self.rewrites} param + {self.field_rewrites} field type(s) "
+                f"unified")
+        if self.dropped_structs:
+            head += f", dropped dup struct(s) {', '.join(self.dropped_structs)}"
         return head + ("; " + "; ".join(parts) if parts else "")
 
 
@@ -241,8 +291,8 @@ def unify_types(
             report.canonical[base] = registry[base].rust_name
             report.structs[registry[base].rust_name] = registry[base]
 
-    # Pass 3 — rewrite in place using the registered canonical type + its
-    # container policy.
+    # Pass 3 — rewrite params in place using the registered canonical type +
+    # its container policy (uses the C-type correlation).
     for base, _c_type, p in observations:
         if base not in registry:
             continue
@@ -250,6 +300,73 @@ def unify_types(
         if new_rt != (p.rust_type or ""):
             p.rust_type = new_rt
             report.rewrites += 1
+
+    # Pass 4 — element-alias canonicalization everywhere (params, TypeFields,
+    # rust_definition strings). The struct-field parser drops field names, so
+    # this alias fingerprint is how state-field coherence is reached: any
+    # element that is a canonical's alias (the (u16,u16) tuple stand-in, the
+    # HuffmanNode duplicate) is rewritten to the canonical, keeping the
+    # container. Also unifies any param the C-correlation missed.
+    alias_to_canon: dict[str, str] = {}
+    for c in registry.values():
+        report.structs.setdefault(c.rust_name, c)
+        for a in c.aliases:
+            alias_to_canon[_norm_elem(a)] = c.rust_name
+
+    def _canon_type(rt: str) -> str:
+        pre, elem, suf = _element_of(rt or "")
+        canon = alias_to_canon.get(_norm_elem(elem))
+        return f"{pre}{canon}{suf}" if canon else (rt or "")
+
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            for p in alg.inputs or []:
+                new = _canon_type(p.rust_type or "")
+                if new != (p.rust_type or ""):
+                    p.rust_type = new
+                    report.field_rewrites += 1
+            for sv in getattr(alg, "state", None) or []:
+                new = _canon_type(sv.rust_type or "")
+                if new != (sv.rust_type or ""):
+                    sv.rust_type = new
+                    report.field_rewrites += 1
+        for st in getattr(module, "shared_types", None) or []:
+            for tf in getattr(st, "fields", None) or []:
+                new = _canon_type(tf.rust_type or "")
+                if new != (tf.rust_type or ""):
+                    tf.rust_type = new
+                    report.field_rewrites += 1
+            rd = getattr(st, "rust_definition", None)
+            if rd:
+                new_rd, n = _canon_rust_definition(rd, alias_to_canon)
+                if n:
+                    st.rust_definition = new_rd
+                    report.field_rewrites += n
+
+    # Pass 5 — drop the now-redundant duplicate struct definitions (their
+    # references were all rewritten to the canonical) and materialize the
+    # canonical struct with its COMPLETE field set (the extractor's version
+    # was lossy — e.g. TreeElement was missing `dad`).
+    dropped: list[str] = []
+    canon_names = {c.rust_name for c in registry.values()}
+    alias_struct_names = {a for c in registry.values() for a in c.aliases
+                          if a[:1].isupper()}
+    canon_by_name = {c.rust_name: c for c in registry.values() if c.fields}
+    for module in specs:
+        st_list = getattr(module, "shared_types", None)
+        if st_list is None:
+            continue
+        kept = []
+        for st in st_list:
+            if st.name in alias_struct_names and st.name not in canon_names:
+                dropped.append(st.name)
+                continue
+            if st.name in canon_by_name:
+                # Replace the lossy definition with the complete canonical one.
+                st.rust_definition = render_canonical_struct(canon_by_name[st.name])
+            kept.append(st)
+        module.shared_types = kept
+    report.dropped_structs = tuple(dict.fromkeys(dropped))
 
     return report
 
