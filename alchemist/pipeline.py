@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -233,6 +234,61 @@ def _reconcile_module_placement(arch, specs) -> None:
     arch.crates = [c for c in arch.crates if _keeps(c)]
 
 
+def _reconcile_error_types(arch, specs) -> int:
+    """Reconcile error-type names referenced in function return types.
+
+    The extractor names errors freely (Result<_, HashError>); the architect
+    names the crate's error enum independently (SipHashError). When a return
+    type references an error the architecture never defines, rewrite it to the
+    crate's canonical error type so the skeleton compiles. Returns the number
+    of return types rewritten.
+    """
+    known = {e.name for e in (arch.error_types or [])}
+    by_crate: dict[str, list[str]] = {}
+    for e in (arch.error_types or []):
+        by_crate.setdefault(e.crate, []).append(e.name)
+    module_crate: dict[str, str] = {}
+    for c in arch.crates:
+        for m in (c.modules or []):
+            module_crate[m] = c.name
+    fixed = 0
+    for module in specs:
+        canonical = None
+        crate = module_crate.get(module.name)
+        if crate and by_crate.get(crate):
+            canonical = by_crate[crate][0]
+        elif arch.error_types:
+            canonical = arch.error_types[0].name
+        if not canonical:
+            continue
+        for alg in (module.algorithms or []):
+            rt = alg.return_type or ""
+            m = re.search(r"Result<\s*.+?,\s*([A-Za-z_]\w*)\s*>", rt)
+            if m and m.group(1) not in known:
+                alg.return_type = (
+                    rt[:m.start(1)] + canonical + rt[m.end(1):]
+                )
+                fixed += 1
+    return fixed
+
+
+def _prune_dangling_builders(arch) -> int:
+    """Drop builders whose built_type is never defined.
+
+    The architect sometimes emits a fluent builder for a state struct it
+    never actually defines (SipHasherBuilder -> SipHasher with no state
+    wrapper), which references an undefined type and breaks the skeleton
+    compile. A speculative builder with no backing type is dead scaffolding.
+    """
+    defined = {w.public_name for w in (getattr(arch, "state_wrappers", None) or [])}
+    defined |= {e.name for e in (arch.error_types or [])}
+    builders = getattr(arch, "builders", None) or []
+    kept = [b for b in builders if b.built_type in defined]
+    dropped = len(builders) - len(kept)
+    arch.builders = kept
+    return dropped
+
+
 def run_architect_stage(
     source: Path,
     name: str,
@@ -315,6 +371,20 @@ def run_architect_stage(
     # empty crates (0 functions). Guarantee every spec module is claimed by
     # exactly one crate; drop crates left with nothing.
     _reconcile_module_placement(arch, specs)
+    n_err = _reconcile_error_types(arch, specs)
+    n_bld = _prune_dangling_builders(arch)
+    if n_err or n_bld:
+        console.print(
+            f"[cyan]architect reconcile: {n_err} error-type reference(s) "
+            f"remapped, {n_bld} dangling builder(s) dropped[/cyan]"
+        )
+        # The error-type rewrite mutates specs (function return types) — the
+        # skeleton reads specs from disk in Stage 4, so persist them.
+        if n_err:
+            for module in specs:
+                (specs_dir / f"{module.name}.json").write_text(
+                    module.model_dump_json(indent=2), encoding="utf-8"
+                )
 
     (source / ".alchemist" / "architecture.json").write_text(
         arch.model_dump_json(indent=2), encoding="utf-8"

@@ -83,3 +83,48 @@ def test_type_only_crate_is_kept_even_without_modules():
     names = {c.name for c in arch.crates}
     assert "lib-types" in names  # kept: holds an error type + is depended on
     assert "lib-impl" in names
+
+
+# ---------- error-type + builder reconciliation ----------
+
+def test_unknown_error_type_remapped_to_crate_canonical():
+    from alchemist.pipeline import _reconcile_error_types
+    from alchemist.architect.schemas import ErrorType, ErrorVariant
+    specs = [ModuleSpec(name="siphash", display_name="", description="",
+                        algorithms=[AlgorithmSpec(
+                            name="siphash", display_name="siphash",
+                            category="hash", description="",
+                            inputs=[Parameter(name="in_", rust_type="&[u8]", description="")],
+                            return_type="Result<Vec<u8>, HashError>")])]
+    arch = _arch([_cs("siphash-core", ["siphash"])])
+    arch.error_types = [ErrorType(name="SipHashError", crate="siphash-core",
+                                  variants=[ErrorVariant(name="Bad", description="", fields=[])])]
+    n = _reconcile_error_types(arch, specs)
+    assert n == 1
+    assert specs[0].algorithms[0].return_type == "Result<Vec<u8>, SipHashError>"
+
+
+def test_known_error_type_left_alone():
+    from alchemist.pipeline import _reconcile_error_types
+    from alchemist.architect.schemas import ErrorType, ErrorVariant
+    specs = [ModuleSpec(name="m", display_name="", description="",
+                        algorithms=[AlgorithmSpec(
+                            name="f", display_name="f", category="hash", description="",
+                            inputs=[Parameter(name="x", rust_type="&[u8]", description="")],
+                            return_type="Result<Vec<u8>, MyError>")])]
+    arch = _arch([_cs("c", ["m"])])
+    arch.error_types = [ErrorType(name="MyError", crate="c",
+                                  variants=[ErrorVariant(name="B", description="", fields=[])])]
+    assert _reconcile_error_types(arch, specs) == 0
+    assert specs[0].algorithms[0].return_type == "Result<Vec<u8>, MyError>"
+
+
+def test_dangling_builder_dropped():
+    from alchemist.pipeline import _prune_dangling_builders
+    from alchemist.architect.schemas import BuilderSpec
+    arch = _arch([_cs("c", ["m"])])
+    arch.builders = [BuilderSpec(builder_name="SipHasherBuilder",
+                                 built_type="SipHasher", crate="c",
+                                 parameters=[], build_signature="x")]
+    assert _prune_dangling_builders(arch) == 1
+    assert arch.builders == []
