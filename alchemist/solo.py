@@ -215,6 +215,17 @@ def run_solo(
         raise
     except Exception as e:
         console.print(f"[yellow]solo: fuzz backfill skipped ({e})[/yellow]")
+    # Re-emit the test files from the (now backfilled) vectors. The full
+    # pipeline emits tests AFTER backfill; solo must do the same or the fill
+    # sees a stale test file with no vectors for freshly-backfilled functions
+    # (e.g. tree-builders whose vectors are minted here, not at skeleton time).
+    try:
+        from alchemist.implementer.test_generator import (
+            generate_tests_for_workspace,
+        )
+        generate_tests_for_workspace(specs, arch, output_dir)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[yellow]solo: test re-emit skipped ({e})[/yellow]")
     gen._cached_ctx = llm.create_cached_context(
         system_text=(
             "You are implementing one Rust function at a time from a spec. "
