@@ -5,6 +5,31 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **Whole-workspace type coherence (`architect/type_unifier.py`).** The
+  extractor infers a Rust type per parameter/field independently, so one C
+  type fractures into several incompatible Rust types across the workspace —
+  zlib's `ct_data` (a Huffman tree node) became `TreeElement`, `HuffmanNode`,
+  AND `Vec<(u16,u16)>`, and the three descriptor members collapsed to `u32`.
+  A function taking `&[TreeElement]` then cannot be handed a state field of
+  type `Vec<(u16,u16)>`, so the crate cannot compile coherently — a
+  type-generation defect underneath every Huffman tree-builder (Phase 2) and
+  the deflate state machine (Phase 3). The unifier canonicalizes registered
+  C types across params, `TypeField`s, and raw `rust_definition` strings:
+  correlating spec params with C base types from `analysis.json`, folding
+  element aliases (the `(u16,u16)` stand-in, the `HuffmanNode` duplicate),
+  dropping duplicate structs, materializing the canonical struct with its
+  complete field set (`TreeElement` regains the dropped `dad`), and applying
+  explicit field overrides for scalar-collapsed state members
+  (`l_desc`/`d_desc`/`bl_desc` → `TreeDesc`). It is **registry-only**: C
+  `int`, `void*`, and `z_streamp` legitimately map to different Rust types by
+  context (`z_streamp` is both a deflate and an inflate stream), so a
+  conflict heuristic would corrupt them — a type earns canonicalization only
+  by being registered. Wired into `run_architect_stage` (runs before
+  architecture design and skeleton emission, persists the rewritten specs)
+  and a no-op on subjects with no registered types. Verified on real zlib:
+  all three tree arrays become `Vec<TreeElement>`, all three descriptors
+  `TreeDesc`, `HuffmanNode` dropped, and the resulting type graph compiles
+  under `rustc` with no leaks.
 - **A real external cryptographic library, translated end-to-end.**
   `alchemist translate subjects/siphash` — the genuine veorq/SipHash-2-4
   reference (CC0, not authored here) — reaches **OVERALL: PASS** with
