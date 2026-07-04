@@ -22,6 +22,7 @@ from pathlib import Path
 from alchemist.architect.schemas import CrateArchitecture, CrateSpec
 from alchemist.extractor.schemas import AlgorithmSpec, ModuleSpec, TestVector as SpecTestVector
 from alchemist.implementer.skeleton import _snake as _rust_fn_name
+from alchemist.implementer.skeleton import _sanitize_param_name
 from alchemist.standards import TestVector as StdTestVector, lookup_test_vectors
 
 
@@ -506,9 +507,16 @@ def _emit_spec_test(
         return _emit_byte_transform_test(fn_name, vec, idx)
     test_name = f"test_{fn_name}_spec_{idx}"
     lines = [f"    #[test]\n    fn {test_name}() {{\n"]
+    # Sanitize parameter names the same way the skeleton does, so a C param
+    # that is a Rust keyword (`in`, `type`, `match`, …) becomes a raw
+    # identifier (`r#in`) in both the let-binding and the call — otherwise
+    # the whole test module fails to compile.
+    arg_names = []
     for pname, pvalue in vec.inputs.items():
-        lines.append(f"        let {pname} = {_literal_from_spec_value(pvalue)};\n")
-    arg_list = ", ".join(vec.inputs.keys())
+        safe_name = _sanitize_param_name(pname, len(arg_names))
+        arg_names.append(safe_name)
+        lines.append(f"        let {safe_name} = {_literal_from_spec_value(pvalue)};\n")
+    arg_list = ", ".join(arg_names)
     lines.append(f"        let got = super::{fn_name}({arg_list});\n")
     expected = vec.expected_output.strip()
     if expected:
