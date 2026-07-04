@@ -477,6 +477,22 @@ class DifferentialTester:
             "cargo_summary": None,
         }
 
+        # The differential test binary loads the C oracle shared library at
+        # RUNTIME. Windows searches the executable's directory (handled by the
+        # copy above); Linux/mac need the oracle dir on the loader path — the
+        # FFI build.rs rpath applies to the FFI cdylib, not the test binary.
+        import os as _os
+        import sys as _sys
+        env = dict(_os.environ)
+        oracle_dir = str(Path(ffi_result.build.dll_path).parent.resolve())
+        if _sys.platform == "win32":
+            var = "PATH"
+        elif _sys.platform == "darwin":
+            var = "DYLD_LIBRARY_PATH"
+        else:
+            var = "LD_LIBRARY_PATH"
+        env[var] = oracle_dir + _os.pathsep + env.get(var, "")
+
         # Run cargo test --test differential inside diff_dir
         try:
             r = subprocess.run(
@@ -486,6 +502,7 @@ class DifferentialTester:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_diff,
+                env=env,
             )
         except subprocess.TimeoutExpired as e:
             return GateResult(
