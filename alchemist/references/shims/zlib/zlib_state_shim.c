@@ -179,6 +179,41 @@ EXPORT void shim_set_dyn_ltree_freq(const unsigned short *freqs, unsigned n) {
     }
 }
 
+/* ---------- Huffman heap state (pqdownheap / build_tree) ---------- */
+
+EXPORT void shim_set_heap(const int *src, unsigned n) {
+    deflate_state *s = &g_state;
+    unsigned max = n < 2 * L_CODES + 1 ? n : 2 * L_CODES + 1;
+    for (unsigned i = 0; i < max; i++) s->heap[i] = src[i];
+}
+EXPORT void shim_get_heap(int *out, unsigned n) {
+    deflate_state *s = &g_state;
+    unsigned max = n < 2 * L_CODES + 1 ? n : 2 * L_CODES + 1;
+    for (unsigned i = 0; i < max; i++) out[i] = s->heap[i];
+}
+
+EXPORT void shim_set_heap_len(int v) { g_state.heap_len = v; }
+EXPORT int shim_get_heap_len(void) { return g_state.heap_len; }
+EXPORT void shim_set_heap_max(int v) { g_state.heap_max = v; }
+EXPORT int shim_get_heap_max(void) { return g_state.heap_max; }
+
+EXPORT void shim_set_depth(const unsigned char *src, unsigned n) {
+    deflate_state *s = &g_state;
+    unsigned max = n < 2 * L_CODES + 1 ? n : 2 * L_CODES + 1;
+    for (unsigned i = 0; i < max; i++) s->depth[i] = (uch)src[i];
+}
+EXPORT void shim_get_depth(unsigned char *out, unsigned n) {
+    deflate_state *s = &g_state;
+    unsigned max = n < 2 * L_CODES + 1 ? n : 2 * L_CODES + 1;
+    for (unsigned i = 0; i < max; i++) out[i] = (unsigned char)s->depth[i];
+}
+
+/* pqdownheap sifts s->heap[k] down using tree[].Freq (dyn_ltree) + depth. */
+EXPORT void shim_run_pqdownheap(int k) {
+    deflate_state *s = &g_state;
+    pqdownheap(s, s->dyn_ltree, k);
+}
+
 /* detect_data_type returns Z_BINARY, Z_TEXT, or Z_UNKNOWN */
 EXPORT int shim_run_detect_data_type_ret(void) {
     deflate_state *s = &g_state;
