@@ -219,8 +219,14 @@ class TDDGenerator:
         # Fuzz-vector backfill: for every algorithm without extracted vectors
         # AND without catalog vectors, try to synthesize vectors by calling
         # the C reference library. Closes the P2 loophole where functions
-        # with no vectors would silently compile-only-pass.
-        self._backfill_fuzz_vectors(specs)
+        # with no vectors would silently compile-only-pass. Vectors persist
+        # into the spec checkpoints (with oracle provenance tags) when the
+        # source root is known.
+        self._backfill_fuzz_vectors(
+            specs,
+            specs_dir=(source_root / ".alchemist" / "specs")
+            if source_root else None,
+        )
         test_results = generate_tests_for_workspace(specs, architecture, output_dir)
         total_tests = sum(t.tests_written for t in test_results)
         console.print(f"  emitted {total_tests} tests across {len(test_results)} crates")
@@ -310,14 +316,22 @@ class TDDGenerator:
         e.g., "zlib" for crate "zlib-checksum". Returns None if no match.
         """
         from alchemist.references import registry as _reg
+        from alchemist.implementer.skeleton import _snake
         base = _reg.REFERENCES_DIR
-        # Try subject-specific hardports dir
+        # Try subject-specific hardports dir. Spec algorithm names can carry
+        # display punctuation ("main (inftrees.c generator)") while hardport
+        # files use the emitted Rust fn name — try both.
+        names = [fn_name]
+        snaked = _snake(fn_name)
+        if snaked != fn_name:
+            names.append(snaked)
         for key in (subject_hint, crate.split("-", 1)[0]):
             if not key:
                 continue
-            p = base / f"{key}_hardports" / crate / module / f"{fn_name}.rs"
-            if p.exists():
-                return p
+            for name in names:
+                p = base / f"{key}_hardports" / crate / module / f"{name}.rs"
+                if p.exists():
+                    return p
         return None
 
     def _load_cached_win(
@@ -1390,15 +1404,24 @@ class TDDGenerator:
         console.print(f"    [cyan]{alg.name}: probe-synthesized ref injected[/cyan]")
         return True
 
-    def _backfill_fuzz_vectors(self, specs: list[ModuleSpec]) -> None:
-        """For every algorithm with no test_vectors, try fuzz generation.
+    def _backfill_fuzz_vectors(
+        self,
+        specs: list[ModuleSpec],
+        specs_dir: Path | None = None,
+    ) -> None:
+        """For every algorithm without authored test_vectors, fuzz-generate.
 
-        Uses the C reference DLL (if discoverable) to compute ground-truth
-        outputs for random inputs. Vectors are appended in-place so Phase B
-        will emit real correctness tests.
+        Uses the C reference DLL / shims (when discoverable) to compute
+        ground-truth outputs. Vectors are set in-place so Phase B emits real
+        correctness tests.
 
-        Currently supports: checksum-category functions against zlib1.dll.
-        Extensible to hash/cipher/compression as bindings are added.
+        Provenance + persistence: every generated vector is tagged with an
+        oracle fingerprint in its `source` field. Tagged vectors are ALWAYS
+        regenerated on the next run — a persisted vector must never outlive
+        a fix to its oracle (the crc_word_big lesson) — while untagged
+        (extractor- or hand-authored) vectors are never touched. When
+        `specs_dir` is given, modules whose vectors changed are written back
+        to their spec checkpoint so the vectors become durable artifacts.
         """
         from alchemist.standards import lookup_test_vectors
         # Look up the C DLL for this translation. Convention: subjects
@@ -1435,28 +1458,96 @@ class TDDGenerator:
         except Exception as e:  # noqa: BLE001
             console.print(f"  [dim]fuzz backfill skipped: {e}[/dim]")
             return
+        # Checksum shim (crc_word / crc_word_big / multmodp / x2nmodp — the
+        # statics zlib1.dll doesn't export). Optional: older checkouts don't
+        # have it. Oracle integrity: the shim must agree with the pure-Python
+        # cross-check references before it is allowed to mint vectors; a
+        # disagreement between oracles is a stop-the-line event, not a choice.
+        from alchemist.extractor.oracle_tags import (
+            OracleDisputeError,
+            is_tagged,
+            oracle_tag_for_callable,
+            oracle_tag_for_file,
+            tag_vectors,
+        )
+
+        checksum_shim_dll = None
+        checksum_shim_path = None
+        try:
+            from alchemist.extractor.c_shim_fuzz import (
+                ZLIB_CHECKSUM_SHIM_PURE_BINDINGS,
+                crosscheck_checksum_shim,
+                locate_zlib_checksum_shim,
+            )
+            checksum_shim_path = locate_zlib_checksum_shim()
+            if checksum_shim_path:
+                candidate = _load_shim(checksum_shim_path)
+                mismatches = crosscheck_checksum_shim(candidate)
+                if mismatches:
+                    raise OracleDisputeError(
+                        "checksum shim disagrees with pure-Python cross-check "
+                        f"references ({len(mismatches)} mismatches, first: "
+                        f"{mismatches[0]}) — REFUSING to generate vectors from "
+                        "a disputed oracle"
+                    )
+                checksum_shim_dll = candidate
+        except ImportError:
+            ZLIB_CHECKSUM_SHIM_PURE_BINDINGS = {}
+
         added = 0
+        touched_modules: set[str] = set()
+        # Tagged vectors we cleared for regeneration, keyed by identity of
+        # the algorithm object. If no oracle produced replacements (e.g. the
+        # shim DLL that minted them isn't built on this machine), the
+        # originals are RESTORED with a loud warning — zero vectors would
+        # silently reopen the compile-only-pass loophole and, with
+        # persistence, durably delete them from the checkpoint.
+        cleared_for_regen: dict[int, tuple] = {}
+
+        def _accept(mod, alg, vectors, tag: str) -> None:
+            nonlocal added
+            if vectors:
+                alg.test_vectors = tag_vectors(vectors, tag)
+                added += len(vectors)
+                touched_modules.add(mod.name)
+
         for mod in specs:
             for alg in mod.algorithms:
                 if alg.test_vectors:
-                    continue
+                    if all(is_tagged(v) for v in alg.test_vectors):
+                        # Machine-generated with recorded provenance —
+                        # regenerate rather than trust: a stale persisted
+                        # vector must never shadow a fixed oracle.
+                        cleared_for_regen[id(alg)] = (mod, alg, alg.test_vectors)
+                        alg.test_vectors = []
+                    else:
+                        continue  # authored vectors — never clobber
+                # C-shim pure-function path (checksum statics)
+                if (checksum_shim_dll is not None
+                        and alg.name in ZLIB_CHECKSUM_SHIM_PURE_BINDINGS):
+                    vectors = fuzz_pure_shim(
+                        checksum_shim_dll, alg,
+                        ZLIB_CHECKSUM_SHIM_PURE_BINDINGS[alg.name],
+                    )
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", checksum_shim_path))
+                    if vectors:
+                        continue
                 # C-shim pure-function path
                 if shim_dll is not None and alg.name in ZLIB_SHIM_PURE_BINDINGS:
                     vectors = fuzz_pure_shim(
                         shim_dll, alg, ZLIB_SHIM_PURE_BINDINGS[alg.name],
                     )
-                    if vectors:
-                        alg.test_vectors = vectors
-                        added += len(vectors)
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", shim_path))
                     continue
                 # C-shim state-mutator path (deflate DLL)
                 if shim_dll is not None and alg.name in ZLIB_SHIM_BINDINGS:
                     vectors = fuzz_with_shim(
                         shim_dll, alg, ZLIB_SHIM_BINDINGS[alg.name],
                     )
-                    if vectors:
-                        alg.test_vectors = vectors
-                        added += len(vectors)
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", shim_path))
                     continue
                 # C-shim state-mutator path (inflate DLL) — separate DLL
                 # because inflate.h / deflate.h can't share a CU.
@@ -1468,9 +1559,8 @@ class TDDGenerator:
                         inflate_shim_dll, alg,
                         ZLIB_INFLATE_SHIM_BINDINGS[alg.name],
                     )
-                    if vectors:
-                        alg.test_vectors = vectors
-                        added += len(vectors)
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", inflate_shim_path))
                     continue
                 # C-shim state-observer path (state_in -> scalar return)
                 # Re-enabled 2026-04-22: CShimField now supports
@@ -1482,9 +1572,8 @@ class TDDGenerator:
                     vectors = fuzz_observer_shim(
                         shim_dll, alg, ZLIB_SHIM_OBSERVER_BINDINGS[alg.name],
                     )
-                    if vectors:
-                        alg.test_vectors = vectors
-                        added += len(vectors)
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", shim_path))
                     continue
                 # Byte-buffer transformation path — fn mutates a slice
                 # argument or compares two slices. Runs BEFORE the generic
@@ -1494,17 +1583,15 @@ class TDDGenerator:
                     vectors = fuzz_byte_transform(
                         alg, ZLIB_BYTE_TRANSFORMS[alg.name],
                     )
-                    if vectors:
-                        alg.test_vectors = vectors
-                        added += len(vectors)
+                    _accept(mod, alg, vectors, oracle_tag_for_callable(
+                        "pyref", ZLIB_BYTE_TRANSFORMS[alg.name]))
                     continue
                 # State-mutator path (fallback): Python reference port
                 state_binding = ZLIB_STATE_MUTATORS.get(alg.name)
                 if state_binding is not None:
                     vectors = fuzz_state_mutator(alg, state_binding)
-                    if vectors:
-                        alg.test_vectors = vectors
-                        added += len(vectors)
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_callable("pyref", state_binding))
                     continue
                 # Only skip catalog lookup when catalog vectors will
                 # actually be emitted — i.e., the function can consume
@@ -1521,11 +1608,47 @@ class TDDGenerator:
                     dll, alg, ZLIB_BINDINGS,
                     pure_references=ZLIB_PURE_REFERENCES,
                 )
-                if vectors:
-                    alg.test_vectors = vectors
-                    added += len(vectors)
+                if alg.name in ZLIB_PURE_REFERENCES:
+                    tag = oracle_tag_for_callable(
+                        "pyref", ZLIB_PURE_REFERENCES[alg.name])
+                else:
+                    tag = oracle_tag_for_file("dll", dll_path)
+                _accept(mod, alg, vectors, tag)
+        # Restore any cleared vectors whose oracle produced no replacement —
+        # the oracle that minted them isn't available in this environment.
+        restored = 0
+        for _mod, alg, originals in cleared_for_regen.values():
+            if not alg.test_vectors:
+                alg.test_vectors = originals
+                restored += len(originals)
+                console.print(
+                    f"  [yellow]fuzz backfill: oracle for {alg.name!r} is "
+                    f"unavailable here — kept {len(originals)} previously "
+                    f"minted vector(s) instead of silently dropping to zero. "
+                    f"Rebuild the shim (subjects/*/shim) to regenerate.[/yellow]"
+                )
         if added:
             console.print(f"  [cyan]fuzz backfill: generated {added} vectors[/cyan]")
+        # Persist regenerated vectors into the spec checkpoints so they are
+        # durable, reviewable artifacts instead of per-run ephemera. Only
+        # touched modules are rewritten; authored vectors were never cleared
+        # and unavailable-oracle vectors were restored above, so nothing can
+        # be lost here.
+        if specs_dir is not None and touched_modules:
+            persisted = 0
+            for mod in specs:
+                if mod.name not in touched_modules:
+                    continue
+                target = Path(specs_dir) / f"{mod.name}.json"
+                if not target.exists():
+                    continue  # never create spec files the extractor didn't
+                target.write_text(mod.model_dump_json(indent=2), encoding="utf-8")
+                persisted += 1
+            if persisted:
+                console.print(
+                    f"  [cyan]fuzz backfill: persisted vectors into "
+                    f"{persisted} spec checkpoint(s)[/cyan]"
+                )
 
     def _locate_c_dll(self) -> Path | None:
         """Find a C reference library for fuzz-vector generation.

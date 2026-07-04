@@ -200,11 +200,18 @@ def run_solo(
     gen._probe_attempted = set()
     gen._workspace_dir = output_dir
     # Fuzz backfill populates alg.test_vectors for state-mutator /
-    # byte-transform / pure-fn shapes. Without this, every solo fails
-    # with "no test vectors" because the spec files don't persist the
-    # vectors from a prior Phase B.
+    # byte-transform / pure-fn shapes, and persists them (oracle-tagged)
+    # into the spec checkpoints so later runs and reviewers see them.
+    from alchemist.extractor.oracle_tags import OracleDisputeError
     try:
-        gen._backfill_fuzz_vectors(specs)
+        gen._backfill_fuzz_vectors(
+            specs, specs_dir=subject / ".alchemist" / "specs",
+        )
+    except OracleDisputeError as e:
+        # Stop the line: continuing would gate implementations on vectors
+        # persisted by an oracle the run just declared disputed.
+        console.print(f"[red]solo: {e}[/red]")
+        raise
     except Exception as e:
         console.print(f"[yellow]solo: fuzz backfill skipped ({e})[/yellow]")
     gen._cached_ctx = llm.create_cached_context(
