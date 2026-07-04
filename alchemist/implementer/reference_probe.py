@@ -287,8 +287,60 @@ def probe_algorithm(
     )
 
 
+_DEFINE_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)", re.MULTILINE)
+
+
+def extract_referenced_macros(source_text: str, body: str) -> str:
+    """Return the `#define` directives whose macro NAME appears in `body`.
+
+    C libraries put the load-bearing logic in function-like macros
+    (SipHash's SIPROUND, ROTL, U8TO64_LE, dROUNDS) that live OUTSIDE the
+    function. Extracting only the function body leaves the model to guess
+    what those macros do — and it guesses the round function wrong. Pull the
+    full (multi-line, backslash-continued) definition of every macro the
+    body references, transitively (a macro that references another macro).
+    """
+    # Collect every #define with its full multi-line body.
+    defines: dict[str, str] = {}
+    lines = source_text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        m = _DEFINE_RE.match(lines[i])
+        if m:
+            name = m.group(1)
+            chunk = [lines[i]]
+            # Consume backslash-continued continuation lines.
+            while chunk[-1].rstrip("\n").endswith("\\") and i + 1 < len(lines):
+                i += 1
+                chunk.append(lines[i])
+            defines[name] = "".join(chunk)
+        i += 1
+
+    # Which macros does the body reference? Then close transitively over the
+    # macro bodies themselves.
+    wanted: list[str] = []
+    seen: set[str] = set()
+    frontier = [n for n in defines if re.search(rf"\b{re.escape(n)}\b", body)]
+    while frontier:
+        n = frontier.pop(0)
+        if n in seen:
+            continue
+        seen.add(n)
+        wanted.append(n)
+        for other in defines:
+            if other not in seen and re.search(rf"\b{re.escape(other)}\b", defines[n]):
+                frontier.append(other)
+
+    if not wanted:
+        return ""
+    # Emit in source order for readability.
+    ordered = [n for n in defines if n in seen]
+    return "".join(defines[n] for n in ordered)
+
+
 def _find_body_in_sources(alg: AlgorithmSpec, source_root: Path) -> str | None:
-    """Search source files referenced by the spec for the function's body."""
+    """Search source files for the function's body, enriched with the
+    `#define` macros it references (SIPROUND, ROTL, …)."""
     # The spec's source_files may be relative paths or absolute.
     candidate_paths: list[Path] = []
     for sf in alg.source_files or []:
@@ -304,6 +356,17 @@ def _find_body_in_sources(alg: AlgorithmSpec, source_root: Path) -> str | None:
         for path in candidate_paths:
             body = extract_c_function_body(path, fn_name)
             if body:
+                try:
+                    macros = extract_referenced_macros(
+                        path.read_text(encoding="utf-8", errors="replace"), body)
+                except OSError:
+                    macros = ""
+                if macros:
+                    return (
+                        "/* Macros used by the function below (from the same "
+                        "source file) — expand these faithfully: */\n"
+                        + macros + "\n" + body
+                    )
                 return body
     return None
 

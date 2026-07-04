@@ -105,3 +105,30 @@ def test_probe_result_as_reference_empty_source():
     )
     ref = probe_result_as_reference(probe, "pub fn myfn()")
     assert ref is None
+
+
+def test_extract_referenced_macros_pulls_siprounds_transitively(tmp_path):
+    """C libraries hide the load-bearing logic in function-like macros
+    (SipHash's SIPROUND uses ROTL). The probe must pull every macro the
+    body references, transitively, or the model guesses the rounds wrong."""
+    from alchemist.implementer.reference_probe import extract_referenced_macros
+    src = (
+        "#define cROUNDS 2\n"
+        "#define dROUNDS 4\n"
+        "#define ROTL(x, b) ((x) << (b) | (x) >> (64 - (b)))\n"
+        "#define UNUSED_MACRO(z) ((z) + 1)\n"
+        "#define SIPROUND \\n"
+        "    do { v0 += v1; v1 = ROTL(v1, 13); } while (0)\n"
+    )
+    body = "int f() { SIPROUND; for (i=0;i<dROUNDS;i++){} }"
+    out = extract_referenced_macros(src, body)
+    assert "#define SIPROUND" in out
+    assert "ROTL" in out          # transitively via SIPROUND
+    assert "dROUNDS" in out
+    assert "UNUSED_MACRO" not in out  # not referenced → excluded
+
+
+def test_extract_referenced_macros_empty_when_none_referenced():
+    from alchemist.implementer.reference_probe import extract_referenced_macros
+    src = "#define FOO 1\n#define BAR(x) (x)\n"
+    assert extract_referenced_macros(src, "int f() { return 0; }") == ""
