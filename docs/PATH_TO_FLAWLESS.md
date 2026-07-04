@@ -48,14 +48,20 @@ A workspace-level claim is only as strong as its weakest public function.
 | **L0** | compiles, `#![forbid(unsafe_code)]` | cargo + no-unsafe gate | all crates |
 | **L1** | not a stub, right algorithm *shape* | anti-stub + semantic lints | all crates (semantic gate live 2026-07-03) |
 | **L2** | matches published standards vectors | RFC/NIST fixed vectors | adler32, crc32 |
-| **L3** | matches compiled C on randomized inputs | automated differential oracle (adapter_gen) | adler32_z, crc32 — 5000 cases each |
+| **L3** | matches compiled C on randomized + boundary inputs | automated differential oracle (adapter_gen) + shim FFI for statics + fold-edge boundary tests | adler32_z, crc32 — 5000 cases + boundary lengths each; crc_word, crc_word_big, multmodp, x2nmodp via checksum-shim vectors |
 | **L4** | matches compiled C under coverage-guided fuzzing, UB-screened | branch-coverage-driven differential fuzzing; sanitized C oracle | — not built |
 | **L5** | proven equivalent within stated bounds | paired bounded model checking / symbolic equivalence | — not built |
 | **L6** | compositional proof across call graph | function contracts + whole-crate composition | — research |
 
-L3 is where the project stands today for two functions. "Contract-ready" (per
-ROADMAP) is L3–L4 across a whole library's public API. "Flawless-or-refused"
-is L4 default, L5 for the functions that matter, refusal below threshold.
+**Status 2026-07-03 (second pass):** zlib-checksum is the first crate green
+through ALL six gates (`OVERALL: PASS`, receipted) — table-generation
+functions are hardported and anchored byte-for-byte against zlib's shipped
+`crc32.h`/`inffixed.h`. Receipts (G7-lite), oracle-tagged vector persistence
+(G4-lite), the checksum shim oracle with fail-closed cross-check (G1 for
+statics), full-footprint compression adapters (G2), and boundary-length
+differentials (G3-lite) are live. "Contract-ready" (per ROADMAP) is L3–L4
+across a whole library's public API. "Flawless-or-refused" is L4 default,
+L5 for the functions that matter, refusal below threshold.
 
 ---
 

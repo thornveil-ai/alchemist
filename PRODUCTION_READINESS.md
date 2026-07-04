@@ -44,6 +44,29 @@ API), via the automated differential oracle; `crc_word_big` via fixed
 vectors against the corrected pure reference (it is `local` in C — not
 FFI-observable).**
 
+### Second pass, same day — first all-gates-green crate
+
+- **`alchemist verify subjects/zlib -p zlib-checksum` → `OVERALL: PASS`** —
+  the first fully green verification in the project's history. The six
+  table-generation skeletons are now real ports (including a complete
+  `inflate_table` port whose generated inffixed.h matches zlib's shipped
+  file byte-for-byte), anchored against `crc32.h`, so the anti-stub gate is
+  clean; test gate 177/0; differential 19/19 incl. new boundary-length
+  tests at NMAX/word/braid fold edges.
+- **The statics now have a compiled-C oracle.** A checksum shim DLL
+  (amalgamated `crc32.c`, W=8/N=5 compile-time-pinned) exports `crc_word`,
+  `crc_word_big`, `multmodp`, `x2nmodp`; their fuzz vectors regenerate from
+  real compiled zlib and a fail-closed cross-check halts generation on any
+  shim-vs-reference disagreement. This independently confirms the W=8 braid
+  fix against the actual C (`crc_word_big(1) == 0x9630077700000000`).
+- **Claims are artifacts now.** Verify runs emit a content-addressed
+  receipt (gates, bindings, case counts, gcc version, source/DLL hashes).
+- **Compression is honestly red, not unresolvable.** The deflate harness
+  adapts to the real generated API (3/3 harnesses) and its 10 tests fail
+  against the stubs while the 19 checksum tests remain visible.
+- Fuzz vectors are now persisted into spec checkpoints with oracle
+  provenance tags and always regenerate when their oracle changes.
+
 ---
 
 ## Executive Summary
