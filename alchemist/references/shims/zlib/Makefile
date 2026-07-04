@@ -1,4 +1,4 @@
-# Build script for the zlib C shims (deflate + inflate).
+# Build script for the zlib C shims (deflate + inflate + checksum).
 #
 # The shims amalgamate zlib source files so Alchemist can observe and
 # mutate zlib's internal state via FFI during test-vector fuzzing.
@@ -23,11 +23,19 @@ IMPLIB_FLAG = -Wl,--out-implib,$@.a
 
 .PHONY: all clean
 
-all: zlib_state_shim.dll zlib_inflate_shim.dll
+all: zlib_state_shim.dll zlib_inflate_shim.dll zlib_checksum_shim.dll
 
 # --- Deflate shim (amalgamated into a single CU) ---
 
 zlib_state_shim.dll: zlib_state_shim.c
+	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) $< $(IMPLIB_FLAG)
+
+# --- Checksum shim (amalgamated into a single CU) ---
+# Pulls crc32.c into the shim's CU so its `local` helpers (crc_word,
+# crc_word_big, multmodp, x2nmodp) are callable. crc32.c self-selects
+# the braided W=8 / N=5 configuration on x86_64 gcc.
+
+zlib_checksum_shim.dll: zlib_checksum_shim.c
 	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) $< $(IMPLIB_FLAG)
 
 # --- Inflate shim ---

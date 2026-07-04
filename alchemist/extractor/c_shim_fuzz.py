@@ -439,6 +439,120 @@ ZLIB_SHIM_PURE_BINDINGS: dict[str, CShimPureBinding] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Checksum shim bindings — pure `local` helpers from crc32.c, exposed via a
+# THIRD DLL (zlib_checksum_shim.dll) that amalgamates crc32.c into its CU.
+# The shim pins the braided W=8 / N=5 configuration (x86_64 gcc default),
+# matching the pure-Python references in fuzz_vectors.py.
+# ---------------------------------------------------------------------------
+
+def _fuzz_word_u64(rng: random.Random) -> int:
+    """Full-range z_word_t fuzz with anchor values (0, 1, 0xff, small)."""
+    roll = rng.random()
+    if roll < 0.10:
+        return 0
+    if roll < 0.20:
+        return 1
+    if roll < 0.30:
+        return 0xFF
+    if roll < 0.50:
+        return rng.randint(0, 0xFFFF)
+    return rng.getrandbits(64)
+
+
+def _fuzz_multmodp_a(rng: random.Random) -> int:
+    """First multmodp operand. NEVER zero: zlib documents `a != 0` and the
+    compiled C loop never terminates for a == 0 (m underflows to 0 and the
+    break condition is unreachable). Anchors: 1, POLY, full-range."""
+    roll = rng.random()
+    if roll < 0.15:
+        return 1
+    if roll < 0.30:
+        return 0xEDB88320
+    return rng.getrandbits(32) or 1
+
+
+def _fuzz_multmodp_b(rng: random.Random) -> int:
+    """Second multmodp operand — zero is fine here (0 * anything = 0)."""
+    roll = rng.random()
+    if roll < 0.10:
+        return 0
+    if roll < 0.20:
+        return 1
+    if roll < 0.35:
+        return 0xEDB88320
+    return rng.getrandbits(32)
+
+
+def _fuzz_x2nmodp_n(rng: random.Random) -> int:
+    """x2nmodp exponent n. C takes z_off64_t (signed) and requires n >= 0,
+    so fuzz stays in [0, 2^63). Rust-side signature takes u64."""
+    roll = rng.random()
+    if roll < 0.10:
+        return 0
+    if roll < 0.20:
+        return 1
+    if roll < 0.30:
+        return 255
+    if roll < 0.50:
+        return rng.randint(0, 0xFFFFFFFF)
+    return rng.getrandbits(63)
+
+
+def _fuzz_x2nmodp_k(rng: random.Random) -> int:
+    """x2nmodp table offset k. Only k & 31 is consumed and unsigned wrap
+    preserves the low 5 bits, so full u32 range is safe."""
+    roll = rng.random()
+    if roll < 0.25:
+        return 0
+    if roll < 0.50:
+        return rng.randint(0, 31)
+    return rng.getrandbits(32)
+
+
+ZLIB_CHECKSUM_SHIM_PURE_BINDINGS: dict[str, CShimPureBinding] = {
+    "crc_word": CShimPureBinding(
+        name="crc_word",
+        args=[StateFieldSpec("data", "u64", _fuzz_word_u64)],
+        argtypes=[ctypes.c_uint64],
+        restype=ctypes.c_uint32,
+        return_rust_type="u32",
+    ),
+    "crc_word_big": CShimPureBinding(
+        name="crc_word_big",
+        args=[StateFieldSpec("data", "u64", _fuzz_word_u64)],
+        argtypes=[ctypes.c_uint64],
+        restype=ctypes.c_uint64,
+        return_rust_type="u64",
+    ),
+    "multmodp": CShimPureBinding(
+        name="multmodp",
+        args=[
+            StateFieldSpec("a", "u32", _fuzz_multmodp_a),
+            StateFieldSpec("b", "u32", _fuzz_multmodp_b),
+        ],
+        argtypes=[ctypes.c_uint32, ctypes.c_uint32],
+        restype=ctypes.c_uint32,
+        return_rust_type="u32",
+    ),
+    # Rust hardport signature: `pub fn x2nmodp(mut n: u64, mut k: u32) -> u32`
+    # (subjects/zlib/.alchemist/output/zlib-checksum/src/crc32.rs). The C
+    # shim takes z_off64_t (signed), so the first ctypes argtype is c_int64
+    # while the Rust-side literal renders as u64; fuzz values stay < 2^63
+    # so both readings agree.
+    "x2nmodp": CShimPureBinding(
+        name="x2nmodp",
+        args=[
+            StateFieldSpec("n", "u64", _fuzz_x2nmodp_n),
+            StateFieldSpec("k", "u32", _fuzz_x2nmodp_k),
+        ],
+        argtypes=[ctypes.c_int64, ctypes.c_uint32],
+        restype=ctypes.c_uint32,
+        return_rust_type="u32",
+    ),
+}
+
+
 def _fuzz_dyn_ltree_freq(rng: random.Random) -> list[int]:
     # Fill a representative slice of the dynamic literal tree's Freq field.
     # detect_data_type scans [0..31] as binary-heavy and [33..LITERALS-1] as
@@ -746,3 +860,108 @@ def locate_zlib_inflate_shim() -> Path | None:
         if c.exists():
             return c.resolve()
     return None
+
+
+def locate_zlib_checksum_shim() -> Path | None:
+    """Find the checksum-side shim DLL (crc_word / multmodp / x2nmodp)."""
+    candidates = [
+        Path("subjects/zlib/shim/zlib_checksum_shim.dll"),
+        Path("subjects/zlib/shim/libzlib_checksum_shim.so"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return c.resolve()
+    return None
+
+
+def crosscheck_checksum_shim(dll: ctypes.CDLL) -> list[str]:
+    """Cross-validate the checksum shim against the pure-Python references.
+
+    Oracle-integrity guard: before either source is trusted for test-vector
+    generation, the compiled-C shim and fuzz_vectors' pure-Python ports
+    (crc_word, crc_word_big, multmodp, x2nmodp) must agree bit-for-bit.
+    Runs ~50 deterministic (seeded) inputs per function and returns a list
+    of mismatch descriptions — an empty list means full agreement. Also
+    pins the compiled configuration: shim_crc_w() must be 8 and
+    shim_crc_n() must be 5 (the braided x86_64 build the references model).
+    """
+    import struct
+
+    from alchemist.extractor.fuzz_vectors import (
+        _crc_word_pure_ref,
+        _crc_word_big_pure_ref,
+        _multmodp_pure_ref,
+        _x2nmodp_pure_ref,
+    )
+
+    mismatches: list[str] = []
+
+    # Configuration pins.
+    w_fn = dll.shim_crc_w
+    w_fn.restype = ctypes.c_int32
+    n_fn = dll.shim_crc_n
+    n_fn.restype = ctypes.c_int32
+    w_val, n_val = int(w_fn()), int(n_fn())
+    if w_val != 8:
+        mismatches.append(f"config pin: shim_crc_w() == {w_val}, expected 8")
+    if n_val != 5:
+        mismatches.append(f"config pin: shim_crc_n() == {n_val}, expected 5")
+
+    crc_word = dll.shim_run_crc_word
+    crc_word.argtypes = [ctypes.c_uint64]
+    crc_word.restype = ctypes.c_uint32
+    crc_word_big = dll.shim_run_crc_word_big
+    crc_word_big.argtypes = [ctypes.c_uint64]
+    crc_word_big.restype = ctypes.c_uint64
+    multmodp = dll.shim_run_multmodp
+    multmodp.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    multmodp.restype = ctypes.c_uint32
+    x2nmodp = dll.shim_run_x2nmodp
+    x2nmodp.argtypes = [ctypes.c_int64, ctypes.c_uint32]
+    x2nmodp.restype = ctypes.c_uint32
+
+    rng = random.Random(0xC5C_CC3C)  # deterministic cross-check inputs
+
+    # crc_word / crc_word_big share the u64 LE byte-packing convention of
+    # the pure references: word.to_bytes(8, "little").
+    words = [0, 1, 0xFF, 0x636261] + [rng.getrandbits(64) for _ in range(46)]
+    for v in words:
+        got = int(crc_word(ctypes.c_uint64(v)))
+        want = _crc_word_pure_ref(v.to_bytes(8, "little"))
+        if got != want:
+            mismatches.append(
+                f"crc_word({v:#x}): shim={got:#010x} pure={want:#010x}"
+            )
+        got_big = int(crc_word_big(ctypes.c_uint64(v)))
+        want_big = _crc_word_big_pure_ref(v.to_bytes(8, "little"))
+        if got_big != want_big:
+            mismatches.append(
+                f"crc_word_big({v:#x}): shim={got_big:#018x} pure={want_big:#018x}"
+            )
+
+    # multmodp packs (a, b) as 8 bytes LE ("<II"). a must never be 0: the
+    # compiled C loops forever (the pure ref returns 0 defensively, but the
+    # oracle would hang).
+    pairs = [(1, 0), (1, 1), (0xEDB88320, 0xEDB88320), (0xFFFFFFFF, 0xFFFFFFFF)]
+    pairs += [(rng.getrandbits(32) or 1, rng.getrandbits(32)) for _ in range(46)]
+    for a, b in pairs:
+        got = int(multmodp(ctypes.c_uint32(a), ctypes.c_uint32(b)))
+        want = _multmodp_pure_ref(struct.pack("<II", a, b))
+        if got != want:
+            mismatches.append(
+                f"multmodp({a:#x}, {b:#x}): shim={got:#010x} pure={want:#010x}"
+            )
+
+    # x2nmodp packs (n, k) as 12 bytes LE ("<QI"). n must stay in [0, 2^63)
+    # because the C parameter is signed z_off64_t.
+    nk_pairs = [(0, 0), (255, 0), (1, 3), (0xFFFFFFFF, 31)]
+    nk_pairs += [(rng.getrandbits(63), rng.getrandbits(32)) for _ in range(46)]
+    for n_arg, k_arg in nk_pairs:
+        got = int(x2nmodp(ctypes.c_int64(n_arg), ctypes.c_uint32(k_arg)))
+        want = _x2nmodp_pure_ref(struct.pack("<QI", n_arg, k_arg))
+        if got != want:
+            mismatches.append(
+                f"x2nmodp({n_arg:#x}, {k_arg:#x}): shim={got:#010x} pure={want:#010x}"
+            )
+
+    return mismatches
