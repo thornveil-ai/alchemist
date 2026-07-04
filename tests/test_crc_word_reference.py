@@ -26,10 +26,26 @@ def test_crc_table_matches_standard_polynomial() -> None:
     assert _CRC_TABLE[255] == 0x2D02EF8D
 
 
-def test_crc_big_table_is_byte_reversed() -> None:
+def test_crc_big_table_matches_zlib_w8_crc32h() -> None:
+    """crc_big_table entries must match zlib's shipped crc32.h for W=8.
+
+    For the W=8 build (z_word_t = 64-bit, the x86_64 default), zlib defines
+    crc_big_table[i] = byte_swap(crc_table[i]) with a 64-bit byte_swap — the
+    swapped 32-bit value sits in the HIGH 32 bits. These anchors are copied
+    verbatim from zlib's generated crc32.h (subjects/zlib/crc32.h, W=8 table).
+    A 32-bit swap kept in the low half is the W=4 table and must NOT be used
+    with the W=8 loop in _crc_word_big_pure_ref.
+    """
+    assert _CRC_BIG_TABLE[0] == 0x0000000000000000
+    assert _CRC_BIG_TABLE[1] == 0x9630077700000000
+    assert _CRC_BIG_TABLE[2] == 0x2C610EEE00000000
+    assert _CRC_BIG_TABLE[255] == 0x8DEF022D00000000
+
+
+def test_crc_big_table_is_64bit_byteswap_of_crc_table() -> None:
     for i in range(256):
         swapped = int.from_bytes(
-            _CRC_TABLE[i].to_bytes(4, "little"), "big"
+            _CRC_TABLE[i].to_bytes(8, "little"), "big"
         )
         assert _CRC_BIG_TABLE[i] == swapped
 

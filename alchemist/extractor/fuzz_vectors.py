@@ -609,10 +609,16 @@ _CRC_TABLE = _make_crc_table()
 
 
 def _make_crc_big_table() -> tuple[int, ...]:
-    # Entry i is byte-reversed form of crc_table[i] (treated as 4-byte).
+    # Entry i is byte_swap(crc_table[i]) where byte_swap operates on z_word_t.
+    # We model zlib's W=8 build (the x86_64/aarch64 default: z_word_t is
+    # 64-bit), so the swap is a full 64-bit byte reversal of the zero-extended
+    # entry — the 32-bit swapped value lands in the HIGH 32 bits. zlib's own
+    # shipped crc32.h confirms: crc_big_table[1] == 0x9630077700000000 for
+    # W=8. (A 32-bit swap kept in the low half is the W=4 table; pairing it
+    # with the W=8 loop below matches no real zlib configuration.)
     result = []
     for v in _CRC_TABLE:
-        result.append(int.from_bytes(v.to_bytes(4, "little"), "big"))
+        result.append(int.from_bytes(v.to_bytes(8, "little"), "big"))
     return tuple(result)
 
 
@@ -633,10 +639,11 @@ def _crc_word_pure_ref(data: bytes) -> int:
 
 
 def _crc_word_big_pure_ref(data: bytes) -> int:
-    """crc_word_big(z_word_t) — big-endian braided CRC iteration.
+    """crc_word_big(z_word_t) — big-endian braided CRC iteration, W=8.
 
-    Port of crc32.c: `for k in 0..W { data = (data << 8) ^ big_table[(data >> 56) & 0xff]; }`
-    Returns full 64-bit z_word_t.
+    Port of crc32.c: `for k in 0..W { data = (data << 8) ^ crc_big_table[(data >> ((W-1)<<3)) & 0xff]; }`
+    with W=8, so the index shift is 56 and the table entries carry the
+    byte-swapped CRC in their high 32 bits. Returns full 64-bit z_word_t.
     """
     padded = bytes(data[:8].ljust(8, b"\x00"))
     word = int.from_bytes(padded, "little")
