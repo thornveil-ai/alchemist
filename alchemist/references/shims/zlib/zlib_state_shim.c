@@ -343,6 +343,18 @@ EXPORT unsigned shim_const_table(int which, int *out, unsigned n) {
     }
     return cap;
 }
+/* gen_bitlen(s, desc): from a merged heap (heap[heap_max..HEAP_SIZE] in
+   ascending-frequency order, tree.Dad set, tree.Freq set, desc.max_code)
+   assigns bit lengths (tree.Len via dl), fills bl_count, and accumulates
+   opt_len/static_len. The Python fuzzer supplies the pre-merge state (heap,
+   heap_max, Dad, Freq, max_code) validated against the full build_tree. */
+EXPORT void shim_run_gen_bitlen(int which) {
+    deflate_state *s = &g_state;
+    shim_desc_setup();
+    tree_desc *d = which == 1 ? &s->d_desc : (which == 2 ? &s->bl_desc : &s->l_desc);
+    gen_bitlen(s, d);
+}
+
 /* Static descriptor scalars: extra_base, max_length, elems for l/d/bl. */
 EXPORT void shim_static_desc(int which, int *extra_base, int *max_length, int *elems) {
     tr_static_init();
