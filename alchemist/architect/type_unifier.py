@@ -134,6 +134,9 @@ class FieldAddition:
 DEFAULT_FIELD_ADDITIONS: tuple[FieldAddition, ...] = (
     FieldAddition("DeflateState", "sym_buf", "Vec<u8>"),
     FieldAddition("DeflateState", "sym_next", "u32"),
+    # sym_end: the sym_buf high-water mark _tr_tally compares against to signal
+    # a full symbol buffer (the extractor missed it too).
+    FieldAddition("DeflateState", "sym_end", "u32"),
 )
 
 

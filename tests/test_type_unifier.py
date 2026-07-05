@@ -150,7 +150,7 @@ def test_state_fields_in_rust_definition_are_unified():
     assert "heap: Vec<i32>" in rd          # non-tree field untouched
     # 3 tuple→TreeElement rewrites + 2 sym_buf/sym_next additions (the
     # extractor-missed active-C fields).
-    assert rep.field_rewrites == 5
+    assert rep.field_rewrites == 6
     assert "pub sym_buf: Vec<u8>," in rd
 
 
