@@ -702,12 +702,60 @@ def fuzz_build_tree(dll, alg, *, count: int = 10, seed: int = 0x42_54_52_45):
     return vectors
 
 
+def fuzz_build_bl_tree(dll, alg, *, count: int = 10, seed: int = 0x42_42_4C_54):
+    """build_bl_tree(s) -> max_blindex: scans dyn_ltree/dyn_dtree bit lengths
+    into bl_tree, builds the bit-length tree, returns the count of BL codes to
+    send. Exercises the state/descriptor aliasing (build_tree on s.bl_desc,
+    whose dyn_tree zlib aliases to s.bl_tree). Asserts the return, opt_len, and
+    the 19 bl-code lengths."""
+    rng = random.Random(seed)
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        L = rng.randint(8, 50)
+        D = rng.randint(4, 25)
+        lens_l = [rng.randint(0, 15) for _ in range(L + 2)]
+        lens_d = [rng.randint(0, 15) for _ in range(D + 2)]
+        dll.shim_reset()
+        dll.shim_set_tree_dl(0, (ctypes.c_ushort * len(lens_l))(*lens_l), len(lens_l))
+        dll.shim_set_tree_dl(1, (ctypes.c_ushort * len(lens_d))(*lens_d), len(lens_d))
+        dll.shim_set_desc_max_code(0, ctypes.c_int(L - 1))
+        dll.shim_set_desc_max_code(1, ctypes.c_int(D - 1))
+        dll.shim_run_build_bl_tree.restype = ctypes.c_int
+        mbi = dll.shim_run_build_bl_tree()
+        bl_len = (ctypes.c_ushort * 19)()
+        dll.shim_get_tree_dl(2, bl_len, 19)
+        dll.shim_get_opt_len.restype = ctypes.c_ulong
+        opt = dll.shim_get_opt_len()
+        bl_stat = _bl_stat_desc_lit()
+        bl_exp = "vec![" + ", ".join(f"{x}u16" for x in list(bl_len)) + "]"
+        body = (
+            f"let mut state = zlib_types::DeflateState::default();\n"
+            f"state.dyn_ltree = {_tree_lit({'len': lens_l}, len(lens_l))};\n"
+            f"state.dyn_dtree = {_tree_lit({'len': lens_d}, len(lens_d))};\n"
+            f"state.bl_tree = vec![zlib_types::TreeElement::default(); 573];\n"
+            f"state.l_desc = zlib_types::TreeDesc {{ dyn_tree: vec![], max_code: {L-1}i32, stat_desc: Default::default() }};\n"
+            f"state.d_desc = zlib_types::TreeDesc {{ dyn_tree: vec![], max_code: {D-1}i32, stat_desc: Default::default() }};\n"
+            f"state.bl_desc = zlib_types::TreeDesc {{ dyn_tree: vec![], max_code: 0i32, stat_desc: {bl_stat} }};\n"
+            f"let ret = super::build_bl_tree(&mut state);\n"
+            f'assert_eq!(ret, {mbi}usize, "build_bl_tree ret {i}");\n'
+            f'assert_eq!(state.opt_len, {opt}u64, "build_bl_tree opt {i}");\n'
+            f"let bl_lens: Vec<u16> = state.bl_tree[..19].iter().map(|e| e.len).collect();\n"
+            f'assert_eq!(bl_lens, {bl_exp}, "build_bl_tree bl_len {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"build_bl_tree_shim_{i}",
+            source="C reference via shim: shim_run_build_bl_tree",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vectors
+
+
 # Registry of dedicated tree-builder fuzzers, keyed by algorithm name.
 TREE_BUILDER_FUZZERS: dict[str, Callable] = {
     "pqdownheap": fuzz_pqdownheap,
     "gen_codes": fuzz_gen_codes,
     "gen_bitlen": fuzz_gen_bitlen,
     "build_tree": fuzz_build_tree,
+    "build_bl_tree": fuzz_build_bl_tree,
 }
 
 
