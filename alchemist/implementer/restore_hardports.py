@@ -96,8 +96,16 @@ def restore_hardports(
         if lib.exists():
             lt = lib.read_text(encoding="utf-8")
             if re.search(rf"\bmod {re.escape(mod)}\b", lt) is None:
-                lt = f"pub mod {mod};\n" + lt
-                lib.write_text(lt, encoding="utf-8")
+                # Insert AFTER any leading inner attributes (`#![...]`) and
+                # blank lines — an inner attribute must be the first item.
+                lines = lt.splitlines(keepends=True)
+                i = 0
+                while i < len(lines) and (
+                        lines[i].lstrip().startswith("#![")
+                        or not lines[i].strip()):
+                    i += 1
+                lines.insert(i, f"pub mod {mod};\n")
+                lib.write_text("".join(lines), encoding="utf-8")
         report.restored.append(f"{crate}::{mod} [module]")
 
     for hp in sorted(hp_root.rglob("*.rs")):
