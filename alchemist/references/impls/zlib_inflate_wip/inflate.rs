@@ -488,12 +488,189 @@ pub fn inflate_init2(strm: &mut InflateStream, window_bits: i32) -> i32 {
     inflate_reset2(strm, window_bits)
 }
 
+const M_HEAD: u32 = 16180; const M_TYPE: u32 = 16191; const M_TYPEDO: u32 = 16192;
+const M_STORED: u32 = 16193; const M_COPY_: u32 = 16194; const M_COPY: u32 = 16195;
+const M_TABLE: u32 = 16196; const M_LEN_: u32 = 16199;
+const M_CHECK: u32 = 16206; const M_LENGTH: u32 = 16207; const M_DONE: u32 = 16208;
+const M_BAD: u32 = 16209; const M_MEM: u32 = 16210;
+const Z_STREAM_END: i32 = 1; const Z_BUF_ERROR: i32 = -5; const Z_DATA_ERROR: i32 = -3; const Z_FINISH: i32 = 4;
+
+pub fn inflate(strm: &mut InflateStream, flush: i32) -> i32 {
+    if inflate_state_check(strm) { return Z_STREAM_ERROR; }
+    if strm.state.mode == M_TYPE { strm.state.mode = M_TYPEDO; }
+    let mut hold: u64 = strm.state.hold;
+    let mut bits: u32 = strm.state.bits;
+    let mut nin: usize = 0;
+    let mut have: usize = strm.avail_in;
+    let mut left: usize = strm.avail_out;
+    let in0 = have; let out0 = left;
+    let mut ret: i32 = Z_OK;
+    // window start marker: where this call's output begins in next_out
+    let out_begin = strm.next_out.len();
+
+    'inf_leave: loop {
+        match strm.state.mode {
+            M_HEAD => {
+                if strm.state.wrap == 0 { strm.state.mode = M_TYPEDO; continue; }
+                // zlib header (wrap & 1)
+                while bits < 16 { if have == 0 { break 'inf_leave; } hold |= (strm.next_in[nin] as u64) << bits; nin += 1; have -= 1; bits += 8; }
+                if ((( (hold & 0xff) << 8) + ((hold >> 8) & 0xff)) % 31) != 0 { strm.state.mode = M_BAD; continue; }
+                if (hold & 0x0f) != 8 { strm.state.mode = M_BAD; continue; }
+                let dictid = (hold >> 4) & 0x0f;
+                if strm.state.wbits == 0 { strm.state.wbits = 8 + dictid as u32; }
+                strm.adler = 1; strm.state.check = 1;
+                hold = 0; bits = 0;
+                strm.state.mode = M_TYPEDO;
+                continue;
+            }
+            M_TYPE => { strm.state.mode = M_TYPEDO; continue; }
+            M_TYPEDO => {
+                if strm.state.last {
+                    let r = bits & 7; hold >>= r; bits -= r;
+                    strm.state.mode = M_CHECK; continue;
+                }
+                while bits < 3 { if have == 0 { break 'inf_leave; } hold |= (strm.next_in[nin] as u64) << bits; nin += 1; have -= 1; bits += 8; }
+                strm.state.last = (hold & 1) != 0; hold >>= 1; bits -= 1;
+                match hold & 3 {
+                    0 => { strm.state.mode = M_STORED; }
+                    1 => { strm.state.mode = M_LEN_; }
+                    2 => { strm.state.mode = M_TABLE; }
+                    _ => { strm.state.mode = M_BAD; }
+                }
+                hold >>= 2; bits -= 2;
+                continue;
+            }
+            M_STORED => {
+                let r = bits & 7; hold >>= r; bits -= r;
+                while bits < 32 { if have == 0 { break 'inf_leave; } hold |= (strm.next_in[nin] as u64) << bits; nin += 1; have -= 1; bits += 8; }
+                if (hold & 0xffff) != ((hold >> 16) ^ 0xffff) & 0xffff { strm.state.mode = M_BAD; continue; }
+                strm.state.length = (hold & 0xffff) as u32;
+                hold = 0; bits = 0;
+                strm.state.mode = M_COPY_;
+                continue;
+            }
+            M_COPY_ => { strm.state.mode = M_COPY; continue; }
+            M_COPY => {
+                let mut copy = strm.state.length as usize;
+                if copy != 0 {
+                    if copy > have { copy = have; }
+                    if copy > left { copy = left; }
+                    if copy == 0 { break 'inf_leave; }
+                    for k in 0..copy { let b = strm.next_in[nin + k]; strm.next_out.push(b); }
+                    nin += copy; have -= copy; left -= copy;
+                    strm.state.length -= copy as u32;
+                    continue;
+                }
+                strm.state.mode = M_TYPE;
+                continue;
+            }
+            M_TABLE => { strm.state.mode = M_BAD; continue; }  // TODO: dynamic Huffman
+            M_LEN_ => { strm.state.mode = M_BAD; continue; }   // TODO: fixed Huffman
+            M_CHECK => {
+                if strm.state.wrap != 0 {
+                    while bits < 32 { if have == 0 { break 'inf_leave; } hold |= (strm.next_in[nin] as u64) << bits; nin += 1; have -= 1; bits += 8; }
+                    let outc = out0 - left;
+                    strm.state.total += outc as u64;
+                    let swapped = ((hold & 0xff) << 24) | ((hold & 0xff00) << 8) | ((hold >> 8) & 0xff00) | ((hold >> 24) & 0xff);
+                    if (strm.state.wrap & 4) != 0 && outc != 0 { /* check computed elsewhere */ }
+                    if (strm.state.wrap & 4) != 0 && (swapped as u32) != strm.state.check { strm.state.mode = M_BAD; continue; }
+                    hold = 0; bits = 0;
+                }
+                strm.state.mode = M_LENGTH;
+                continue;
+            }
+            M_LENGTH => {
+                if strm.state.wrap != 0 && strm.state.flags != 0 {
+                    while bits < 32 { if have == 0 { break 'inf_leave; } hold |= (strm.next_in[nin] as u64) << bits; nin += 1; have -= 1; bits += 8; }
+                    if (strm.state.wrap & 4) != 0 && (hold & 0xffffffff) as u64 != (strm.state.total & 0xffffffff) { strm.state.mode = M_BAD; continue; }
+                    hold = 0; bits = 0;
+                }
+                strm.state.mode = M_DONE;
+                continue;
+            }
+            M_DONE => { ret = Z_STREAM_END; break 'inf_leave; }
+            M_BAD => { ret = Z_DATA_ERROR; break 'inf_leave; }
+            M_MEM => { strm.avail_in = have; strm.state.hold = hold; strm.state.bits = bits; return -4; }
+            _ => { return Z_STREAM_ERROR; }
+        }
+    }
+    // inf_leave: RESTORE
+    strm.next_in.drain(0..nin);
+    strm.avail_in = have;
+    strm.avail_out = left;
+    strm.state.hold = hold;
+    strm.state.bits = bits;
+    let inc = in0 - have; let outc = out0 - left;
+    // update window with produced output
+    if strm.state.wsize != 0 || (outc != 0 && strm.state.mode < M_BAD) {
+        let produced: Vec<u8> = strm.next_out[out_begin..].to_vec();
+        updatewindow(&mut strm.state, &produced, outc);
+    }
+    strm.total_in += inc as u64;
+    strm.total_out += outc as u64;
+    strm.state.total += outc as u64;
+    if ((inc == 0 && outc == 0) || flush == Z_FINISH) && ret == Z_OK { ret = Z_BUF_ERROR; }
+    ret
+}
+
+
 #[cfg(test)]
 mod tests {
     #![allow(unused_imports, unused_variables, unused_macros)]
     extern crate alloc;
     use alloc::format;
     use alloc::string::String;
+
+    #[test]
+    fn test_inf_stored_0() {
+        let comp: Vec<u8> = vec![1, 0, 0, 255, 255];
+        let mut strm = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut strm, -15);
+        strm.next_in = comp.clone(); strm.avail_in = comp.len(); strm.next_out = vec![]; strm.avail_out = 1000000;
+        let r = super::inflate(&mut strm, 4);
+        assert_eq!(r, 1, "inf ret 0");
+        assert_eq!(strm.next_out, vec![], "inf stored 0");
+    }
+    #[test]
+    fn test_inf_stored_1() {
+        let comp: Vec<u8> = vec![1, 1, 0, 254, 255, 97];
+        let mut strm = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut strm, -15);
+        strm.next_in = comp.clone(); strm.avail_in = comp.len(); strm.next_out = vec![]; strm.avail_out = 1000000;
+        let r = super::inflate(&mut strm, 4);
+        assert_eq!(r, 1, "inf ret 1");
+        assert_eq!(strm.next_out, vec![97], "inf stored 1");
+    }
+    #[test]
+    fn test_inf_stored_2() {
+        let comp: Vec<u8> = vec![1, 11, 0, 244, 255, 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100];
+        let mut strm = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut strm, -15);
+        strm.next_in = comp.clone(); strm.avail_in = comp.len(); strm.next_out = vec![]; strm.avail_out = 1000000;
+        let r = super::inflate(&mut strm, 4);
+        assert_eq!(r, 1, "inf ret 2");
+        assert_eq!(strm.next_out, vec![104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100], "inf stored 2");
+    }
+    #[test]
+    fn test_inf_stored_3() {
+        let comp: Vec<u8> = vec![1, 200, 0, 55, 255, 121, 66, 189, 242, 33, 6, 240, 132, 119, 98, 240, 243, 203, 77, 118, 77, 199, 7, 32, 81, 21, 154, 15, 137, 242, 198, 218, 202, 227, 68, 187, 49, 18, 69, 253, 111, 132, 223, 154, 215, 197, 179, 208, 118, 172, 14, 143, 83, 167, 53, 108, 136, 145, 63, 32, 246, 247, 45, 176, 34, 210, 77, 10, 150, 218, 212, 60, 22, 23, 193, 169, 142, 120, 18, 158, 3, 39, 55, 16, 101, 208, 149, 134, 79, 21, 173, 160, 184, 70, 193, 192, 235, 197, 52, 138, 220, 121, 154, 223, 132, 155, 173, 5, 212, 161, 10, 192, 68, 30, 170, 238, 180, 180, 142, 250, 11, 31, 10, 189, 128, 233, 152, 163, 90, 186, 94, 160, 189, 135, 153, 193, 53, 13, 67, 158, 113, 137, 122, 167, 95, 222, 49, 52, 164, 170, 114, 224, 86, 40, 172, 111, 230, 138, 115, 61, 17, 97, 161, 93, 142, 174, 43, 176, 66, 215, 149, 138, 237, 177, 213, 148, 214, 209, 18, 211, 79, 102, 2, 244, 222, 113, 16, 233, 147, 174, 116, 34, 146, 61, 125, 23, 17, 101, 220, 25, 6, 246, 61, 87, 153];
+        let mut strm = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut strm, -15);
+        strm.next_in = comp.clone(); strm.avail_in = comp.len(); strm.next_out = vec![]; strm.avail_out = 1000000;
+        let r = super::inflate(&mut strm, 4);
+        assert_eq!(r, 1, "inf ret 3");
+        assert_eq!(strm.next_out, vec![121, 66, 189, 242, 33, 6, 240, 132, 119, 98, 240, 243, 203, 77, 118, 77, 199, 7, 32, 81, 21, 154, 15, 137, 242, 198, 218, 202, 227, 68, 187, 49, 18, 69, 253, 111, 132, 223, 154, 215, 197, 179, 208, 118, 172, 14, 143, 83, 167, 53, 108, 136, 145, 63, 32, 246, 247, 45, 176, 34, 210, 77, 10, 150, 218, 212, 60, 22, 23, 193, 169, 142, 120, 18, 158, 3, 39, 55, 16, 101, 208, 149, 134, 79, 21, 173, 160, 184, 70, 193, 192, 235, 197, 52, 138, 220, 121, 154, 223, 132, 155, 173, 5, 212, 161, 10, 192, 68, 30, 170, 238, 180, 180, 142, 250, 11, 31, 10, 189, 128, 233, 152, 163, 90, 186, 94, 160, 189, 135, 153, 193, 53, 13, 67, 158, 113, 137, 122, 167, 95, 222, 49, 52, 164, 170, 114, 224, 86, 40, 172, 111, 230, 138, 115, 61, 17, 97, 161, 93, 142, 174, 43, 176, 66, 215, 149, 138, 237, 177, 213, 148, 214, 209, 18, 211, 79, 102, 2, 244, 222, 113, 16, 233, 147, 174, 116, 34, 146, 61, 125, 23, 17, 101, 220, 25, 6, 246, 61, 87, 153], "inf stored 3");
+    }
+    #[test]
+    fn test_inf_stored_4() {
+        let comp: Vec<u8> = vec![1, 180, 0, 75, 255, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32];
+        let mut strm = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut strm, -15);
+        strm.next_in = comp.clone(); strm.avail_in = comp.len(); strm.next_out = vec![]; strm.avail_out = 1000000;
+        let r = super::inflate(&mut strm, 4);
+        assert_eq!(r, 1, "inf ret 4");
+        assert_eq!(strm.next_out, vec![115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111, 99, 107, 32, 116, 101, 115, 116, 32], "inf stored 4");
+    }
 
     #[test]
     fn test_inflate_table_body_0() {
