@@ -95,4 +95,59 @@ def restore_hardports(
             continue
         mod_path.write_text(new_src, encoding="utf-8")
         report.restored.append(f"{crate}::{module}::{fn_name}")
+
+    # Idempotency: a hardport may define a supporting item (e.g.
+    # `pub struct CrcTables`) alongside its fn. Re-running would splice a
+    # second copy. Dedup top-level `pub struct`/`pub enum` definitions by
+    # name within each touched module, keeping the first.
+    touched = {f"{r.split('::')[0]}/{r.split('::')[1]}" for r in report.restored}
+    for cm in touched:
+        crate, module = cm.split("/")
+        mp = workspace_dir / crate / "src" / f"{module}.rs"
+        if mp.exists():
+            mp.write_text(_dedup_types(mp.read_text(encoding="utf-8")),
+                          encoding="utf-8")
     return report
+
+
+def _dedup_types(source: str) -> str:
+    """Remove duplicate top-level `pub struct/enum NAME {…}` definitions,
+    keeping the first occurrence of each name (brace-matched)."""
+    seen: set[str] = set()
+    out = source
+    while True:
+        removed = False
+        for m in re.finditer(
+            r"(?:^|\n)((?:#\[[^\]]*\]\s*\n)*)[ \t]*pub (?:struct|enum) (\w+)",
+            out,
+        ):
+            name = m.group(2)
+            if name in seen:
+                # find and cut this whole definition (from the attrs/pub to
+                # its matching close brace, or to `;` for a unit struct)
+                start = m.start(1) if out[m.start()] == "\n" else m.start()
+                brace = out.find("{", m.start(2))
+                semi = out.find(";", m.start(2))
+                if brace == -1 or (semi != -1 and semi < brace):
+                    end = semi + 1
+                else:
+                    depth = 0
+                    end = None
+                    for i in range(brace, len(out)):
+                        if out[i] == "{":
+                            depth += 1
+                        elif out[i] == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
+                    if end is None:
+                        continue
+                out = out[:start].rstrip("\n") + "\n" + out[end:]
+                removed = True
+                break
+            seen.add(name)
+        if not removed:
+            break
+        seen = set()  # restart scan cleanly after a cut
+    return out
