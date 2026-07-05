@@ -672,17 +672,21 @@ def fuzz_build_tree(dll, alg, *, count: int = 10, seed: int = 0x42_54_52_45):
         dll.shim_get_heap(heap, _HEAP_SIZE)
         dll.shim_get_opt_len.restype = ctypes.c_ulong
         opt = dll.shim_get_opt_len()
+        # Only the symbol table [0..=max_code] is the meaningful output:
+        # gen_codes assigns codes to leaves only, so an internal node's fc
+        # slot still holds its summed Freq, not a code. Compare that range.
+        ncmp = mc + 1
         tree_lit = _tree_lit({"freq": freq}, _BL_CODES)
         heap_lit = "vec![" + ", ".join(f"{h}i32" for h in list(heap)) + "]"
-        code_expect = "vec![" + ", ".join(f"{c}u16" for c in list(code)) + "]"
-        len_expect = "vec![" + ", ".join(f"{l}u16" for l in list(length)) + "]"
+        code_expect = "vec![" + ", ".join(f"{c}u16" for c in list(code)[:ncmp]) + "]"
+        len_expect = "vec![" + ", ".join(f"{l}u16" for l in list(length)[:ncmp]) + "]"
         body = (
             f"let mut state = zlib_types::DeflateState::default();\n"
             f"let mut desc = zlib_types::TreeDesc {{ dyn_tree: {tree_lit}, "
             f"max_code: 0i32, stat_desc: {_bl_stat_desc_lit()} }};\n"
             f"super::build_tree(&mut state, &mut desc);\n"
-            f"let codes: Vec<u16> = desc.dyn_tree.iter().map(|e| e.code).collect();\n"
-            f"let lens: Vec<u16> = desc.dyn_tree.iter().map(|e| e.len).collect();\n"
+            f"let codes: Vec<u16> = desc.dyn_tree[..={mc}].iter().map(|e| e.code).collect();\n"
+            f"let lens: Vec<u16> = desc.dyn_tree[..={mc}].iter().map(|e| e.len).collect();\n"
             f'assert_eq!(desc.max_code, {mc}i32, "build_tree max_code {i}");\n'
             f'assert_eq!(codes, {code_expect}, "build_tree code {i}");\n'
             f'assert_eq!(lens, {len_expect}, "build_tree len {i}");\n'
