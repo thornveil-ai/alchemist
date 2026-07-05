@@ -355,10 +355,11 @@ def _emit_state_mutator_test(fn_name: str, vec: SpecTestVector, idx: int) -> str
         else:
             extra_args.append((pname, pvalue))
     lines = [f"    #[test]\n    fn {test_name}() {{\n"]
-    # Need state type — infer from the first expected-output line's context.
-    # For zlib, always DeflateState. For now, use the convention that the
-    # test sits in a module where DeflateState is imported via `use zlib_types::*;`.
-    lines.append("        let mut state = zlib_types::DeflateState::default();\n")
+    # State type by zlib convention: inflate* functions mutate an InflateState,
+    # everything else a DeflateState. (The shim binding's fields already match
+    # the corresponding struct.)
+    state_ty = "InflateState" if fn_name.startswith("inflate") else "DeflateState"
+    lines.append(f"        let mut state = zlib_types::{state_ty}::default();\n")
     for field_name, rendered in state_inits:
         lines.append(f"        state.{field_name} = {rendered};\n")
     for arg_name, rendered in extra_args:
@@ -464,7 +465,8 @@ def _emit_state_observer_test(fn_name: str, vec: SpecTestVector, idx: int) -> st
     """
     test_name = f"test_{fn_name}_observer_{idx}"
     lines = [f"    #[test]\n    fn {test_name}() {{\n"]
-    lines.append("        let mut state = zlib_types::DeflateState::default();\n")
+    state_ty = "InflateState" if fn_name.startswith("inflate") else "DeflateState"
+    lines.append(f"        let mut state = zlib_types::{state_ty}::default();\n")
     # Pre-rendered statements (__stmt__0, __stmt__1, ...) take priority
     stmt_items = sorted(
         ((k, v) for k, v in vec.inputs.items() if k.startswith("__stmt__")),
