@@ -48,11 +48,29 @@ def _module_lock(subject: Path, module_file: str):
     lock_path = lock_dir / f"{module_file}.lock"
     # Simple polling lock — Windows-compatible, no fcntl.
     start = time.time()
+    _STALE_AFTER = 900  # a killed solo leaves its lock behind; break it
     while True:
         try:
             fd = open(lock_path, "x")
             break
         except FileExistsError:
+            # Break a stale lock: if the holder wrote its timestamp long ago
+            # (or the file is unreadable/empty), a prior run was killed
+            # without releasing it. Reclaim rather than block for 10 minutes.
+            try:
+                held = float(lock_path.read_text().strip() or "0")
+            except (OSError, ValueError):
+                held = 0.0
+            if time.time() - held > _STALE_AFTER:
+                console.print(
+                    f"[yellow]solo: breaking stale lock on {module_file} "
+                    f"(held by a killed run)[/yellow]"
+                )
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
             if time.time() - start > 600:
                 raise RuntimeError(
                     f"timed out waiting for lock on {module_file}"
