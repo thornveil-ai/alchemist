@@ -1,6 +1,6 @@
 # M1 autonomy scorecard - subject: zlib
 
-**Open autonomy debt: 523 human-supplied artifacts** (retired so far: 14).
+**Open autonomy debt: 218 human-supplied artifacts** (retired so far: 23).
 
 Every open item is a crutch M1 (push-button zlib) must remove by auto-synthesizing the equivalent. Byte-exact-or-refused stays sacred.
 
@@ -11,7 +11,7 @@ Every open item is a crutch M1 (push-button zlib) must remove by auto-synthesizi
 | WS1 | 123 |
 | WS2 | 8 |
 | WS3 | 10 |
-| WS3/WS4 | 382 |
+| WS3/WS4 | 77 |
 
 ## Categories
 
@@ -19,9 +19,13 @@ Every open item is a crutch M1 (push-button zlib) must remove by auto-synthesizi
 - C glue that runs the reference and captures return + effect footprint.
 - **M1 action:** Auto-generate the harness from (header, compiled lib, fn) — signature-driven FFI/shim gen + effect-footprint inference.
 
-### [WS3/WS4] Human-ported Rust function bodies - 382 fns  ([OPEN])
-- Across 47 .rs files (hardports + wip + verified snapshots). These were written/repaired by a human via inject-C-and-iterate, not produced autonomously by the model+oracle loop.
+### [WS3/WS4] Human-ported Rust function bodies (unique, tests excluded) - 77 fns  ([OPEN])
+- Distinct implementation functions across 47 snapshot files still needing a human port. Deduped across hardport/wip/verified dirs and excluding test fns (the earlier per-file count double-counted both). 9 already retired by the WS4 regen loop.
 - **M1 action:** Model produces + the WS4 diagnose-and-repair loop fixes these with no human hand-porting or diagnosis. This is the core M1 debt.
+
+### [WS4] Functions proven autonomously reproducible (regen loop) - 9 fns  ([RETIRED])
+- Body stubbed -> model refilled from the C reference -> differential tests green, no human. Recorded in the retirement ledger with proof metadata.
+- **M1 action:** (in progress) Drive the open human-ported count down by regenerating each function autonomously.
 
 ### [WS3] Curated reference implementations - 10 refs  ([OPEN])
 - Known-good Rust snippets a human supplied/blessed for injection.
