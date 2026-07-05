@@ -44,14 +44,14 @@ pub fn make_crc_table() -> CrcTables {
     const CRC_N: usize = 5;
 
     // initialize the CRC of bytes tables:
-    //   p = i; 8x { p = p & 1 ? (p >> 1) ^ POLY : p >> 1; }
+    //   p = i; 8x { p = p & 1 ? (p >> 1) ^ CRC32_POLY : p >> 1; }
     //   crc_table[i] = p; crc_big_table[i] = byte_swap(p);
     let mut crc_table = [0u32; 256];
     let mut crc_big_table = [0u64; 256];
     for i in 0..256u32 {
         let mut p = i;
         for _ in 0..8 {
-            p = if p & 1 != 0 { (p >> 1) ^ POLY } else { p >> 1 };
+            p = if p & 1 != 0 { (p >> 1) ^ CRC32_POLY } else { p >> 1 };
         }
         crc_table[i as usize] = p;
         crc_big_table[i as usize] = byte_swap(p as u64);
