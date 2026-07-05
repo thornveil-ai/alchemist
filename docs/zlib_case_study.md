@@ -67,6 +67,15 @@ This is a real result, stated honestly:
 - **A few per-case modeling decisions remain** (e.g. `deflate_stored`'s reach-backward into already-consumed input is a coherent-model choice, deferred).
 - **Scale is unproven** beyond zlib's few-thousand lines. "Millions of lines, fully automatic" is the roadmap, not today's reality.
 
+### Remaining, honestly (nice-to-haves, not blockers)
+
+The compressor and decompressor round-trip byte-exact today. These finish the surface:
+
+- **`deflate_stored` (level 0).** No-compression stored blocks. The one function that reaches backward into already-consumed input — a coherent-model decision (retain the input as an offset buffer vs. reconstruct from output) rather than a bug. Rarely used.
+- **gzip wrapper** (`wbits +16`). The raw and zlib formats are byte-exact; gzip needs the header-field states (FLAGS/TIME/OS/…) and a crc32 trailer.
+- **`inflate_fast`.** A pure performance optimization — the slow decode path it replaces is already byte-exact, so output is unaffected.
+- **Multi-call streaming.** Verified for whole-buffer calls; incremental `avail_in`/`avail_out` chunking across many calls is the next robustness pass.
+
 ## The takeaway
 
 The thesis — *differential oracles can drive correct C→Rust on the hardest constructs* — is proven end to end. You get a **correctness guarantee** (byte-exact or the pipeline refuses), on code that has state machines, aliasing, `goto`, unions, and bit-twiddling. That guarantee is the durable asset. The next mountain is making it flawless *and* fully automatic on arbitrary libraries.
