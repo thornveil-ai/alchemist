@@ -120,6 +120,23 @@ DEFAULT_PARAM_OVERRIDES: tuple[ParamOverride, ...] = (
 )
 
 
+# Fields the extractor MISSED that the active C code requires. deflate_state
+# uses the modern single `sym_buf` (3-byte-per-symbol, LIT_MEM off) but the
+# extractor inferred the old split d_buf/l_buf/last_lit shape, so the buffer
+# compress_block replays was absent. Add the missing fields (idempotent).
+@dataclass(frozen=True)
+class FieldAddition:
+    struct: str
+    field: str
+    rust_type: str
+
+
+DEFAULT_FIELD_ADDITIONS: tuple[FieldAddition, ...] = (
+    FieldAddition("DeflateState", "sym_buf", "Vec<u8>"),
+    FieldAddition("DeflateState", "sym_next", "u32"),
+)
+
+
 # ---------------------------------------------------------------------------
 # Rust type surgery: swap an element type while keeping the container shape.
 # ---------------------------------------------------------------------------
@@ -459,7 +476,36 @@ def unify_types(
                         p.rust_type = ov.rust_type
                         report.rewrites += 1
 
+    # Pass 8 — add fields the extractor missed (DeflateState.sym_buf/sym_next).
+    report.field_rewrites += _apply_field_additions(specs, DEFAULT_FIELD_ADDITIONS)
+
     return report
+
+
+def _apply_field_additions(specs, additions) -> int:
+    """Insert missing `pub <field>: <type>,` lines into named struct
+    rust_definitions. Idempotent — skips fields already present."""
+    by_struct: dict[str, list[FieldAddition]] = defaultdict(list)
+    for a in additions:
+        by_struct[a.struct].append(a)
+    n = 0
+    for module in specs:
+        for st in getattr(module, "shared_types", None) or []:
+            adds = by_struct.get(st.name)
+            if not adds:
+                continue
+            rd = getattr(st, "rust_definition", None) or ""
+            for a in adds:
+                if re.search(rf"\b{re.escape(a.field)}\s*:", rd):
+                    continue  # already present
+                # insert before the closing brace of the struct
+                idx = rd.rfind("}")
+                if idx == -1:
+                    continue
+                rd = rd[:idx] + f"    pub {a.field}: {a.rust_type},\n" + rd[idx:]
+                n += 1
+            st.rust_definition = rd
+    return n
 
 
 def render_canonical_struct(c: CanonicalType) -> str:

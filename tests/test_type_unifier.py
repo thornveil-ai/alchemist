@@ -227,3 +227,19 @@ def test_param_override_fixes_gen_bitlen_mutability():
     unify_types(specs, {"files": {}})
     types = {p.name: p.rust_type for p in specs[0].algorithms[0].inputs}
     assert types["desc"] == "&mut TreeDesc"
+
+
+def test_field_additions_add_missing_sym_buf():
+    """The extractor missed DeflateState.sym_buf/sym_next (active C uses the
+    modern single sym_buf); the addition pass inserts them idempotently."""
+    ds = _shared("DeflateState", rust_def=(
+        "pub struct DeflateState {\n    pub last_lit: u32,\n}"))
+    specs = [ModuleSpec(name="types", display_name="", description="",
+                        algorithms=[], shared_types=[ds])]
+    unify_types(specs, {"files": {}})
+    rd = specs[0].shared_types[0].rust_definition
+    assert "pub sym_buf: Vec<u8>," in rd
+    assert "pub sym_next: u32," in rd
+    # idempotent
+    unify_types(specs, {"files": {}})
+    assert specs[0].shared_types[0].rust_definition.count("pub sym_buf") == 1
