@@ -738,7 +738,11 @@ pub fn inflate(strm: &mut InflateStream, flush: i32) -> i32 {
                     let outc = out0 - left;
                     strm.state.total += outc as u64;
                     let swapped = ((hold & 0xff) << 24) | ((hold & 0xff00) << 8) | ((hold >> 8) & 0xff00) | ((hold >> 24) & 0xff);
-                    if (strm.state.wrap & 4) != 0 && outc != 0 { /* check computed elsewhere */ }
+                    if (strm.state.wrap & 4) != 0 && outc != 0 {
+                        let prod: Vec<u8> = strm.next_out[out_begin..out_begin + outc].to_vec();
+                        strm.state.check = zlib_checksum::adler32_z(strm.state.check, &prod, prod.len());
+                        strm.adler = strm.state.check;
+                    }
                     if (strm.state.wrap & 4) != 0 && (swapped as u32) != strm.state.check { strm.state.mode = M_BAD; continue; }
                     hold = 0; bits = 0;
                 }
@@ -746,7 +750,7 @@ pub fn inflate(strm: &mut InflateStream, flush: i32) -> i32 {
                 continue;
             }
             M_LENGTH => {
-                if strm.state.wrap != 0 && strm.state.flags != 0 {
+                if strm.state.wrap != 0 && strm.state.flags > 0 {
                     while bits < 32 { if have == 0 { break 'inf_leave; } hold |= (strm.next_in[nin] as u64) << bits; nin += 1; have -= 1; bits += 8; }
                     if (strm.state.wrap & 4) != 0 && (hold & 0xffffffff) as u64 != (strm.state.total & 0xffffffff) { strm.state.mode = M_BAD; continue; }
                     hold = 0; bits = 0;
@@ -786,6 +790,52 @@ mod tests {
     extern crate alloc;
     use alloc::format;
     use alloc::string::String;
+
+    #[test]
+    fn test_zlibrt_0() {
+        let input: Vec<u8> = vec![104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 32, 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 32, 104, 101, 108, 108, 111];
+        let mut d = zlib_types::DeflateStream::default();
+        zlib_deflate::deflate_init2(&mut d, 6, 8, 15, 8, 0);
+        d.next_in = input.clone(); d.avail_in = input.len(); d.next_out = vec![]; d.avail_out = 4000000;
+        assert_eq!(zlib_deflate::deflate(&mut d, 4), 1, "dret");
+        let comp = d.next_out;
+        let mut s = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut s, 15);
+        s.next_in = comp.clone(); s.avail_in = comp.len(); s.next_out = vec![]; s.avail_out = 4000000;
+        let r = super::inflate(&mut s, 4);
+        assert_eq!(s.next_out, input, "zlib rt 0");
+        assert_eq!(r, 1, "zlib iret 0");
+    }
+    #[test]
+    fn test_zlibrt_1() {
+        let input: Vec<u8> = vec![84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32, 84, 104, 101, 32, 113, 117, 105, 99, 107, 32, 98, 114, 111, 119, 110, 32, 102, 111, 120, 46, 32];
+        let mut d = zlib_types::DeflateStream::default();
+        zlib_deflate::deflate_init2(&mut d, 6, 8, 15, 8, 0);
+        d.next_in = input.clone(); d.avail_in = input.len(); d.next_out = vec![]; d.avail_out = 4000000;
+        assert_eq!(zlib_deflate::deflate(&mut d, 4), 1, "dret");
+        let comp = d.next_out;
+        let mut s = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut s, 15);
+        s.next_in = comp.clone(); s.avail_in = comp.len(); s.next_out = vec![]; s.avail_out = 4000000;
+        let r = super::inflate(&mut s, 4);
+        assert_eq!(s.next_out, input, "zlib rt 1");
+        assert_eq!(r, 1, "zlib iret 1");
+    }
+    #[test]
+    fn test_zlibrt_2() {
+        let input: Vec<u8> = vec![130, 183, 14, 238, 127, 26, 80, 57, 190, 240, 126, 194, 52, 127, 6, 110, 208, 143, 93, 199, 81, 36, 71, 227, 64, 67, 0, 2, 107, 110, 84, 85, 148, 160, 101, 104, 93, 100, 196, 152, 11, 184, 212, 84, 74, 135, 33, 169, 154, 1, 173, 33, 158, 181, 156, 246, 161, 94, 246, 241, 90, 29, 131, 11, 183, 206, 9, 214, 187, 192, 4, 231, 23, 92, 100, 60, 125, 236, 176, 181, 128, 236, 55, 188, 151, 18, 221, 46, 106, 174, 185, 75, 174, 141, 47, 159, 162, 156, 90, 40, 76, 158, 247, 82, 24, 41, 207, 16, 121, 176, 128, 233, 215, 74, 28, 16, 252, 171, 106, 66, 67, 211, 54, 86, 222, 190, 76, 30, 215, 150, 72, 232, 86, 232, 249, 162, 245, 140, 149, 240, 206, 75, 57, 193, 91, 255, 173, 92, 45, 251, 139, 184, 32, 182, 17, 156, 186, 143, 248, 135, 150, 174, 91, 5, 242, 128, 166, 140, 237, 147, 182, 178, 140, 176, 209, 179, 88, 230, 186, 171, 72, 85, 101, 185, 244, 144, 40, 213, 87, 215, 154, 138, 14, 100, 81, 225, 92, 112, 92, 21, 241, 115, 84, 27, 68, 56, 162, 92, 247, 99, 18, 212, 238, 179, 194, 36, 104, 121, 191, 0, 179, 207, 142, 209, 58, 191, 18, 154, 48, 151, 173, 150, 180, 66, 214, 209, 189, 239, 72, 80, 195, 244, 101, 68, 46, 179, 0, 195, 55, 166, 72, 166, 192, 219, 221, 115, 252, 149, 245, 194, 196, 81, 133, 154, 254, 128, 212, 10, 163, 157, 251, 146, 73, 244, 12, 62, 227, 125, 150, 20, 69, 200, 6, 245, 140, 124, 242, 18, 125, 250, 137, 79, 146, 150, 252, 243, 60, 8, 64, 153];
+        let mut d = zlib_types::DeflateStream::default();
+        zlib_deflate::deflate_init2(&mut d, 6, 8, 15, 8, 0);
+        d.next_in = input.clone(); d.avail_in = input.len(); d.next_out = vec![]; d.avail_out = 4000000;
+        assert_eq!(zlib_deflate::deflate(&mut d, 4), 1, "dret");
+        let comp = d.next_out;
+        let mut s = zlib_types::InflateStream::default();
+        super::inflate_init2(&mut s, 15);
+        s.next_in = comp.clone(); s.avail_in = comp.len(); s.next_out = vec![]; s.avail_out = 4000000;
+        let r = super::inflate(&mut s, 4);
+        assert_eq!(s.next_out, input, "zlib rt 2");
+        assert_eq!(r, 1, "zlib iret 2");
+    }
 
     #[test]
     fn test_rt_0() {
