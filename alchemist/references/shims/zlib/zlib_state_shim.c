@@ -304,6 +304,53 @@ EXPORT int shim_run_build_bl_tree(void) {
     return build_bl_tree(s);
 }
 
+/* ---------- Static Huffman tables (computed by tr_static_init) ----------
+   These are zlib's fixed reference tables; the Rust workspace needs them as
+   consts so build_tree/gen_bitlen can compute static_len and so descriptors
+   can be constructed. which: 0=static_ltree (L_CODES+2), 1=static_dtree
+   (D_CODES). */
+EXPORT void shim_static_tree(int which, unsigned short *code_out,
+                             unsigned short *len_out, unsigned n) {
+    tr_static_init();
+    const ct_data *t = which == 1 ? static_dtree : static_ltree;
+    unsigned cap = which == 1 ? D_CODES : (L_CODES + 2);
+    if (n < cap) cap = n;
+    for (unsigned i = 0; i < cap; i++) {
+        code_out[i] = t[i].fc.code;
+        len_out[i] = t[i].dl.len;
+    }
+}
+/* Small fixed const tables. which: 0=extra_lbits(29) 1=extra_dbits(30)
+   2=extra_blbits(19) 3=base_length(29) 4=base_dist(30) 5=bl_order(19). */
+EXPORT unsigned shim_const_table(int which, int *out, unsigned n) {
+    tr_static_init();
+    const int *src_i = 0; const uch *src_u = 0; unsigned cap = 0;
+    switch (which) {
+        case 0: src_i = extra_lbits; cap = LENGTH_CODES; break;
+        case 1: src_i = extra_dbits; cap = D_CODES; break;
+        case 2: src_i = extra_blbits; cap = BL_CODES; break;
+        case 3: src_i = (const int *)0; cap = LENGTH_CODES; break; /* base_length: int[] */
+        case 4: src_i = (const int *)0; cap = D_CODES; break;      /* base_dist */
+        case 5: src_u = bl_order; cap = BL_CODES; break;
+        default: return 0;
+    }
+    if (n < cap) cap = n;
+    for (unsigned i = 0; i < cap; i++) {
+        if (which == 3) out[i] = base_length[i];
+        else if (which == 4) out[i] = base_dist[i];
+        else if (src_u) out[i] = (int)src_u[i];
+        else out[i] = src_i[i];
+    }
+    return cap;
+}
+/* Static descriptor scalars: extra_base, max_length, elems for l/d/bl. */
+EXPORT void shim_static_desc(int which, int *extra_base, int *max_length, int *elems) {
+    tr_static_init();
+    const static_tree_desc *d = which == 1 ? &static_d_desc
+                              : (which == 2 ? &static_bl_desc : &static_l_desc);
+    *extra_base = d->extra_base; *max_length = d->max_length; *elems = d->elems;
+}
+
 /* detect_data_type returns Z_BINARY, Z_TEXT, or Z_UNKNOWN */
 EXPORT int shim_run_detect_data_type_ret(void) {
     deflate_state *s = &g_state;

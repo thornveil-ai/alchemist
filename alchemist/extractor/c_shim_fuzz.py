@@ -730,7 +730,7 @@ ZLIB_SHIM_OBSERVER_BINDINGS: dict[str, CShimObserverBinding] = {
                 rust_field="dyn_ltree",
                 rust_write_template=(
                     "state.dyn_ltree = {val}.iter().map(|&f| "
-                    "zlib_types::TreeElement { freq: f, ..Default::default() })"
+                    "zlib_types::TreeElement {{ freq: f, ..Default::default() }})"
                     ".collect();"
                 ),
             ),
