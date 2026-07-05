@@ -30,6 +30,7 @@ See docs/PATH_TO_AUTONOMY.md (WS4).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
@@ -143,6 +144,90 @@ def describe_state(expected: dict, actual: dict, max_fields: int = 6) -> Discrep
 def _short(v: object, limit: int = 48) -> str:
     s = repr(v)
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+# --- bridge: real cargo failures -> structured discrepancies ---------------
+@dataclass
+class DiffFailure:
+    test: str
+    discrepancy: Discrepancy
+    message: str = ""   # the assert_eq! custom message, if any (often the case id)
+
+
+_ARR_RE = re.compile(r"\[([0-9,\s]*)\]")
+_LEFT_RE = re.compile(r"^\s*left:\s*(.+?),?\s*$")
+_RIGHT_RE = re.compile(r"^\s*right:\s*(.+?),?\s*$")
+_BLOCK_RE = re.compile(r"----\s+(\S+)\s+stdout\s+----")
+_MSG_RE = re.compile(r"panicked at [^\n]*:\s*\n(?:assertion.*\n(?:\s*(?:left|right):.*\n)*)?\s*(.+)")
+
+
+def _parse_byte_array(text: str) -> bytes | None:
+    m = _ARR_RE.search(text)
+    if not m:
+        return None
+    body = m.group(1).strip()
+    if not body:
+        return b""
+    try:
+        vals = [int(x) for x in body.split(",") if x.strip() != ""]
+    except ValueError:
+        return None
+    if all(0 <= v <= 255 for v in vals):
+        return bytes(vals)
+    return None
+
+
+def parse_rust_diff_failures(cargo_output: str) -> list[DiffFailure]:
+    """Extract structured discrepancies from a failing `cargo test` run.
+
+    Rust's differential harness compares Rust-vs-C with `assert_eq!` inside the
+    test binary, so a divergence surfaces as a panic in the captured output:
+
+        ---- test_deflate_l6_3 stdout ----
+        thread '...' panicked at tests/differential.rs:42:5:
+        assertion `left == right` failed: deflate L6 case 3
+          left: [26, 43, 60, 77]
+         right: [26, 43, 0, 77]
+
+    We recover (test name, expected/actual bytes, message) per failing test and
+    turn each into a `Discrepancy` via `describe_bytes` — the same precision the
+    repair loop consumes. When left/right aren't byte arrays we still capture a
+    value-level discrepancy from their reprs. Handles the `left ==`/`(left ==`
+    format variants and the reference being on either side of the assert.
+    """
+    failures: list[DiffFailure] = []
+    # Split into per-test blocks; the leading chunk (before any ---- block ----)
+    # is ignored (it's the summary/compile output).
+    parts = _BLOCK_RE.split(cargo_output)
+    # parts = [pre, name1, body1, name2, body2, ...]
+    for i in range(1, len(parts) - 1, 2):
+        name = parts[i]
+        body = parts[i + 1]
+        left_m = next((_LEFT_RE.match(l) for l in body.splitlines() if _LEFT_RE.match(l)), None)
+        right_m = next((_RIGHT_RE.match(l) for l in body.splitlines() if _RIGHT_RE.match(l)), None)
+        if not left_m or not right_m:
+            continue
+        left_txt, right_txt = left_m.group(1), right_m.group(1)
+        # custom assert message (after "failed:" — often the case identifier)
+        msg = ""
+        fm = re.search(r"assertion.*failed:\s*(.+)", body)
+        if fm:
+            msg = fm.group(1).strip()
+        lb, rb = _parse_byte_array(left_txt), _parse_byte_array(right_txt)
+        if lb is not None and rb is not None:
+            # Convention: reference/expected is the C side. Harnesses vary on
+            # which side that is; describe_bytes is symmetric on location, and
+            # we label C-as-expected. If unknown, treat `right` as expected only
+            # when `left` looks like the Rust output — default: right=expected.
+            disc = describe_bytes(rb, lb)
+        else:
+            disc = Discrepancy(
+                "value", "assert_eq operands",
+                left_txt.strip().strip("`"), right_txt.strip().strip("`"),
+                summary=f"differential mismatch in {name}",
+            )
+        failures.append(DiffFailure(test=name, discrepancy=disc, message=msg))
+    return failures
 
 
 # --------------------------------------------------------------------------

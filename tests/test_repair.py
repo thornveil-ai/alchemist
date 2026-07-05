@@ -11,9 +11,64 @@ from alchemist.autonomy.repair import (
     describe_state,
     localize,
     render_repair_guidance,
+    parse_rust_diff_failures,
     RepairLoop,
     Suspect,
 )
+
+
+# --- cargo-output bridge ---------------------------------------------------
+_CARGO_FAIL = """
+running 3 tests
+test test_deflate_l6_0 ... ok
+test test_deflate_l6_3 ... FAILED
+test test_inflate_rt_1 ... ok
+
+failures:
+
+---- test_deflate_l6_3 stdout ----
+thread 'test_deflate_l6_3' panicked at tests/differential.rs:42:5:
+assertion `left == right` failed: deflate L6 case 3
+  left: [26, 43, 0, 77]
+ right: [26, 43, 60, 77]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    test_deflate_l6_3
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored
+"""
+
+
+def test_parse_cargo_diff_failure_extracts_bytes_and_message():
+    fails = parse_rust_diff_failures(_CARGO_FAIL)
+    assert len(fails) == 1
+    f = fails[0]
+    assert f.test == "test_deflate_l6_3"
+    assert f.message == "deflate L6 case 3"
+    # right is the reference (C) -> expected; left is Rust -> actual
+    assert f.discrepancy.kind == "value"
+    assert f.discrepancy.location == "byte 2"
+    assert f.discrepancy.expected == "0x3c"  # 60 = reference
+    assert f.discrepancy.actual == "0x00"    # 0  = Rust impl
+
+
+def test_parse_cargo_no_failures_returns_empty():
+    ok = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed;"
+    assert parse_rust_diff_failures(ok) == []
+
+
+def test_parse_cargo_handles_length_divergence():
+    out = (
+        "---- test_x stdout ----\n"
+        "thread 'x' panicked at t.rs:1:1:\n"
+        "assertion `left == right` failed\n"
+        "  left: [1, 2, 3]\n"
+        " right: [1, 2, 3, 4, 5]\n"
+    )
+    fails = parse_rust_diff_failures(out)
+    assert len(fails) == 1
+    assert fails[0].discrepancy.kind == "length"
 
 
 # --- discrepancy extraction ------------------------------------------------

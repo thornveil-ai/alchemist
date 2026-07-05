@@ -18,10 +18,12 @@ from .repair import (
     Suspect,
     RepairLoop,
     RepairResult,
+    DiffFailure,
     describe_bytes,
     describe_state,
     localize,
     render_repair_guidance,
+    parse_rust_diff_failures,
 )
 
 __all__ = [
@@ -33,8 +35,10 @@ __all__ = [
     "Suspect",
     "RepairLoop",
     "RepairResult",
+    "DiffFailure",
     "describe_bytes",
     "describe_state",
     "localize",
     "render_repair_guidance",
+    "parse_rust_diff_failures",
 ]
