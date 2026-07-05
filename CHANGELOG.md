@@ -5,6 +5,30 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **🎯 Byte-exact zlib round-trip in safe Rust (the moonshot).** Alchemist
+  translated zlib — compressor *and* decompressor — from C into pure safe Rust,
+  proven by a full byte-exact round-trip: `Rust deflate → Rust inflate →
+  original bytes`, identical to the reference C library. `deflate` is byte-exact
+  at levels 1–9 (greedy `deflate_fast`, lazy `deflate_slow`) plus
+  `Z_HUFFMAN_ONLY` and `Z_RLE`; `inflate` is byte-exact on stored, dynamic, and
+  fixed Huffman streams with LZ77 back-references; the round-trip is 21/21
+  across levels 1/6/9 × {empty, tiny, text, repetitive, random, low-alphabet,
+  periodic}. Zero `unsafe` — the ~30-state `inflate()` decode machine,
+  `goto`-based control flow (as labeled breaks), `union` fields, pointer
+  aliasing (`s->dyn_ltree` ↔ `l_desc.dyn_tree`), and bit-level manipulation all
+  re-expressed in safe Rust's ownership model. The differential oracle earned
+  its keep: it caught ~9 real integration bugs that every isolated unit test
+  passed clean over (a whole-state `init_block` wipe, a `1<<i` overflow in
+  `detect_data_type`, a missing `scan_tree` initial `max_count`, the
+  `build_tree`/`dyn_ltree` aliasing gap, stale local state in `deflate_slow`,
+  and the 32-vs-30 fixed distance table). Also new: a stream/window-snapshot
+  differential oracle class, the durability backbone (`restore_hardports`:
+  hydrate a fresh skeleton from the git-tracked hardport store — proven by a
+  clean regen+restore of 320 verified tests from git alone), and a field-
+  addition mechanism for extractor-missed struct fields. See
+  [docs/zlib_case_study.md](docs/zlib_case_study.md) for the full write-up with
+  honest limitations. Remaining polish: `deflate_stored` (L0), zlib/gzip
+  wrappers, `inflate_fast` (perf only — slow path already byte-exact).
 - **All five Huffman tree-builders verified end-to-end (Phase 2 complete).**
   `pqdownheap`, `gen_codes`, `gen_bitlen`, `build_tree`, and `build_bl_tree`
   are model-written (Gemma 4 31B Dense) and byte-exact against the compiled-C

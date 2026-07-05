@@ -5,7 +5,8 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
-[![tests](https://img.shields.io/badge/tests-543%2F543-success.svg)](#testing)
+[![tests](https://img.shields.io/badge/tests-661%2F661-success.svg)](#testing)
+[![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
 
 ---
@@ -25,6 +26,24 @@ $ alchemist translate ./my-c-lib --name my-rs
 ```
 
 That's the whole pitch. Point it at C, get Rust back that compiles, passes every test, and byte-for-byte matches the original across thousands of random inputs. No rubber-stamping, no "looks right," no `unsafe` by default. If any gate fails the pipeline refuses to claim success.
+
+---
+
+## 🎯 Proven on zlib — byte-exact, in safe Rust
+
+The flagship result: Alchemist translated **zlib** — compressor *and* decompressor — from C into pure safe Rust, and proved it with a **full byte-exact round-trip**.
+
+```
+Rust deflate  →  Rust inflate  →  the original bytes        (identical, 21/21)
+```
+
+- **`deflate`** byte-exact vs the reference C at levels **1–9** + `Z_HUFFMAN_ONLY` + `Z_RLE`
+- **`inflate`** byte-exact on stored, dynamic, and fixed Huffman streams (with LZ77 back-references)
+- **Zero `unsafe`.** The whole ~30-state decode machine, `goto`, `union`s, pointer aliasing, and bit-twiddling re-expressed in safe Rust's ownership model.
+
+Why it counts: the differential oracle didn't just translate — it **caught ~9 real integration bugs** that every isolated unit test passed clean over (a whole-state wipe, a shift overflow, a pointer-aliasing gap, and more). That's byte-exact-or-refused doing its job.
+
+**→ Read the full write-up, including honest limitations: [docs/zlib_case_study.md](docs/zlib_case_study.md)**
 
 ---
 
