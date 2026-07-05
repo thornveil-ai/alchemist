@@ -490,3 +490,15 @@ EXPORT unsigned shim_run_longest_match(unsigned cur_match, unsigned *match_start
     *match_start_out = g_fw_s->match_start;
     return r;
 }
+
+/* ---------- block-emission (trees.c) runners ---------- */
+EXPORT int shim_run_tr_tally(unsigned dist, unsigned lc, unsigned sym_end) {
+    g_state.sym_end = sym_end;
+    return _tr_tally(&g_state, dist, lc);
+}
+EXPORT void shim_get_sym_buf(unsigned char *out, unsigned n) {
+    for (unsigned i = 0; i < n; i++) out[i] = g_state.sym_buf[i];
+}
+EXPORT void shim_run_tr_flush_bits(void) { _tr_flush_bits(&g_state); }
+EXPORT void shim_set_bi_used(int v) { g_state.bi_used = v; }
+EXPORT int shim_get_bi_used(void) { return g_state.bi_used; }
