@@ -666,11 +666,17 @@ class TDDGenerator:
                     )
                     return attempt
 
-            # Generate replacement (context-aware: includes prev failure)
+            # Generate replacement (context-aware: includes prev failure).
+            # Strip the #[cfg(test)] module: as more functions in a module
+            # fill, the accumulated test bodies balloon the file (zlib-trees
+            # hit 220KB / 112 tests), overflowing the model's context window
+            # and yielding an empty completion. The model needs the sibling
+            # signatures + consts, never the test bodies.
             new_fn = self._prompt_for_impl(
                 alg, current_body or "unimplemented!()",
                 previous_failure=previous_failure,
-                module_source=module_path.read_text(encoding="utf-8"),
+                module_source=_strip_test_module(
+                    module_path.read_text(encoding="utf-8")),
             )
             if not new_fn:
                 attempt.last_error = "LLM returned empty"
@@ -862,6 +868,30 @@ class TDDGenerator:
                     variants.append(f"{v.name}({', '.join(v.fields)})")
             lines.append(f"enum {e.name} {{ {'; '.join(variants)} }}")
         return "\n".join(lines) if lines else "(no error enums in scope)"
+
+    @staticmethod
+    def _strip_test_module(src: str) -> str:
+        """Remove the trailing `#[cfg(test)] mod tests { ... }` block.
+
+        Accumulated test bodies dominate a filled module's size (zlib-trees:
+        220KB, 112 tests) and overflow the model's context window on the next
+        fill. The fill needs sibling signatures and consts, never the tests.
+        Brace-matched removal so code after the block (rare) is preserved.
+        """
+        m = re.search(r"#\[cfg\(test\)\]\s*\n\s*mod\s+tests\s*\{", src)
+        if not m:
+            return src
+        i = m.end() - 1  # at the opening brace
+        depth = 0
+        for j in range(i, len(src)):
+            c = src[j]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return src[:m.start()] + src[j + 1:]
+        return src[:m.start()]  # unbalanced — drop to EOF
 
     @staticmethod
     def _consts_in_scope(module_source: str | None) -> str:
