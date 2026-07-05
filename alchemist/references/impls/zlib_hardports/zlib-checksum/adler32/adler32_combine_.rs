@@ -1,4 +1,5 @@
 pub fn adler32_combine_(adler1: u32, adler2: u32, len2: i64) -> u32 {
+    if len2 < 0 { return 0xFFFF_FFFF; }  // C: negative len is invalid-adler debug clue
     // Port of zlib's adler32_combine_ (adler32.c).
     // RFC 1950 Adler-32. BASE = 65521 is the largest prime < 2^16.
     // The formula combines two Adler-32 checksums given the length of

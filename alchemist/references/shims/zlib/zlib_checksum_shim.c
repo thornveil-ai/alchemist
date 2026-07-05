@@ -80,3 +80,7 @@ EXPORT uint32_t shim_run_multmodp(uint32_t a, uint32_t b) {
 EXPORT uint32_t shim_run_x2nmodp(int64_t n, uint32_t k) {
     return (uint32_t)x2nmodp((z_off64_t)n, (unsigned)k);
 }
+
+EXPORT void shim_get_crc_big_table(uint64_t *out) {
+    for (int i = 0; i < 256; i++) out[i] = (uint64_t)crc_big_table[i];
+}
