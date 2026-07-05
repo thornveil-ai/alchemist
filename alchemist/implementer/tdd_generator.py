@@ -935,10 +935,27 @@ class TDDGenerator:
             f"- {p.name}: {p.rust_type}  — {p.description}"
             for p in alg.inputs
         ) or "(no inputs)"
-        tvecs = "\n".join(
+        # Render extracted vectors compactly. `rust_body` vectors ARE whole
+        # Rust test functions (with large state literals — a single
+        # gen_bitlen vector can be ~7KB); dumping them all overflowed the
+        # model's context and it returned empty. They are verification
+        # artifacts, not prompt material, so summarize rather than inline.
+        _tv = alg.test_vectors or []
+        _rust_body = [v for v in _tv if (v.tolerance or "") == "rust_body"]
+        _plain = [v for v in _tv if (v.tolerance or "") != "rust_body"]
+        _lines = [
             f"- inputs={v.inputs} → expected={v.expected_output}  ({v.description})"
-            for v in (alg.test_vectors or [])
-        ) or "(no extracted vectors — ensure the implementation matches the referenced standards)"
+            for v in _plain
+        ]
+        if _rust_body:
+            _lines.append(
+                f"- ({len(_rust_body)} differential tests compiled against the "
+                "C reference verify this function byte-for-byte; write the "
+                "faithful algorithm and they will pass)"
+            )
+        tvecs = "\n".join(_lines) or "(no extracted vectors — ensure the implementation matches the referenced standards)"
+        if len(tvecs) > 6000:
+            tvecs = tvecs[:6000] + "\n- … (further vectors omitted)"
         # Standards catalog vectors (authoritative)
         catalog = lookup_test_vectors(alg.name) or []
         catalog_vec_text = "\n".join(
