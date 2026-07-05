@@ -432,12 +432,93 @@ pub fn build_bl_tree(s: &mut DeflateState) -> usize {
 ///
 /// Standards: RFC 1951
 #[allow(clippy::unimplemented)]
+fn send_tree(s: &mut DeflateState, tree: &[TreeElement], max_code: i32) {
+    let mut n = 0;
+    let mut prevlen = -1;
+    let mut count = 0;
+    let mut max_count = 7;
+    let mut min_count = 4;
+    let mut nextlen = tree[0].len as i32;
+
+    if nextlen == 0 {
+        max_count = 138;
+        min_count = 3;
+    }
+
+    while n <= max_code {
+        let curlen = nextlen;
+        nextlen = tree[(n as usize) + 1].len as i32;
+        count += 1;
+
+        if count < max_count && curlen == nextlen {
+            n += 1;
+            continue;
+        } else if count < min_count {
+            while count != 0 {
+                let idx = curlen as usize;
+                let c = s.bl_tree[idx].code;
+                let ln = s.bl_tree[idx].len as u8;
+                send_bits(s, c, ln);
+                count -= 1;
+            }
+        } else if curlen != 0 {
+            if curlen != prevlen {
+                let idx = curlen as usize;
+                let c = s.bl_tree[idx].code;
+                let ln = s.bl_tree[idx].len as u8;
+                send_bits(s, c, ln);
+                count -= 1;
+            }
+            let idx = REP_3_6 as usize;
+            let c = s.bl_tree[idx].code;
+            let ln = s.bl_tree[idx].len as u8;
+            send_bits(s, c, ln);
+            send_bits(s, (count - 3) as u16, 2);
+        } else if count <= 10 {
+            let idx = REPZ_3_10 as usize;
+            let c = s.bl_tree[idx].code;
+            let ln = s.bl_tree[idx].len as u8;
+            send_bits(s, c, ln);
+            send_bits(s, (count - 3) as u16, 3);
+        } else {
+            let idx = REPZ_11_138 as usize;
+            let c = s.bl_tree[idx].code;
+            let ln = s.bl_tree[idx].len as u8;
+            send_bits(s, c, ln);
+            send_bits(s, (count - 11) as u16, 7);
+        }
+
+        count = 0;
+        prevlen = curlen;
+        if nextlen == 0 {
+            max_count = 138;
+            min_count = 3;
+        } else if curlen == nextlen {
+            max_count = 6;
+            min_count = 3;
+        } else {
+            max_count = 7;
+            min_count = 4;
+        }
+        n += 1;
+    }
+}
+
 pub fn send_all_trees(s: &mut DeflateState, lcodes: usize, dcodes: usize, blcodes: usize) {
-    let _ = s;
-    let _ = lcodes;
-    let _ = dcodes;
-    let _ = blcodes;
-    unimplemented!("skeleton: send_all_trees not yet implemented")
+    send_bits(s, (lcodes - 257) as u16, 5);
+    send_bits(s, (dcodes - 1) as u16, 5);
+    send_bits(s, (blcodes - 4) as u16, 4);
+
+    for rank in 0..blcodes {
+        let len = s.bl_tree[BL_ORDER[rank]].len as u16;
+        send_bits(s, len, 3);
+    }
+
+    let lt = s.dyn_ltree.clone();
+    send_tree(s, &lt, (lcodes - 1) as i32);
+
+    let dt = s.dyn_dtree.clone();
+    send_tree(s, &dt, (dcodes - 1) as i32);
 }
 
 pub fn _tr_align(s: &mut DeflateState) {
@@ -453,10 +534,42 @@ pub fn _tr_align(s: &mut DeflateState) {
 /// Standards: RFC 1951 (DEFLATE)
 #[allow(clippy::unimplemented)]
 pub fn compress_block(s: &mut DeflateState, ltree: &[TreeElement], dtree: &[TreeElement]) {
-    let _ = s;
-    let _ = ltree;
-    let _ = dtree;
-    unimplemented!("skeleton: compress_block not yet implemented")
+    let mut sx = 0;
+    let sym_next = s.sym_next as usize;
+    if sym_next != 0 {
+        loop {
+            let mut dist = (s.sym_buf[sx] as u32) | ((s.sym_buf[sx + 1] as u32) << 8);
+            sx += 2;
+            let mut lc = s.sym_buf[sx] as usize;
+            sx += 1;
+
+            if dist == 0 {
+                { let cc = ltree[lc].code; let ln = ltree[lc].len as u8; send_bits(s, cc, ln); }
+            } else {
+                let code = LENGTH_CODE[lc] as usize;
+                { let cc = ltree[code + LITERALS + 1].code; let ln = ltree[code + LITERALS + 1].len as u8; send_bits(s, cc, ln); }
+                let extra = EXTRA_LBITS[code];
+                if extra != 0 {
+                    lc = lc.wrapping_sub(BASE_LENGTH[code] as usize);
+                    send_bits(s, lc as u16, extra as u8);
+                }
+                dist -= 1;
+                let d_code = if dist < 256 {
+                    DIST_CODE[dist as usize]
+                } else {
+                    DIST_CODE[256 + ((dist >> 7) as usize)]
+                };
+                { let cc = dtree[d_code as usize].code; let ln = dtree[d_code as usize].len as u8; send_bits(s, cc, ln); }
+                let extra_d = EXTRA_DBITS[d_code as usize];
+                if extra_d != 0 {
+                    dist = dist.wrapping_sub(BASE_DIST[d_code as usize] as u32);
+                    send_bits(s, dist as u16, extra_d as u8);
+                }
+            }
+            if sx >= sym_next { break; }
+        }
+    }
+    { let cc = ltree[END_BLOCK].code; let ln = ltree[END_BLOCK].len as u8; send_bits(s, cc, ln); }
 }
 
 /// Detect Data Type
