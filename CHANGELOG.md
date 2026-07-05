@@ -5,6 +5,28 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **All five Huffman tree-builders verified end-to-end (Phase 2 complete).**
+  `pqdownheap`, `gen_codes`, `gen_bitlen`, `build_tree`, and `build_bl_tree`
+  are model-written (Gemma 4 31B Dense) and byte-exact against the compiled-C
+  state oracle — 10/10 differential vectors each — in the real coherent
+  `zlib-trees` crate (122 tests passing, 0 failing; snapshot in
+  `references/impls/zlib_trees_verified/`). `build_tree` is the keystone: it
+  calls the other three, so its green transitively exercises the whole
+  tree-construction pipeline. `build_bl_tree` required reconciling zlib's
+  aliasing of `bl_desc.dyn_tree` to `s.bl_tree` (which the coherent types
+  separate) via `std::mem::take`. The oracle hierarchy proved itself —
+  `build_tree` exposed a `pqdownheap` tie-break bug (`<` vs zlib's `<=`) that
+  `pqdownheap`'s own vectors never hit. Each of the harder functions went
+  green by injecting the C source and iterating on the differential oracle's
+  exact discrepancies (unsigned wrap, counter semantics, tie-break). zlib's
+  static Huffman tables are now emitted as Rust consts
+  (`zlib-trees/src/static_tables.rs`), unblocking `_tr_align` (correct EOB
+  code) and the descriptor tier. Getting a 220KB filled module through the
+  model surfaced and fixed three general scaling bugs: stale module locks
+  from killed runs, and two context-overflow sources in the fill prompt
+  (whole test module inlined; large `rust_body` vectors dumped) — the prompt
+  went from ~20k to ~1.3k tokens. `compress_block`/`send_all_trees`
+  (bitstream emission) remain — the moonshot.
 - **State-mutator oracle proven on a Huffman tree-builder (Phase 2).** The
   first *stateful* function verified end-to-end: `pqdownheap` (zlib's heap
   sift) is model-written by Gemma 4 31B and byte-exact against a compiled-C
