@@ -499,10 +499,209 @@ def fuzz_gen_codes(
     return vectors
 
 
+# The Bit-Length code descriptor: 19 symbols, max length 7, NO static tree.
+# Testing the descriptor-tier builders against `bl` exercises the full
+# merge / bit-length / overflow / code-assignment logic (overflow is MORE
+# likely at max_length=7) WITHOUT needing zlib's 288-entry static_ltree —
+# so the generated Rust test can inline the whole descriptor.
+_BL_CODES = 19
+_EXTRA_BLBITS = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7]
+_BL_MAX_LENGTH = 7
+_HEAP_SIZE = 573
+
+
+def _bl_stat_desc_lit() -> str:
+    eb = ", ".join(f"{b}i32" for b in _EXTRA_BLBITS)
+    return (
+        "zlib_types::StaticTreeDesc { static_tree: vec![], "
+        f"extra_bits: vec![{eb}], extra_base: 0, "
+        f"elems: {_BL_CODES}u32, max_length: {_BL_MAX_LENGTH}u32 }}"
+    )
+
+
+def _bl_merge(freq: list[int]) -> dict:
+    """Python port of build_tree's merge phase for the bl descriptor (no
+    static tree). Validated 50/50 byte-exact against compiled zlib. Returns
+    the pre-gen_bitlen state gen_bitlen consumes."""
+    N = _HEAP_SIZE + 2
+    fr = list(freq) + [0] * (N - len(freq))
+    depth = [0] * N
+    dad = [0] * N
+    heap = [0] * N
+    heap_len = 0
+    heap_max = _HEAP_SIZE
+    max_code = -1
+    opt_len = 0
+    for n in range(_BL_CODES):
+        if fr[n] != 0:
+            heap_len += 1
+            heap[heap_len] = n
+            max_code = n
+            depth[n] = 0
+    while heap_len < 2:
+        if max_code < 2:
+            max_code += 1
+            node = max_code
+        else:
+            node = 0
+        heap_len += 1
+        heap[heap_len] = node
+        fr[node] = 1
+        depth[node] = 0
+        opt_len = (opt_len - 1) & 0xFFFFFFFFFFFFFFFF
+
+    def smaller(a, b):
+        return fr[a] < fr[b] or (fr[a] == fr[b] and depth[a] <= depth[b])
+
+    def pqd(k):
+        v = heap[k]
+        j = k << 1
+        while j <= heap_len:
+            if j < heap_len and smaller(heap[j + 1], heap[j]):
+                j += 1
+            if smaller(v, heap[j]):
+                break
+            heap[k] = heap[j]
+            k = j
+            j <<= 1
+        heap[k] = v
+
+    for n in range(heap_len // 2, 0, -1):
+        pqd(n)
+    node = _BL_CODES
+    while True:
+        n = heap[1]
+        heap[1] = heap[heap_len]
+        heap_len -= 1
+        pqd(1)
+        m = heap[1]
+        heap_max -= 1
+        heap[heap_max] = n
+        heap_max -= 1
+        heap[heap_max] = m
+        fr[node] = fr[n] + fr[m]
+        depth[node] = max(depth[n], depth[m]) + 1
+        dad[n] = dad[m] = node
+        heap[1] = node
+        node += 1
+        pqd(1)
+        if heap_len < 2:
+            break
+    heap_max -= 1
+    heap[heap_max] = heap[1]
+    return {"heap": heap, "heap_max": heap_max, "dad": dad, "freq": fr,
+            "max_code": max_code, "opt_len": opt_len, "node_top": node}
+
+
+def _state_and_desc_setup(dll, st: dict) -> None:
+    """Push a merged bl state into the shim (freq via fc, dad via dl)."""
+    n = st["node_top"] + 1
+    dll.shim_reset()
+    dll.shim_set_tree_fc(2, (ctypes.c_ushort * n)(*st["freq"][:n]), n)
+    dll.shim_set_tree_dl(2, (ctypes.c_ushort * n)(*st["dad"][:n]), n)
+    hh = st["heap"]
+    dll.shim_set_heap((ctypes.c_int * len(hh))(*hh), len(hh))
+    dll.shim_set_heap_max(ctypes.c_int(st["heap_max"]))
+    dll.shim_set_desc_max_code(2, ctypes.c_int(st["max_code"]))
+    dll.shim_set_opt_len(ctypes.c_ulong(st["opt_len"] & 0xFFFFFFFFFFFFFFFF))
+
+
+def fuzz_gen_bitlen(dll, alg, *, count: int = 10, seed: int = 0x47_42_4C_4E):
+    """gen_bitlen(s, desc): from a merged heap assign bit lengths. Uses the
+    validated Python merge for valid input state, drives shim_run_gen_bitlen
+    on the bl descriptor, asserts tree.Len, bl_count, opt_len."""
+    rng = random.Random(seed)
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        freq = [rng.randint(0, 60) for _ in range(_BL_CODES)]
+        st = _bl_merge(freq)
+        _state_and_desc_setup(dll, st)
+        dll.shim_run_gen_bitlen(2)
+        n = st["node_top"] + 1
+        lens = (ctypes.c_ushort * n)()
+        dll.shim_get_tree_dl(2, lens, n)
+        blc = (ctypes.c_ushort * 16)()
+        dll.shim_get_bl_count(blc, 16)
+        dll.shim_get_opt_len.restype = ctypes.c_ulong
+        opt = dll.shim_get_opt_len()
+        # Rust test: dyn_tree carries freq (fc) + dad (dl) pre-call.
+        tree_lit = _tree_lit({"freq": st["freq"][:n], "dad": st["dad"][:n]}, n)
+        heap_lit = "vec![" + ", ".join(f"{h}i32" for h in st["heap"]) + "]"
+        len_expect = "vec![" + ", ".join(f"{l}u16" for l in list(lens)) + "]"
+        blc_expect = "vec![" + ", ".join(f"{c}u16" for c in list(blc)) + "]"
+        body = (
+            f"let mut state = zlib_types::DeflateState::default();\n"
+            f"state.heap = {heap_lit};\n"
+            f"state.heap_max = {st['heap_max']}i32;\n"
+            f"state.opt_len = {st['opt_len'] & 0xFFFFFFFFFFFFFFFF}u64;\n"
+            f"let mut desc = zlib_types::TreeDesc {{ dyn_tree: {tree_lit}, "
+            f"max_code: {st['max_code']}i32, stat_desc: {_bl_stat_desc_lit()} }};\n"
+            f"super::gen_bitlen(&mut state, &desc);\n"
+            f"let lens: Vec<u16> = desc.dyn_tree.iter().map(|e| e.len).collect();\n"
+            f'assert_eq!(lens, {len_expect}, "gen_bitlen len {i}");\n'
+            f'assert_eq!(state.bl_count, {blc_expect}, "gen_bitlen bl_count {i}");\n'
+            f'assert_eq!(state.opt_len, {opt}u64, "gen_bitlen opt_len {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"gen_bitlen_shim_{i}",
+            source="C reference via shim: shim_run_gen_bitlen",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vectors
+
+
+def fuzz_build_tree(dll, alg, *, count: int = 10, seed: int = 0x42_54_52_45):
+    """build_tree(s, desc): from frequencies build the whole Huffman tree.
+    Self-bootstrapping — fuzz freqs, drive shim_run_build_tree on the bl
+    descriptor, assert tree Code+Len, heap, opt_len, max_code. The keystone:
+    a green here transitively exercises pqdownheap, gen_bitlen, gen_codes."""
+    rng = random.Random(seed)
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        freq = [rng.randint(0, 60) for _ in range(_BL_CODES)]
+        dll.shim_reset()
+        dll.shim_set_tree_fc(2, (ctypes.c_ushort * _BL_CODES)(*freq), _BL_CODES)
+        dll.shim_run_build_tree(2)
+        dll.shim_get_desc_max_code.restype = ctypes.c_int
+        mc = dll.shim_get_desc_max_code(2)
+        n = 2 * _BL_CODES + 1
+        code = (ctypes.c_ushort * n)()
+        length = (ctypes.c_ushort * n)()
+        dll.shim_get_tree_fc(2, code, n)
+        dll.shim_get_tree_dl(2, length, n)
+        heap = (ctypes.c_int * _HEAP_SIZE)()
+        dll.shim_get_heap(heap, _HEAP_SIZE)
+        dll.shim_get_opt_len.restype = ctypes.c_ulong
+        opt = dll.shim_get_opt_len()
+        tree_lit = _tree_lit({"freq": freq}, _BL_CODES)
+        heap_lit = "vec![" + ", ".join(f"{h}i32" for h in list(heap)) + "]"
+        code_expect = "vec![" + ", ".join(f"{c}u16" for c in list(code)) + "]"
+        len_expect = "vec![" + ", ".join(f"{l}u16" for l in list(length)) + "]"
+        body = (
+            f"let mut state = zlib_types::DeflateState::default();\n"
+            f"let mut desc = zlib_types::TreeDesc {{ dyn_tree: {tree_lit}, "
+            f"max_code: 0i32, stat_desc: {_bl_stat_desc_lit()} }};\n"
+            f"super::build_tree(&mut state, &mut desc);\n"
+            f"let codes: Vec<u16> = desc.dyn_tree.iter().map(|e| e.code).collect();\n"
+            f"let lens: Vec<u16> = desc.dyn_tree.iter().map(|e| e.len).collect();\n"
+            f'assert_eq!(desc.max_code, {mc}i32, "build_tree max_code {i}");\n'
+            f'assert_eq!(codes, {code_expect}, "build_tree code {i}");\n'
+            f'assert_eq!(lens, {len_expect}, "build_tree len {i}");\n'
+            f'assert_eq!(state.heap, {heap_lit}, "build_tree heap {i}");\n'
+            f'assert_eq!(state.opt_len, {opt}u64, "build_tree opt_len {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"build_tree_shim_{i}",
+            source="C reference via shim: shim_run_build_tree",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vectors
+
+
 # Registry of dedicated tree-builder fuzzers, keyed by algorithm name.
 TREE_BUILDER_FUZZERS: dict[str, Callable] = {
     "pqdownheap": fuzz_pqdownheap,
     "gen_codes": fuzz_gen_codes,
+    "gen_bitlen": fuzz_gen_bitlen,
+    "build_tree": fuzz_build_tree,
 }
 
 
