@@ -403,3 +403,90 @@ EXPORT int shim_run_detect_data_type_ret(void) {
     deflate_state *s = &g_state;
     return detect_data_type(s);
 }
+
+/* ---------- read_buf (deflate.c) stream-snapshot runner ----------
+   read_buf copies min(avail_in,size) bytes from strm->next_in to buf, updates
+   strm->adler per state->wrap (1=adler32, 2=crc32), and advances the stream. */
+static z_stream g_rb_strm;
+static unsigned char g_rb_in[65536];
+static unsigned char g_rb_out[65536];
+EXPORT unsigned shim_run_read_buf(const unsigned char *in, unsigned avail_in,
+        unsigned size, int wrap, unsigned adler_in, unsigned *adler_out,
+        unsigned *avail_out, unsigned *total_out, unsigned *consumed,
+        unsigned char *out) {
+    memset(&g_rb_strm, 0, sizeof(g_rb_strm));
+    memcpy(g_rb_in, in, avail_in);
+    g_rb_strm.next_in = g_rb_in;
+    g_rb_strm.avail_in = avail_in;
+    g_rb_strm.total_in = 0;
+    g_rb_strm.adler = adler_in;
+    g_state.wrap = wrap;
+    g_rb_strm.state = (struct internal_state FAR *)&g_state;
+    unsigned len = read_buf(&g_rb_strm, g_rb_out, size);
+    for (unsigned i = 0; i < len; i++) out[i] = g_rb_out[i];
+    *adler_out = (unsigned)g_rb_strm.adler;
+    *avail_out = g_rb_strm.avail_in;
+    *total_out = (unsigned)g_rb_strm.total_in;
+    *consumed = (unsigned)(g_rb_strm.next_in - g_rb_in);
+    return len;
+}
+
+/* ---------- fill_window (deflate.c) window-snapshot oracle ----------
+   Uses a real deflateInit2 to get a valid config + allocated window/head/prev,
+   then lets the caller set the mutable window state before running. */
+static z_stream g_fw_strm2;
+static deflate_state *g_fw_s;
+static unsigned char g_fw_inbuf[262144];
+EXPORT int shim_fw_init(int level, int wbits, int memlevel, int strategy) {
+    memset(&g_fw_strm2, 0, sizeof(g_fw_strm2));
+    int r = deflateInit2(&g_fw_strm2, level, Z_DEFLATED, wbits, memlevel, strategy);
+    g_fw_s = (deflate_state *)g_fw_strm2.state;
+    return r;
+}
+EXPORT unsigned shim_fw_wsize(void)     { return g_fw_s->w_size; }
+EXPORT unsigned shim_fw_hashsize(void)  { return g_fw_s->hash_size; }
+EXPORT unsigned shim_fw_windowsize(void){ return (unsigned)g_fw_s->window_size; }
+EXPORT unsigned shim_fw_hashbits(void)  { return g_fw_s->hash_bits; }
+EXPORT unsigned shim_fw_hashshift(void) { return g_fw_s->hash_shift; }
+EXPORT void shim_fw_set_mutable(unsigned strstart, unsigned lookahead, unsigned insert,
+        unsigned ins_h, long block_start, const unsigned char *windata, unsigned windata_n) {
+    g_fw_s->strstart = strstart; g_fw_s->lookahead = lookahead; g_fw_s->insert = insert;
+    g_fw_s->ins_h = ins_h; g_fw_s->block_start = block_start; g_fw_s->match_start = 0;
+    g_fw_s->high_water = 0;
+    memset(g_fw_s->head, 0, g_fw_s->hash_size * sizeof(Pos));
+    memset(g_fw_s->prev, 0, g_fw_s->w_size * sizeof(Pos));
+    memcpy(g_fw_s->window, windata, windata_n);
+}
+EXPORT void shim_fw_run(const unsigned char *in, unsigned avail_in) {
+    memcpy(g_fw_inbuf, in, avail_in);
+    g_fw_strm2.next_in = g_fw_inbuf; g_fw_strm2.avail_in = avail_in;
+    g_fw_strm2.total_in = 0;
+    fill_window(g_fw_s);
+}
+EXPORT unsigned shim_fw_g_strstart(void)  { return g_fw_s->strstart; }
+EXPORT unsigned shim_fw_g_lookahead(void) { return g_fw_s->lookahead; }
+EXPORT unsigned shim_fw_g_insert(void)    { return g_fw_s->insert; }
+EXPORT unsigned shim_fw_g_ins_h(void)     { return g_fw_s->ins_h; }
+EXPORT long     shim_fw_g_high_water(void){ return (long)g_fw_s->high_water; }
+EXPORT long     shim_fw_g_block_start(void){ return g_fw_s->block_start; }
+EXPORT void shim_fw_g_window(unsigned char *out, unsigned n){ memcpy(out, g_fw_s->window, n); }
+EXPORT void shim_fw_g_head(unsigned short *out, unsigned n){ for(unsigned i=0;i<n;i++) out[i]=g_fw_s->head[i]; }
+EXPORT void shim_fw_g_prev(unsigned short *out, unsigned n){ for(unsigned i=0;i<n;i++) out[i]=g_fw_s->prev[i]; }
+
+/* ---------- longest_match (deflate.c) match-finder oracle (reuses g_fw_s) */
+EXPORT void shim_lm_setup(unsigned strstart, unsigned lookahead, unsigned prev_length,
+        unsigned good_match, int nice_match, unsigned max_chain,
+        const unsigned char *windata, unsigned windata_n,
+        const unsigned short *prevdata, unsigned prev_n) {
+    g_fw_s->strstart = strstart; g_fw_s->lookahead = lookahead;
+    g_fw_s->prev_length = prev_length; g_fw_s->good_match = good_match;
+    g_fw_s->nice_match = nice_match; g_fw_s->max_chain_length = max_chain;
+    g_fw_s->match_start = 0;
+    memcpy(g_fw_s->window, windata, windata_n);
+    for (unsigned i = 0; i < prev_n; i++) g_fw_s->prev[i] = prevdata[i];
+}
+EXPORT unsigned shim_run_longest_match(unsigned cur_match, unsigned *match_start_out) {
+    unsigned r = longest_match(g_fw_s, cur_match);
+    *match_start_out = g_fw_s->match_start;
+    return r;
+}
