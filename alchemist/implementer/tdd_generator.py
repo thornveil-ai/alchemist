@@ -675,7 +675,7 @@ class TDDGenerator:
             new_fn = self._prompt_for_impl(
                 alg, current_body or "unimplemented!()",
                 previous_failure=previous_failure,
-                module_source=_strip_test_module(
+                module_source=self._strip_test_module(
                     module_path.read_text(encoding="utf-8")),
             )
             if not new_fn:
