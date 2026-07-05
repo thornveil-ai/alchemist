@@ -234,3 +234,95 @@ def test_repair_loop_short_circuits_when_already_green():
     loop = RepairLoop(run_oracle, lambda *a: True, lambda *a: None, candidates=[])
     r = loop.run()
     assert r.ok and r.attempts == 0
+
+
+def test_repair_loop_accepts_discrepancy_shaped_oracle():
+    from alchemist.autonomy.repair import Discrepancy
+    calls = {"n": 0}
+
+    def run_oracle():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return (False, Discrepancy("field", "field 'strstart'", "262", "261",
+                                       summary="strstart off by one"))
+        return (True, None)
+
+    loop = RepairLoop(
+        run_oracle=run_oracle,
+        reinject=lambda fn, g: True,
+        revert=lambda fn: None,
+        candidates=["fill_window"],
+        effect_footprints={"fill_window": {"strstart"}},
+    )
+    r = loop.run()
+    assert r.ok and r.function == "fill_window"
+
+
+# --- the pipeline wiring adapter (with real files) -------------------------
+def test_make_repair_loop_wires_cargo_and_snapshots_files(tmp_path):
+    from alchemist.autonomy.repair import make_repair_loop
+
+    # A fake Rust source file for the buggy function.
+    src = tmp_path / "trees.rs"
+    src.write_text("fn scan_tree() { /* buggy */ }\n", encoding="utf-8")
+
+    fail_output = (
+        "---- test_deflate stdout ----\n"
+        "thread 'x' panicked at t.rs:1:1:\n"
+        "assertion `left == right` failed\n"
+        "  left: [1, 2, 0, 4]\n"
+        " right: [1, 2, 3, 4]\n"
+    )
+    state = {"fixed": False}
+
+    def run_differential():
+        return (state["fixed"], "" if state["fixed"] else fail_output)
+
+    def refill(fn, guidance):
+        # simulate the model rewriting the body; record that guidance was byte-precise
+        assert "byte 2" in guidance
+        if fn == "scan_tree":
+            src.write_text("fn scan_tree() { /* fixed */ }\n", encoding="utf-8")
+            state["fixed"] = True
+        return True
+
+    loop = make_repair_loop(
+        run_differential=run_differential,
+        refill=refill,
+        workspace_files={"scan_tree": src},
+        candidates=["init_block", "scan_tree"],
+        effect_footprints={"init_block": {"dyn_ltree"}, "scan_tree": {"bl_tree"}},
+    )
+    result = loop.run()
+    assert result.ok
+    assert result.function == "scan_tree"
+    assert "fixed" in src.read_text(encoding="utf-8")
+
+
+def test_make_repair_loop_reverts_file_on_non_helping_change(tmp_path):
+    from alchemist.autonomy.repair import make_repair_loop
+
+    src = tmp_path / "a.rs"
+    original = "fn a() { original }\n"
+    src.write_text(original, encoding="utf-8")
+
+    def run_differential():
+        return (False, "---- t stdout ----\nassertion `left == right` failed\n"
+                       "  left: [0]\n right: [1]\n")  # never passes
+
+    def refill(fn, guidance):
+        src.write_text("fn a() { mangled }\n", encoding="utf-8")
+        return True
+
+    loop = make_repair_loop(
+        run_differential=run_differential,
+        refill=refill,
+        workspace_files={"a": src},
+        candidates=["a"],
+        effect_footprints={"a": {"x"}},
+        max_attempts=2,
+    )
+    result = loop.run()
+    assert result.status == "refused"
+    # the non-helping change was reverted -> file restored to original
+    assert src.read_text(encoding="utf-8") == original

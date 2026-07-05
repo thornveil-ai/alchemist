@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Sequence
 
 
@@ -367,16 +368,36 @@ class RepairLoop:
         if self.on_event:
             self.on_event(msg)
 
+    def _oracle(self) -> tuple[bool, Discrepancy | None]:
+        """Normalize run_oracle() to (passed, Discrepancy|None).
+
+        Accepts either shape so the loop wires onto both oracle styles:
+          * (passed, expected, actual)     -> byte/state diff computed here
+          * (passed, Discrepancy | None)   -> discrepancy already extracted
+                                              (e.g. via parse_rust_diff_failures)
+        """
+        res = self.run_oracle()
+        passed = bool(res[0])
+        if passed:
+            return True, None
+        if len(res) == 2:
+            disc = res[1]
+            if not isinstance(disc, Discrepancy):
+                disc = Discrepancy("value", "unknown", "", "", summary="oracle failed")
+            return False, disc
+        return False, self._describe(res[1], res[2])
+
     def run(self) -> RepairResult:
         history: list[str] = []
-        passed, expected, actual = self.run_oracle()
+        passed, disc0 = self._oracle()
         if passed:
             return RepairResult("fixed", None, 0, history)
 
         tried: set[str] = set()
         last_fn: str | None = None
+        disc = disc0
         for attempt in range(1, self.max_attempts + 1):
-            disc = self._describe(expected, actual)
+            assert disc is not None
             suspects = [
                 s for s in localize(
                     disc, self.candidates, self.effect_footprints,
@@ -402,14 +423,16 @@ class RepairLoop:
                 self._log(f"`{suspect.function}` unchanged by re-inject; next suspect", history)
                 continue
 
-            passed, expected, actual = self.run_oracle()
+            passed, next_disc = self._oracle()
             if passed:
                 self._log(f"oracle PASSED after repairing `{suspect.function}`", history)
                 return RepairResult("fixed", suspect.function, attempt, history)
             # regression check: revert if it didn't help, so we never drift worse.
             self._log(f"still failing after `{suspect.function}`; reverting it", history)
             self.revert(suspect.function)
-            passed, expected, actual = self.run_oracle()
+            passed, reverted_disc = self._oracle()
+            # carry the freshest discrepancy into the next attempt
+            disc = reverted_disc or next_disc or disc
 
         self._log("exhausted attempts — refusing (never fake-green)", history)
         return RepairResult("refused", last_fn, self.max_attempts, history)
@@ -426,3 +449,81 @@ class RepairLoop:
             "equal" if eq else "value", "value", _short(expected), _short(actual),
             summary="values match" if eq else f"expected {_short(expected)}, got {_short(actual)}",
         )
+
+
+# --------------------------------------------------------------------------
+# 5. Pipeline wiring adapter
+# --------------------------------------------------------------------------
+def make_repair_loop(
+    *,
+    run_differential: Callable[[], tuple[bool, str]],
+    refill: Callable[[str, str], bool],
+    workspace_files: dict[str, Path],
+    candidates: Sequence[str],
+    effect_footprints: dict[str, set[str]] | None = None,
+    call_graph: dict[str, set[str]] | None = None,
+    max_attempts: int = 4,
+    on_event: Callable[[str], None] | None = None,
+) -> RepairLoop:
+    """Wire a `RepairLoop` onto the real pipeline.
+
+    Parameters (dependency-injected so this stays unit-testable and doesn't drag
+    in the heavy DifferentialTester / TDDGenerator at import time):
+
+      run_differential() -> (passed, cargo_output)
+          Run the differential gate; on failure return its captured cargo text
+          (stdout+stderr) so we can extract the byte-level discrepancy.
+      refill(fn, guidance) -> changed
+          Re-fill one Rust function with the repair guidance appended to its
+          prompt (thin wrapper over TDDGenerator._fill_in_function). Return
+          whether the body actually changed.
+      workspace_files: fn -> the .rs file it lives in.
+          Used to snapshot the file before a re-inject and restore it on revert,
+          so a non-helping repair can't drift the workspace worse.
+
+    The differential discrepancy is recovered via `parse_rust_diff_failures`, so
+    the loop sees "byte 47: expected 0x1a got 0x00" — not just "it failed".
+    """
+    snapshots: dict[str, str] = {}
+
+    def run_oracle() -> tuple[bool, Discrepancy | None]:
+        passed, output = run_differential()
+        if passed:
+            return True, None
+        fails = parse_rust_diff_failures(output)
+        disc = (
+            fails[0].discrepancy
+            if fails
+            else Discrepancy("value", "differential", "", "",
+                             summary="differential gate failed (no parseable assert)")
+        )
+        return False, disc
+
+    def reinject(fn: str, guidance: str) -> bool:
+        f = workspace_files.get(fn)
+        if f is not None:
+            try:
+                snapshots[fn] = Path(f).read_text(encoding="utf-8")
+            except OSError:
+                snapshots.pop(fn, None)
+        return refill(fn, guidance)
+
+    def revert(fn: str) -> None:
+        snap = snapshots.get(fn)
+        f = workspace_files.get(fn)
+        if snap is not None and f is not None:
+            try:
+                Path(f).write_text(snap, encoding="utf-8")
+            except OSError:
+                pass
+
+    return RepairLoop(
+        run_oracle=run_oracle,
+        reinject=reinject,
+        revert=revert,
+        candidates=candidates,
+        effect_footprints=effect_footprints,
+        call_graph=call_graph,
+        max_attempts=max_attempts,
+        on_event=on_event,
+    )

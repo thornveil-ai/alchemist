@@ -24,6 +24,7 @@ from .repair import (
     localize,
     render_repair_guidance,
     parse_rust_diff_failures,
+    make_repair_loop,
 )
 
 __all__ = [
@@ -41,4 +42,5 @@ __all__ = [
     "localize",
     "render_repair_guidance",
     "parse_rust_diff_failures",
+    "make_repair_loop",
 ]
