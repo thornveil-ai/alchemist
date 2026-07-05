@@ -618,4 +618,97 @@ pub fn detect_data_type(s: &DeflateState) -> i32 {
     Z_BINARY
 }
 
+pub fn _tr_tally(s: &mut DeflateState, dist: u32, lc: u32) -> bool {
+    s.sym_buf[s.sym_next as usize] = dist as u8;
+    s.sym_next += 1;
+    s.sym_buf[s.sym_next as usize] = (dist >> 8) as u8;
+    s.sym_next += 1;
+    s.sym_buf[s.sym_next as usize] = lc as u8;
+    s.sym_next += 1;
+
+    if dist == 0 {
+        s.dyn_ltree[lc as usize].freq = s.dyn_ltree[lc as usize].freq.wrapping_add(1);
+    } else {
+        s.matches += 1;
+        let dist = dist - 1;
+        let lc_idx = (LENGTH_CODE[lc as usize] as usize) + LITERALS + 1;
+        s.dyn_ltree[lc_idx].freq = s.dyn_ltree[lc_idx].freq.wrapping_add(1);
+        
+        let d_idx = if dist < 256 {
+            DIST_CODE[dist as usize]
+        } else {
+            DIST_CODE[256 + (dist >> 7) as usize]
+        };
+        s.dyn_dtree[d_idx as usize].freq = s.dyn_dtree[d_idx as usize].freq.wrapping_add(1);
+    }
+    s.sym_next == s.sym_end
+}
+
+pub fn _tr_stored_block(s: &mut DeflateState, buf: &[u8], stored_len: u32, last: i32) {
+    send_bits(s, last as u16, 3);
+    bi_windup(s);
+    let sl = stored_len as u16;
+    s.pending.push((sl & 0xff) as u8);
+    s.pending.push((sl >> 8) as u8);
+    let nsl = !sl;
+    s.pending.push((nsl & 0xff) as u8);
+    s.pending.push((nsl >> 8) as u8);
+    if stored_len > 0 {
+        s.pending.extend_from_slice(&buf[..stored_len as usize]);
+    }
+}
+
+pub fn _tr_flush_bits(s: &mut DeflateState) {
+    bi_flush(s);
+}
+
+pub fn _tr_flush_block(strm: &mut DeflateStream, buf: Option<&[u8]>, stored_len: u32, last: i32) {
+    let mut opt_lenb: u64;
+    let mut static_lenb: u64;
+    let mut max_blindex = 0;
+
+    if strm.state.level > 0 {
+        if strm.state.data_type == 2 {
+            strm.state.data_type = detect_data_type(&strm.state);
+        }
+        let mut ld = core::mem::take(&mut strm.state.l_desc);
+        build_tree(&mut strm.state, &mut ld);
+        strm.state.l_desc = ld;
+
+        let mut dd = core::mem::take(&mut strm.state.d_desc);
+        build_tree(&mut strm.state, &mut dd);
+        strm.state.d_desc = dd;
+
+        max_blindex = build_bl_tree(&mut strm.state);
+        opt_lenb = (strm.state.opt_len + 3 + 7) >> 3;
+        static_lenb = (strm.state.static_len + 3 + 7) >> 3;
+        if static_lenb <= opt_lenb || strm.state.strategy == 4 {
+            opt_lenb = static_lenb;
+        }
+    } else {
+        opt_lenb = stored_len as u64 + 5;
+        static_lenb = stored_len as u64 + 5;
+    }
+
+    if (stored_len as u64 + 4) <= opt_lenb && buf.is_some() {
+        _tr_stored_block(&mut strm.state, buf.unwrap(), stored_len, last);
+    } else if static_lenb == opt_lenb {
+        send_bits(&mut strm.state, ((1 << 1) + last) as u16, 3);
+        compress_block(&mut strm.state, &crate::static_tables::STATIC_LTREE, &crate::static_tables::STATIC_DTREE);
+    } else {
+        send_bits(&mut strm.state, ((2 << 1) + last) as u16, 3);
+        let lcodes = (strm.state.l_desc.max_code + 1) as usize;
+        let dcodes = (strm.state.d_desc.max_code + 1) as usize;
+        send_all_trees(&mut strm.state, lcodes, dcodes, max_blindex + 1);
+        let lt = strm.state.dyn_ltree.clone();
+        let dt = strm.state.dyn_dtree.clone();
+        compress_block(&mut strm.state, &lt, &dt);
+    }
+
+    init_block(&mut strm.state);
+    if last != 0 {
+        bi_windup(&mut strm.state);
+    }
+}
+
 
