@@ -1352,7 +1352,15 @@ def _fuzz_u32_small(rng: random.Random) -> int:
     return rng.randint(0, 65535)
 
 
-ZLIB_INFLATE_SHIM_BINDINGS: dict[str, CShimMutatorBinding] = {
+# NOTE (durability): these inflate state-mutator bindings model the mutated
+# struct as InflateState, but the coherent hardport signatures for these public
+# APIs take an InflateStream (the z_streamp wrapper) — a modeling inconsistency
+# that predates the inflate_table work and was never actually green (the emitted
+# tests never compiled). Kept here (renamed) so the inflate driver work in a
+# later phase can reconcile InflateStream vs InflateState and re-enable them.
+# The active dict is empty so they don't emit broken tests that block the
+# verified surface (inflate_table). inflate_table uses INFLATE_FUZZERS, not this.
+_ZLIB_INFLATE_SHIM_BINDINGS_PENDING: dict[str, CShimMutatorBinding] = {
     "inflateReset": CShimMutatorBinding(
         name="inflateReset",
         state_type="InflateState",
@@ -1423,6 +1431,10 @@ ZLIB_INFLATE_SHIM_BINDINGS: dict[str, CShimMutatorBinding] = {
         ],
     ),
 }
+
+# Active binding set consumed by the backfill. Empty until the InflateStream
+# vs InflateState modeling above is reconciled (inflate driver phase).
+ZLIB_INFLATE_SHIM_BINDINGS: dict[str, CShimMutatorBinding] = {}
 
 
 def locate_zlib_shim() -> Path | None:
