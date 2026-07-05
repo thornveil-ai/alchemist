@@ -91,6 +91,18 @@ Progressively harder targets, each forcing more of the workstreams. **De-risked 
 | **M4** | a 100K+-line library | WS7 scale | Zero |
 | **M5** | an N-library benchmark suite | "any" — report the honest pass rate + failure taxonomy | Zero |
 
+The **[M1 autonomy scorecard](autonomy_scorecard_baseline.md)** makes this concrete. It inventories the human-supplied artifacts the pipeline still needs to translate zlib and classifies each by workstream. Baseline today:
+
+| Workstream | Open debt | What it is |
+|---|---:|---|
+| WS3/WS4 | 382 | Human-ported Rust function bodies (the core debt) |
+| WS1 | 123 | Hand-written oracle shim runners |
+| WS3 | 10 | Curated reference implementations |
+| WS2 | 8 | Hand-specified type-model overrides |
+| **Total open** | **523** | (+ 14 idioms already retired by WS6) |
+
+Re-run `python -m alchemist.autonomy.scorecard` after every change. **M1 = drive open debt to zero** while keeping every gate byte-exact-or-refused.
+
 **M1 is the forcing function.** Re-deriving zlib fully automatically converts every manual move from this session into a measured capability, against ground truth we already have. Start there.
 
 ## Definition of "conquered"
