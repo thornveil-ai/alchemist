@@ -13,5 +13,28 @@ from .scorecard import (
     build_scorecard,
     render_scorecard,
 )
+from .repair import (
+    Discrepancy,
+    Suspect,
+    RepairLoop,
+    RepairResult,
+    describe_bytes,
+    describe_state,
+    localize,
+    render_repair_guidance,
+)
 
-__all__ = ["DebtCategory", "Scorecard", "build_scorecard", "render_scorecard"]
+__all__ = [
+    "DebtCategory",
+    "Scorecard",
+    "build_scorecard",
+    "render_scorecard",
+    "Discrepancy",
+    "Suspect",
+    "RepairLoop",
+    "RepairResult",
+    "describe_bytes",
+    "describe_state",
+    "localize",
+    "render_repair_guidance",
+]

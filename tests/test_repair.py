@@ -1,0 +1,181 @@
+"""Tests for WS4 autonomous diagnose-and-repair (docs/PATH_TO_AUTONOMY.md).
+
+Covers the four parts: discrepancy extraction (bytes + state), fault
+localization, guidance rendering, and the bounded repair loop — including an
+end-to-end simulation that reproduces a zlib-style integration bug and repairs
+it with no human in the loop.
+"""
+
+from alchemist.autonomy.repair import (
+    describe_bytes,
+    describe_state,
+    localize,
+    render_repair_guidance,
+    RepairLoop,
+    Suspect,
+)
+
+
+# --- discrepancy extraction ------------------------------------------------
+def test_describe_bytes_equal():
+    d = describe_bytes(b"abc", b"abc")
+    assert d.is_equal and d.summary == "byte-identical"
+
+
+def test_describe_bytes_value_divergence():
+    # like the scan_tree bug: a byte in the middle of the block is wrong
+    exp = bytes([0x1a, 0x2b, 0x3c, 0x4d])
+    act = bytes([0x1a, 0x2b, 0x00, 0x4d])
+    d = describe_bytes(exp, act)
+    assert d.kind == "value"
+    assert d.location == "byte 2"
+    assert d.expected == "0x3c" and d.actual == "0x00"
+    assert "byte 2" in d.summary
+    assert "first divergence at byte 2" in d.context
+
+
+def test_describe_bytes_length_divergence():
+    d = describe_bytes(b"abcdef", b"abc")
+    assert d.kind == "length"
+    assert "truncated" in d.summary
+    assert "expected 6, got 3" in d.summary
+
+
+def test_describe_state_field_divergence():
+    # like a stateful-fn effect mismatch
+    exp = {"strstart": 262, "lookahead": 3, "match_length": 5}
+    act = {"strstart": 261, "lookahead": 3, "match_length": 5}
+    d = describe_state(exp, act)
+    assert d.kind == "field"
+    assert "strstart" in d.location
+    assert d.expected == "262" and d.actual == "261"
+
+
+def test_describe_state_extra_field():
+    d = describe_state({"a": 1}, {"a": 1, "b": 2})
+    assert d.kind == "missing"
+    assert "b" in d.actual
+
+
+# --- localization ----------------------------------------------------------
+def test_localize_prefers_footprint_owner_of_diverged_field():
+    d = describe_state({"strstart": 262}, {"strstart": 261})
+    footprints = {
+        "fill_window": {"strstart", "lookahead", "window"},
+        "init_block": {"dyn_ltree", "opt_len"},
+        "adler32": {"adler"},
+    }
+    ranked = localize(d, ["fill_window", "init_block", "adler32"], footprints)
+    assert ranked[0].function == "fill_window"
+    assert "strstart" in ranked[0].reason
+
+
+def test_localize_uses_recency_when_no_footprints():
+    d = describe_bytes(b"abc", b"abd")
+    ranked = localize(d, ["f1", "f2"], effect_footprints={"f1": {"x"}, "f2": {"y"}},
+                      recently_changed=["f2"])
+    # f2 was recently changed -> should outrank f1 for a value diff
+    assert ranked[0].function == "f2"
+
+
+def test_localize_propagates_to_callers():
+    d = describe_state({"dyn_ltree": 1}, {"dyn_ltree": 0})
+    footprints = {"build_tree": {"dyn_ltree"}}
+    call_graph = {"_tr_flush_block": {"build_tree"}}
+    ranked = localize(
+        d, ["build_tree", "_tr_flush_block"], footprints, call_graph
+    )
+    fns = [s.function for s in ranked]
+    assert fns[0] == "build_tree"           # prime suspect (owns the field)
+    assert "_tr_flush_block" in fns          # caller pulled in as a suspect
+
+
+# --- guidance --------------------------------------------------------------
+def test_render_guidance_has_cause_not_symptom_language():
+    d = describe_bytes(bytes([1, 2, 3]), bytes([1, 9, 3]))
+    g = render_repair_guidance(d, Suspect("scan_tree", 10.0, "writes bl_tree"))
+    assert "do not special-case" in g.lower() or "do not hard-code" in g.lower()
+    assert "scan_tree" in g
+    assert "byte 1" in g
+
+
+def test_render_guidance_empty_when_equal():
+    assert render_repair_guidance(describe_bytes(b"x", b"x")) == ""
+
+
+# --- the repair loop (end-to-end simulation) -------------------------------
+def test_repair_loop_fixes_a_zlib_style_bug_autonomously():
+    """Simulate: compressed output diverges; the fault is in scan_tree; the loop
+    localizes to it, re-injects, and the oracle then passes — no human."""
+    state = {"scan_tree_fixed": False}
+    good = bytes([0x1a, 0x2b, 0x3c, 0x4d])
+    bad = bytes([0x1a, 0x2b, 0x00, 0x4d])  # scan_tree emits a wrong byte
+
+    def run_oracle():
+        actual = good if state["scan_tree_fixed"] else bad
+        return (actual == good, good, actual)
+
+    reinjected: list[str] = []
+
+    def reinject(fn, guidance):
+        reinjected.append(fn)
+        if fn == "scan_tree":
+            state["scan_tree_fixed"] = True
+        return True  # body changed
+
+    def revert(fn):
+        if fn == "scan_tree":
+            state["scan_tree_fixed"] = False
+
+    loop = RepairLoop(
+        run_oracle=run_oracle,
+        reinject=reinject,
+        revert=revert,
+        candidates=["init_block", "scan_tree", "deflate"],
+        effect_footprints={
+            "init_block": {"dyn_ltree"},
+            "scan_tree": {"bl_tree", "compressed_len"},
+            "deflate": {"pending", "next_out"},
+        },
+        max_attempts=4,
+    )
+    result = loop.run()
+    assert result.ok
+    assert result.function == "scan_tree"
+    assert "scan_tree" in reinjected
+
+
+def test_repair_loop_refuses_rather_than_fake_green():
+    """If nothing fixes it, the loop REFUSES — never claims a false success."""
+    good = b"\x01\x02\x03"
+    bad = b"\x01\x09\x03"
+
+    def run_oracle():
+        return (False, good, bad)  # never passes
+
+    def reinject(fn, guidance):
+        return True  # pretends to change, but oracle still fails
+
+    reverted: list[str] = []
+
+    loop = RepairLoop(
+        run_oracle=run_oracle,
+        reinject=reinject,
+        revert=lambda fn: reverted.append(fn),
+        candidates=["a", "b"],
+        effect_footprints={"a": {"x"}, "b": {"y"}},
+        max_attempts=3,
+    )
+    result = loop.run()
+    assert result.status == "refused"
+    assert not result.ok
+    # every non-helping change was reverted -> no drift
+    assert set(reverted) == {"a", "b"}
+
+
+def test_repair_loop_short_circuits_when_already_green():
+    def run_oracle():
+        return (True, b"", b"")
+    loop = RepairLoop(run_oracle, lambda *a: True, lambda *a: None, candidates=[])
+    r = loop.run()
+    assert r.ok and r.attempts == 0
