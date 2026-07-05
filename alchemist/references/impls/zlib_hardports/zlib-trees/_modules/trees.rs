@@ -123,8 +123,14 @@ pub fn tr_static_init() {
 ///
 /// Standards: RFC 1951
 pub fn init_block(s: &mut DeflateState) {
-    *s = DeflateState::default();
-
+    for n in 0..286 { s.dyn_ltree[n].freq = 0; }
+    for n in 0..30 { s.dyn_dtree[n].freq = 0; }
+    for n in 0..19 { s.bl_tree[n].freq = 0; }
+    s.dyn_ltree[256].freq = 1;
+    s.opt_len = 0;
+    s.static_len = 0;
+    s.sym_next = 0;
+    s.matches = 0;
 }
 
 ///  Tr Init
@@ -133,13 +139,18 @@ pub fn init_block(s: &mut DeflateState) {
 ///
 /// Standards: RFC 1951 (DEFLATE)
 pub fn _tr_init(s: &mut DeflateState) {
-    // Port of trees.c:_tr_init.
-    // Initializes (or resets) the deflate state's tree-related fields
-    // before a new block. In C, also assigns `l_desc`/`d_desc`/`bl_desc`
-    // pointers to their respective dynamic trees and static descriptors;
-    // our Rust port stores those as u32 indices (or no-op for static
-    // tables baked at const-time), so we clear the bit buffer and kick
-    // init_block to zero per-block state.
+    s.l_desc.stat_desc = zlib_types::StaticTreeDesc {
+        static_tree: STATIC_LTREE.to_vec(), extra_bits: EXTRA_LBITS.to_vec(),
+        extra_base: 257, elems: 286, max_length: 15,
+    };
+    s.d_desc.stat_desc = zlib_types::StaticTreeDesc {
+        static_tree: STATIC_DTREE.to_vec(), extra_bits: EXTRA_DBITS.to_vec(),
+        extra_base: 0, elems: 30, max_length: 15,
+    };
+    s.bl_desc.stat_desc = zlib_types::StaticTreeDesc {
+        static_tree: Vec::new(), extra_bits: EXTRA_BLBITS.to_vec(),
+        extra_base: 0, elems: 19, max_length: 7,
+    };
     s.bi_buf = 0;
     s.bi_valid = 0;
     init_block(s);
@@ -576,46 +587,24 @@ pub fn compress_block(s: &mut DeflateState, ltree: &[TreeElement], dtree: &[Tree
 /// Classifies a compressed data stream as either binary or text based on the
 /// frequency of specific byte values in the dynamic Huffman tree.
 pub fn detect_data_type(s: &DeflateState) -> i32 {
-    const Z_BINARY: i32 = 0;
-    const Z_TEXT: i32 = 1;
-    const LITERALS: usize = 286;
-    const BLOCK_LIST_MASK: u32 = 0xf3ffc07f;
-
-    let ltree = &s.dyn_ltree;
-
-    // 1. Binary Check
-    // The block-list is defined by the mask 0xf3ffc07f.
-    // This mask represents bits 0..6, 14..25, and 28..31.
-    // We check if any byte in this set has a non-zero frequency.
-    for i in 0..256 {
-        if (BLOCK_LIST_MASK & (1 << i)) != 0 {
-            if i < ltree.len() && ltree[i].freq > 0 {
-                return Z_BINARY;
-            }
+    // C: block_mask 0xf3ffc07f shifted right over bytes 0..=31; then
+    // whitespace bytes 9/10/13; then bytes 32..LITERALS. Z_BINARY=0, Z_TEXT=1.
+    let mut block_mask: u32 = 0xf3ffc07f;
+    for n in 0..=31usize {
+        if (block_mask & 1) != 0 && s.dyn_ltree[n].freq != 0 {
+            return 0;
+        }
+        block_mask >>= 1;
+    }
+    if s.dyn_ltree[9].freq != 0 || s.dyn_ltree[10].freq != 0 || s.dyn_ltree[13].freq != 0 {
+        return 1;
+    }
+    for n in 32..256usize {
+        if s.dyn_ltree[n].freq != 0 {
+            return 1;
         }
     }
-
-    // 2. Text Check
-    // Check for allow-listed bytes: 9, 10, 13 or any byte from 32 up to LITERALS-1.
-    // Note: LITERALS is 286, but the byte range is 0..255. 
-    // The spec says "32 up to LITERALS-1", which for bytes means 32..256.
-    
-    // Check 9, 10, 13
-    for &byte in &[9, 10, 13] {
-        if byte < ltree.len() && ltree[byte].freq > 0 {
-            return Z_TEXT;
-        }
-    }
-
-    // Check 32..255
-    for i in 32..256 {
-        if i < ltree.len() && ltree[i].freq > 0 {
-            return Z_TEXT;
-        }
-    }
-
-    // 3. Default
-    Z_BINARY
+    0
 }
 
 pub fn _tr_tally(s: &mut DeflateState, dist: u32, lc: u32) -> bool {
@@ -671,12 +660,16 @@ pub fn _tr_flush_block(strm: &mut DeflateStream, buf: Option<&[u8]>, stored_len:
         if strm.state.data_type == 2 {
             strm.state.data_type = detect_data_type(&strm.state);
         }
+        strm.state.l_desc.dyn_tree = core::mem::take(&mut strm.state.dyn_ltree);
         let mut ld = core::mem::take(&mut strm.state.l_desc);
         build_tree(&mut strm.state, &mut ld);
+        strm.state.dyn_ltree = core::mem::take(&mut ld.dyn_tree);
         strm.state.l_desc = ld;
 
+        strm.state.d_desc.dyn_tree = core::mem::take(&mut strm.state.dyn_dtree);
         let mut dd = core::mem::take(&mut strm.state.d_desc);
         build_tree(&mut strm.state, &mut dd);
+        strm.state.dyn_dtree = core::mem::take(&mut dd.dyn_tree);
         strm.state.d_desc = dd;
 
         max_blindex = build_bl_tree(&mut strm.state);
