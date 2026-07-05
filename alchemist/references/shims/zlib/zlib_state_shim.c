@@ -355,6 +355,41 @@ EXPORT void shim_run_gen_bitlen(int which) {
     gen_bitlen(s, d);
 }
 
+/* ---------- Bitstream emission layer (compress_block / send_all_trees) ----
+   compress_block replays the LZ77 symbol buffer (3 bytes/symbol: dist_lo,
+   dist_hi, lc) through the literal/distance Huffman trees, emitting to
+   pending. send_all_trees serializes the three trees' bit lengths. Both need
+   tr_static_init (populates the length/dist code tables). */
+#define SYM_BUF_SIZE 8192
+static unsigned char g_sym_buf[SYM_BUF_SIZE];
+
+EXPORT void shim_set_sym_buf(const unsigned char *buf, unsigned n) {
+    deflate_state *s = &g_state;
+    if (n > SYM_BUF_SIZE) n = SYM_BUF_SIZE;
+    memcpy(g_sym_buf, buf, n);
+    s->sym_buf = (uchf *)g_sym_buf;
+    s->sym_next = n;
+}
+/* _length_code[0..255], _dist_code[0..511] — populated by tr_static_init. */
+EXPORT void shim_length_code(unsigned char *out, unsigned n) {
+    tr_static_init();
+    for (unsigned i = 0; i < n && i < 256; i++) out[i] = _length_code[i];
+}
+EXPORT void shim_dist_code(unsigned char *out, unsigned n) {
+    tr_static_init();
+    for (unsigned i = 0; i < n && i < 512; i++) out[i] = _dist_code[i];
+}
+EXPORT void shim_run_compress_block(void) {
+    deflate_state *s = &g_state;
+    tr_static_init();
+    compress_block(s, s->dyn_ltree, s->dyn_dtree);
+}
+EXPORT void shim_run_send_all_trees(int lcodes, int dcodes, int blcodes) {
+    deflate_state *s = &g_state;
+    tr_static_init();
+    send_all_trees(s, lcodes, dcodes, blcodes);
+}
+
 /* Static descriptor scalars: extra_base, max_length, elems for l/d/bl. */
 EXPORT void shim_static_desc(int which, int *extra_base, int *max_length, int *elems) {
     tr_static_init();
