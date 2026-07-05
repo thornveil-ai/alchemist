@@ -145,6 +145,7 @@ Referenced standards: {standards}
 ## Standards catalog vectors (authoritative, MUST satisfy)
 {catalog_vectors}
 {reference_impls}
+{idiom_patterns}
 
 ## Shared type definitions (already in scope via `use zlib_types::*;`)
 {struct_context}
@@ -991,6 +992,7 @@ class TDDGenerator:
             test_vectors=tvecs,
             catalog_vectors=catalog_vec_text,
             reference_impls=reference_block,
+            idiom_patterns=self._idiom_prompt_block(alg),
             struct_context=struct_context,
             error_context=self._error_context_for(alg),
             available_consts=self._consts_in_scope(module_source),
@@ -1235,6 +1237,38 @@ class TDDGenerator:
             "Use EXACTLY these field names and types:\n\n"
             + "\n\n".join(blocks)
         )
+
+    def _idiom_prompt_block(self, alg: AlgorithmSpec) -> str:
+        """Surface C->safe-Rust idiom patterns relevant to this function.
+
+        Matches the function's C source against the idiom catalog (WS6) and
+        injects only the patterns whose C-signals fire, so the model gets the
+        known safe-Rust model for constructs it's about to hit (advancing
+        pointers, goto state machines, unions, aliasing, shift overflow, ...).
+        Cheap and additive: a false-positive hint costs little; a missed idiom
+        is a class of bug (see docs/PATH_TO_AUTONOMY.md, WS6).
+        """
+        src_root = getattr(self, "_source_root", None)
+        if src_root is None:
+            return ""
+        try:
+            from alchemist.catalog import match_idioms, render_prompt_hints
+            from alchemist.implementer.reference_probe import _find_body_in_sources
+        except Exception:
+            return ""
+        c_body = None
+        try:
+            c_body = _find_body_in_sources(alg, src_root)
+        except Exception:
+            c_body = None
+        if not c_body:
+            return ""
+        hits = match_idioms(c_body)
+        if not hits:
+            return ""
+        # Cap to the most load-bearing few to avoid prompt bloat on macro-heavy fns.
+        block = render_prompt_hints(hits[:6])
+        return "\n" + block if block else ""
 
     def _reference_prompt_block(self, alg: AlgorithmSpec) -> str:
         """Pull any matching reference implementations from the library.

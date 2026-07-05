@@ -1,0 +1,306 @@
+"""The C-idiom pattern catalog itself.
+
+Seeded from the zlib byte-exact translation (docs/zlib_case_study.md). Every
+entry is a pattern a human recognized by hand; encoding it here is what turns
+that recognition into an automated capability (WS6).
+
+Detection is deliberately cheap: each idiom carries `c_signals`, a tuple of
+regexes matched against the C source. A hit means "this pattern is *likely*
+present, surface its guidance" — false positives are fine (an extra hint costs
+little); the model still decides. Precision can grow later (semantic/CFG-based
+detection) without changing the consumer interface.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Pattern
+
+# Bump when entries change in a way that could alter model output, so caches /
+# receipts can record which catalog produced a given translation.
+CATALOG_VERSION = "0.1.0-zlib-seed"
+
+
+@dataclass(frozen=True)
+class Idiom:
+    """One C-idiom -> Rust-model transform.
+
+    id           stable kebab-case identifier
+    name         short human title
+    tags         categories (buffer / ownership / control-flow / arithmetic / ...)
+    c_signals    regex strings; any match flags the idiom as likely-present
+    rust_model   the transform, stated as guidance the model can apply
+    rationale    *why* — the semantic gap being bridged
+    example      concrete zlib site the pattern came from
+    caution      optional gotcha that bit us on zlib (the bug this prevents)
+    """
+
+    id: str
+    name: str
+    tags: tuple[str, ...]
+    c_signals: tuple[str, ...]
+    rust_model: str
+    rationale: str
+    example: str
+    caution: str = ""
+    _compiled: tuple[Pattern[str], ...] = field(default=(), repr=False, compare=False)
+
+    def compiled(self) -> tuple[Pattern[str], ...]:
+        # Lazily compile signals (frozen dataclass -> cache on the class-level dict).
+        cache = _SIGNAL_CACHE.get(self.id)
+        if cache is None:
+            cache = tuple(re.compile(s) for s in self.c_signals)
+            _SIGNAL_CACHE[self.id] = cache
+        return cache
+
+    def matches(self, c_source: str) -> bool:
+        return any(p.search(c_source) for p in self.compiled())
+
+    def prompt_block(self) -> str:
+        lines = [f"### {self.name}  [{self.id}]", f"- **When:** {self.rationale}",
+                 f"- **Do:** {self.rust_model}", f"- **e.g. (zlib):** {self.example}"]
+        if self.caution:
+            lines.append(f"- **Watch out:** {self.caution}")
+        return "\n".join(lines)
+
+
+_SIGNAL_CACHE: dict[str, tuple[Pattern[str], ...]] = {}
+
+
+# --------------------------------------------------------------------------
+# The catalog. Ordered roughly by how often each bit us / how load-bearing it
+# is for correctness.
+# --------------------------------------------------------------------------
+IDIOMS: tuple[Idiom, ...] = (
+    Idiom(
+        id="advancing-input-pointer",
+        name="Advancing input pointer -> drained Vec (or offset)",
+        tags=("buffer", "ownership"),
+        c_signals=(r"\*\s*\w*next\w*\s*\+\+", r"next_in\s*\+=", r"\bavail_in\b",
+                   r"\bread_buf\b"),
+        rust_model=(
+            "Model a consumed input buffer as an owned `Vec<u8>` drained from the "
+            "front (`drain(0..n)`) OR as `(Vec<u8>, offset: usize)` when the C reaches "
+            "backward into already-consumed bytes. Track `avail_in` as the remaining "
+            "count. Never keep a raw pointer."
+        ),
+        rationale="C consumes input by advancing a pointer; Rust owns the buffer.",
+        example="`next_in`/`avail_in`, `read_buf(strm, ...)` draining input into the window.",
+        caution=("If the function later reads bytes it already consumed (e.g. "
+                 "`next_in - w_size`), a plain drained Vec loses them — use the offset "
+                 "model. This is exactly why `deflate_stored` needs a design decision."),
+    ),
+    Idiom(
+        id="appending-output-pointer",
+        name="Appending output pointer -> pushed Vec",
+        tags=("buffer",),
+        c_signals=(r"\*\s*\w*put\w*\s*\+\+", r"next_out\s*\+=", r"\bavail_out\b"),
+        rust_model=(
+            "Model output as an owned `Vec<u8>` you `push`/`extend_from_slice` onto; "
+            "track `avail_out` as remaining space (`left`) and decrement as you emit. "
+            "`put - out` in C (start of this call's output) becomes a saved index into "
+            "the output Vec."
+        ),
+        rationale="C writes output through an advancing pointer; Rust appends to a Vec.",
+        example="`next_out`/`put`/`left` in the inflate driver and `flush_pending`.",
+    ),
+    Idiom(
+        id="pointer-into-shared-array",
+        name="Pointer into a shared array -> offset index",
+        tags=("buffer", "tables"),
+        c_signals=(r"=\s*\w+\s*;\s*/\*.*table", r"\+\+\s*\)\s*&\s*\(", r"code\s+FAR\s*\*"),
+        rust_model=(
+            "When several C pointers index into one backing array (and advance within "
+            "it), keep ONE `Vec<T>` and represent each pointer as a `usize` offset "
+            "(`lencode_off`, `distcode_off`, `next_off`). Index as `arr[off + i]`. If a "
+            "builder returns how many entries it used, thread that as the next offset."
+        ),
+        rationale="C aliases sub-tables as pointers into a shared buffer; Rust uses offsets.",
+        example=("`lencode`/`distcode`/`next` all point into `state->codes[ENOUGH]`; "
+                 "`inflate_table` advances the pointer by its `used` count."),
+    ),
+    Idiom(
+        id="pointer-aliasing-same-memory",
+        name="Two names for the same memory -> mem::take bridge",
+        tags=("ownership", "aliasing"),
+        c_signals=(r"\.dyn_tree", r"->\s*dyn_\wtree", r"stat_desc", r"tree_desc"),
+        rust_model=(
+            "If the coherent types split what C treats as one buffer under two names, "
+            "bridge them with `core::mem::take`: move the Vec into the field the callee "
+            "reads, call, then move it back. Do NOT clone (breaks the shared-mutation "
+            "semantics) and do NOT keep both live (borrow conflict)."
+        ),
+        rationale="C lets `desc.dyn_tree` and `s.dyn_ltree` be the same array; safe Rust can't.",
+        example="`_tr_flush_block` syncs `l_desc.dyn_tree` <-> `dyn_ltree` around `build_tree`.",
+        caution=("Miss this and freqs/lengths silently desync — the bug shows up as the "
+                 "wrong *block type* chosen (static vs dynamic), not a crash."),
+    ),
+    Idiom(
+        id="union-fields",
+        name="union -> separate fields (or enum)",
+        tags=("types",),
+        c_signals=(r"\bunion\b", r"\.fc\b", r"\.dl\b", r"Freq\b.*Code\b"),
+        rust_model=(
+            "Translate a C `union` used as two named views of the same slot into "
+            "SEPARATE Rust fields when the two views are never live at once for the same "
+            "logical value (e.g. freq-then-code), or a tagged `enum` when they genuinely "
+            "vary. Prefer separate fields for the frequency/code and dad/len pairs."
+        ),
+        rationale="C unions overlap storage; safe Rust models the two uses explicitly.",
+        example="`ct_data { union { fc {freq;code}; dl {dad;len} } }` -> freq/code/dad/len fields.",
+    ),
+    Idiom(
+        id="owner-holds-substate",
+        name="strm->state pointer -> owner holds sub-state by value",
+        tags=("ownership",),
+        c_signals=(r"->\s*state\b", r"internal_state", r"z_streamp"),
+        rust_model=(
+            "Model the stream/handle as OWNING its internal state by value "
+            "(`struct DeflateStream { state: DeflateState, next_in: Vec<u8>, ... }`). "
+            "Functions that touch stream buffers take `&mut Stream`; pure state "
+            "transforms take `&mut State`. This keeps a single, coherent ownership tree."
+        ),
+        rationale="C threads a `state*` off the stream; Rust makes ownership explicit and total.",
+        example="`DeflateStream` owns `DeflateState`; `InflateStream` owns `InflateState`.",
+    ),
+    Idiom(
+        id="goto-to-labeled-loop",
+        name="goto-based control flow -> labeled loop + break",
+        tags=("control-flow",),
+        c_signals=(r"\bgoto\s+\w+", r"^\s*\w+:\s*$", r"for\s*\(\s*;\s*;\s*\)\s*switch"),
+        rust_model=(
+            "Render a `for(;;) switch(state->mode)` machine as "
+            "`'label: loop { match state.mode { ... } }`. A `goto exit_label` (e.g. on "
+            "input underflow) becomes `break 'label`. State transitions set `mode` and "
+            "`continue`. Fall-through cases become explicit `mode = NEXT; continue;`. Put "
+            "the post-loop cleanup (C's label body) after the loop."
+        ),
+        rationale="C state machines lean on goto; safe Rust structures them with labeled loops.",
+        example="`inflate()`'s `goto inf_leave` on every `NEEDBITS` underflow -> `break 'inf_leave`.",
+        caution=("Every C `case` fall-through must be made explicit — a missing "
+                 "`mode = TYPE` arm silently drops into the wrong state."),
+    ),
+    Idiom(
+        id="bit-accumulator-macros",
+        name="Bit-accumulator macros -> inlined bit ops",
+        tags=("control-flow", "bits"),
+        c_signals=(r"\bNEEDBITS\b", r"\bDROPBITS\b", r"\bPULLBYTE\b", r"\bBITS\s*\("),
+        rust_model=(
+            "Inline the LSB-first bit accumulator: `hold: u64`, `bits: u32`. "
+            "NEEDBITS(n) -> `while bits < n { if have==0 { break 'exit } hold |= "
+            "(next_in[nin] as u64) << bits; nin+=1; have-=1; bits+=8; }`. "
+            "BITS(n) -> `hold & ((1<<n)-1)`. DROPBITS(n) -> `hold >>= n; bits -= n;`."
+        ),
+        rationale="C hides the bit buffer in macros with embedded gotos; Rust inlines them.",
+        example="inflate `TYPEDO`/`STORED`/`LEN` states; deflate `send_bits`.",
+    ),
+    Idiom(
+        id="reset-only-intended-fields",
+        name="Struct reset must zero only the intended fields",
+        tags=("gotcha", "state"),
+        c_signals=(r"init_block", r"=\s*\{\s*0\s*\}", r"zmemzero"),
+        rust_model=(
+            "When C zeroes a SUBSET of a struct (a few counters/arrays), translate that "
+            "literally — zero exactly those fields. Do NOT `*s = Default::default()` the "
+            "whole struct; that wipes status/config the caller still needs."
+        ),
+        rationale="A partial C reset is easy to over-translate into a total reset.",
+        example="`init_block` zeroes the tree frequencies only, not the whole `DeflateState`.",
+        caution="The whole-struct-wipe version passes any test that only checks the zeroed fields.",
+    ),
+    Idiom(
+        id="shift-width-overflow",
+        name="1 << i for wide i -> guard the shift width",
+        tags=("arithmetic", "gotcha"),
+        c_signals=(r"1\s*<<\s*\w+", r"1L\s*<<", r"1U\s*<<"),
+        rust_model=(
+            "A C `1 << i` where `i` can reach or exceed the type width is UB in C but "
+            "PANICS in Rust. Use a wider type, or a shifting mask advanced each iteration "
+            "(`mask <<= 1`) instead of recomputing `1 << i`, or mask `i` explicitly."
+        ),
+        rationale="Rust shift-overflow panics where C silently produced garbage.",
+        example="`detect_data_type` scanning bits 0..32 — `1 << i` overflowed at i>=32.",
+    ),
+    Idiom(
+        id="unsigned-wrap-sentinel",
+        name="Unsigned-wrap / sentinel values -> explicit signed handling",
+        tags=("arithmetic",),
+        c_signals=(r"0xffffffff", r"0xffff\b", r"\(unsigned\s+long\)", r"combine"),
+        rust_model=(
+            "Where C relies on unsigned wraparound or a max-value sentinel, make it "
+            "explicit: cast to the signed type to test a negative encoding, return the "
+            "sentinel deliberately, and use `wrapping_add`/`wrapping_mul` for intended "
+            "overflow. Match the C width exactly (`as u32` truncation included)."
+        ),
+        rationale="Implicit C wrap/sentinels become explicit, width-exact Rust.",
+        example="`adler32_combine` negative-length sentinel: read len2 as signed, return 0xFFFFFFFF.",
+    ),
+    Idiom(
+        id="stale-local-after-callback",
+        name="Locals go stale after a call that mutates shared state",
+        tags=("gotcha", "state"),
+        c_signals=(r"fill_window", r"lookahead", r"strstart"),
+        rust_model=(
+            "If a helper mutates fields you cached in locals, DON'T keep local copies "
+            "across the call — read `strm.state.*` directly afterward, and pass only "
+            "`&mut` temporaries as call arguments. Re-load anything the callee can touch."
+        ),
+        rationale="C code often re-reads struct fields; a naive port caches them and desyncs.",
+        example="`deflate_slow` cached `strstart`/`lookahead` that `fill_window` had moved.",
+        caution="Symptom is an underflow/`- 1` panic several statements later, far from the cause.",
+    ),
+    Idiom(
+        id="const-config-table",
+        name="Static config/lookup tables -> const arrays",
+        tags=("tables",),
+        c_signals=(r"static\s+const\s+\w+\s+\w+\s*\[", r"configuration_table", r"_tree\s*\["),
+        rust_model=(
+            "Emit C `static const` tables as Rust `const` arrays with the exact same "
+            "values and order. For per-level parameter tables use a tuple/struct array; "
+            "for Huffman trees emit the precomputed entries verbatim."
+        ),
+        rationale="Lookup tables must be reproduced byte-identical, not regenerated approximately.",
+        example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
+    ),
+    Idiom(
+        id="complete-huffman-code",
+        name="Fixed Huffman tables must form a *complete* code",
+        tags=("tables", "gotcha", "bits"),
+        c_signals=(r"inflate_fixed", r"fixedtables", r"lenfix", r"distfix"),
+        rust_model=(
+            "When building fixed/static Huffman tables at runtime, supply the FULL symbol "
+            "count the code was defined over, including reserved symbols, so the code is "
+            "complete (Kraft sum == 1). Under-counting yields an 'incomplete code' error."
+        ),
+        rationale="An incomplete code table is rejected by the table builder.",
+        example="Fixed distance table needs 32 length-5 codes (not 30) to be complete.",
+    ),
+)
+
+
+def idiom_by_id(idiom_id: str) -> Idiom | None:
+    return next((i for i in IDIOMS if i.id == idiom_id), None)
+
+
+def match_idioms(c_source: str) -> list[Idiom]:
+    """Return the idioms whose C-signals fire on this source, catalog order."""
+    return [i for i in IDIOMS if i.matches(c_source)]
+
+
+def render_prompt_hints(idioms: "list[Idiom] | tuple[Idiom, ...] | None" = None) -> str:
+    """Render a concise, injectable guidance block for the given idioms.
+
+    Pass the result of `match_idioms(c_source)` to surface only relevant patterns;
+    pass None to render the whole catalog.
+    """
+    items = list(IDIOMS if idioms is None else idioms)
+    if not items:
+        return ""
+    header = (
+        "## C->safe-Rust idiom patterns (apply where they fit)\n"
+        f"<!-- catalog {CATALOG_VERSION} -->\n"
+        "These recurring C constructs have known safe-Rust models. Follow them "
+        "unless the specific code demands otherwise:\n"
+    )
+    return header + "\n\n".join(i.prompt_block() for i in items) + "\n"

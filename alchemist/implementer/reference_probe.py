@@ -193,7 +193,120 @@ def extract_c_function_body(source_path: Path, function_name: str) -> str | None
                 return result
         return None
 
-    return walk(tree.root_node)
+    result = walk(tree.root_node)
+    if result is not None:
+        return result
+    # Fallback: tree-sitter can choke on huge, macro-heavy functions (e.g. zlib's
+    # inflate(), whose for(;;)switch + embedded #ifdef blocks produce an ERROR
+    # node that corrupts extraction of it and every function after it). A
+    # brace-matching text scan recovers these. See docs/PATH_TO_AUTONOMY.md (WS1).
+    return _extract_by_brace_match(
+        source.decode("utf-8", errors="replace"), function_name
+    )
+
+
+def _blank_comments_strings(text: str) -> str:
+    """Return a same-length copy with comment/string/char-literal *contents* blanked.
+
+    Positions and length are preserved (blanked chars become spaces, newlines
+    kept), so indices found in the blanked copy map 1:1 onto the original. This
+    lets boundary/brace scanning ignore delimiters that live inside comments or
+    literals (zlib's pre-`inflate` doc comment is full of `;` and `}`).
+    """
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        two = text[i : i + 2]
+        if two == "//":
+            j = text.find("\n", i)
+            j = n if j == -1 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif two == "/*":
+            j = text.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        elif text[i] in ('"', "'"):
+            q = text[i]
+            out[i] = " "
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    out[i] = " "
+                    if i + 1 < n:
+                        out[i + 1] = " "
+                    i += 2
+                    continue
+                if text[i] == q:
+                    out[i] = " "
+                    i += 1
+                    break
+                out[i] = " "
+                i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _extract_by_brace_match(source_text: str, function_name: str) -> str | None:
+    """Recover a C function definition by paren+brace matching when the parser fails.
+
+    Finds `name( ... ) {` (a definition, not a call — a call is followed by `;`
+    or an operator, not `{`) and returns from the signature start through the
+    body's matching close brace. All scanning runs on a comment/string-blanked
+    copy so literal delimiters can't throw off the boundaries; the returned text
+    is sliced from the original.
+    """
+    import re
+
+    clean = _blank_comments_strings(source_text)
+    n = len(clean)
+
+    def _match(open_idx: int, opener: str, closer: str) -> int | None:
+        depth = 0
+        i = open_idx
+        while i < n:
+            c = clean[i]
+            if c == opener:
+                depth += 1
+            elif c == closer:
+                depth -= 1
+                if depth == 0:
+                    return i
+            i += 1
+        return None
+
+    for m in re.finditer(r"\b" + re.escape(function_name) + r"\s*\(", clean):
+        paren_open = clean.index("(", m.start())
+        paren_close = _match(paren_open, "(", ")")
+        if paren_close is None:
+            continue
+        k = paren_close + 1
+        while k < n and clean[k] in " \t\r\n":
+            k += 1
+        if k >= n or clean[k] != "{":
+            continue  # a call or declaration, not a definition
+        body_close = _match(k, "{", "}")
+        if body_close is None:
+            continue
+        # Signature start: walk back over the return-type/qualifier tokens
+        # (identifiers, `*`, whitespace) on the ORIGINAL text. Anything else — a
+        # `;`/`}`/`)` from the previous statement, or the `/` closing a preceding
+        # comment — is the boundary. Done on source_text (not `clean`) so a blanked
+        # comment's spaces don't let the walk slide into unrelated prior tokens.
+        sig_start = m.start()
+        while sig_start > 0:
+            ch = source_text[sig_start - 1]
+            if ch.isalnum() or ch in "_* \t\r\n":
+                sig_start -= 1
+            else:
+                break
+        return source_text[sig_start : body_close + 1].strip()
+    return None
 
 
 def _find_identifier(node):
