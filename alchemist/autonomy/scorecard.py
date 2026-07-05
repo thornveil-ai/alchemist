@@ -81,6 +81,35 @@ def _count_fns_in_rust(paths: list[Path]) -> int:
     return total
 
 
+_TEST_CUT_RE = re.compile(r"#\[cfg\(test\)\]|\nmod tests\b")
+_FN_NAME_RE = re.compile(
+    r"^\s*(?:pub(?:\(crate\))?\s+)?(?:unsafe\s+)?fn\s+(\w+)\s*[<(]", re.MULTILINE
+)
+
+
+def _human_ported_functions(paths: list[Path]) -> set[str]:
+    """Unique IMPLEMENTATION function names across the snapshot files.
+
+    Excludes `#[cfg(test)]` modules and `test_*` fns (a test is not a translated
+    body), and dedups across the overlapping hardport/wip/verified snapshot dirs
+    (the same fn is backed up in several places). This is the honest count of
+    distinct human-ported bodies — the earlier per-file total double-counted
+    tests and duplicate snapshots.
+    """
+    fns: set[str] = set()
+    for p in paths:
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = _TEST_CUT_RE.search(text)
+        body = text[: m.start()] if m else text
+        for name in _FN_NAME_RE.findall(body):
+            if not name.startswith("test_"):
+                fns.add(name)
+    return fns
+
+
 def _count_shim_runners(shim_dir: Path) -> tuple[int, int]:
     """Return (distinct shim fns, files scanned)."""
     names: set[str] = set()
@@ -135,7 +164,14 @@ def build_scorecard(repo_root: Path | None = None, subject: str = "zlib") -> Sco
             ):
                 hardport_rs.extend(d.rglob("*.rs"))
     n_hardport_files = len(hardport_rs)
-    n_hardport_fns = _count_fns_in_rust(hardport_rs)
+    # Honest debt: unique IMPLEMENTATION functions (tests excluded, snapshots
+    # deduped), minus those the retirement ledger proves autonomously reproducible.
+    ported_fns = _human_ported_functions(hardport_rs)
+    from alchemist.autonomy.ledger import Ledger
+    ledger = Ledger.load()
+    retired = {f for f in ported_fns if f in ledger.retired_fns()}
+    n_open_bodies = len(ported_fns - retired)
+    n_retired_bodies = len(retired)
 
     # --- WS3: curated reference impls (JSON) ---
     n_refs = 0
@@ -168,13 +204,24 @@ def build_scorecard(repo_root: Path | None = None, subject: str = "zlib") -> Sco
         ),
         DebtCategory(
             key="hardported_bodies", workstream="WS3/WS4",
-            title="Human-ported Rust function bodies",
-            count=n_hardport_fns, unit="fns",
-            detail=f"Across {n_hardport_files} .rs files (hardports + wip + verified snapshots). "
-                   f"These were written/repaired by a human via inject-C-and-iterate, not "
-                   f"produced autonomously by the model+oracle loop.",
+            title="Human-ported Rust function bodies (unique, tests excluded)",
+            count=n_open_bodies, unit="fns",
+            detail=f"Distinct implementation functions across {n_hardport_files} snapshot "
+                   f"files still needing a human port. Deduped across hardport/wip/verified "
+                   f"dirs and excluding test fns (the earlier per-file count double-counted "
+                   f"both). {n_retired_bodies} already retired by the WS4 regen loop.",
             checklist="Model produces + the WS4 diagnose-and-repair loop fixes these with no "
                       "human hand-porting or diagnosis. This is the core M1 debt.",
+        ),
+        DebtCategory(
+            key="regen_retired", workstream="WS4",
+            title="Functions proven autonomously reproducible (regen loop)",
+            count=n_retired_bodies, unit="fns",
+            detail="Body stubbed -> model refilled from the C reference -> differential tests "
+                   "green, no human. Recorded in the retirement ledger with proof metadata.",
+            automated=True,
+            checklist="(in progress) Drive the open human-ported count down by regenerating "
+                      "each function autonomously.",
         ),
         DebtCategory(
             key="curated_refs", workstream="WS3",
