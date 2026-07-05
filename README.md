@@ -45,6 +45,8 @@ Why it counts: the differential oracle didn't just translate — it **caught ~9 
 
 **→ Read the full write-up, including honest limitations: [docs/zlib_case_study.md](docs/zlib_case_study.md)**
 
+**Next mountain — any C library, fully automatic: [docs/PATH_TO_AUTONOMY.md](docs/PATH_TO_AUTONOMY.md)** (the charted roadmap).
+
 ---
 
 ## Table of Contents
