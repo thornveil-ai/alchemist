@@ -1600,7 +1600,7 @@ class TDDGenerator:
                 ZLIB_SHIM_OBSERVER_BINDINGS, ZLIB_INFLATE_SHIM_BINDINGS,
                 locate_zlib_shim, locate_zlib_inflate_shim, _load_shim,
                 fuzz_with_shim, fuzz_pure_shim, fuzz_observer_shim,
-                TREE_BUILDER_FUZZERS,
+                TREE_BUILDER_FUZZERS, INFLATE_FUZZERS,
             )
             dll = load_zlib_dll(dll_path)
             # Load the C shim DLL if present — its C-reference-based
@@ -1740,6 +1740,18 @@ class TDDGenerator:
                     )
                     _accept(mod, alg, vectors,
                             oracle_tag_for_file("shim", shim_path))
+                    continue
+                # Dedicated inflate fuzzers that also need the deflate shim to
+                # synthesize valid Huffman inputs (inflate_table).
+                if (
+                    inflate_shim_dll is not None
+                    and shim_dll is not None
+                    and alg.name in INFLATE_FUZZERS
+                ):
+                    vectors = INFLATE_FUZZERS[alg.name](
+                        inflate_shim_dll, shim_dll, alg)
+                    _accept(mod, alg, vectors,
+                            oracle_tag_for_file("shim", inflate_shim_path))
                     continue
                 # C-shim state-mutator path (inflate DLL) — separate DLL
                 # because inflate.h / deflate.h can't share a CU.

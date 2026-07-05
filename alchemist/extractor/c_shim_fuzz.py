@@ -749,6 +749,132 @@ def fuzz_build_bl_tree(dll, alg, *, count: int = 10, seed: int = 0x42_42_4C_54):
     return vectors
 
 
+def _te_lit(code: int | None, length: int | None) -> str:
+    """A `zlib_types::TreeElement` literal with the given code/len fields."""
+    parts = []
+    if code is not None:
+        parts.append(f"code:{code}")
+    if length is not None:
+        parts.append(f"len:{length}")
+    return "zlib_types::TreeElement{" + ",".join(parts) + ",..Default::default()}"
+
+
+def fuzz_compress_block(dll, alg, *, count: int = 12, seed: int = 0x43_42_4C_4B):
+    """compress_block(s, ltree, dtree): replays s.sym_buf (3-byte-per-symbol,
+    dist_lo/dist_hi/lc) through the literal+distance Huffman trees, emitting
+    the bitstream to s.pending. Builds valid code+len trees via build_tree,
+    fuzzes a literal/match symbol mix, and asserts the emitted pending bytes,
+    bi_buf and bi_valid against the compiled-C shim."""
+    def us(n, v):
+        return (ctypes.c_ushort * n)(*v)
+
+    def build(which, nsym, s):
+        rng = random.Random(s)
+        dll.shim_set_tree_fc(which, us(nsym, [rng.randint(0, 80) for _ in range(nsym)]), nsym)
+        dll.shim_run_build_tree(which)
+        c = us(nsym, [0] * nsym); dll.shim_get_tree_fc(which, c, nsym)
+        l = us(nsym, [0] * nsym); dll.shim_get_tree_dl(which, l, nsym)
+        return list(c), list(l)
+
+    dll.shim_get_bi_buf.restype = ctypes.c_ushort
+    dll.shim_get_bi_valid.restype = ctypes.c_int
+    dll.shim_get_pending_len.restype = ctypes.c_uint
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        rng = random.Random(seed + i * 97)
+        dll.shim_reset()
+        lc, ll = build(0, 286, seed + i * 7)
+        dc, dl = build(1, 30, seed + i * 11)
+        dll.shim_set_tree_fc(0, us(286, lc), 286); dll.shim_set_tree_dl(0, us(286, ll), 286)
+        dll.shim_set_tree_fc(1, us(30, dc), 30); dll.shim_set_tree_dl(1, us(30, dl), 30)
+        n = rng.randint(5, 40); symbuf = []
+        for _ in range(n):
+            if rng.random() < 0.5:
+                lcv, dist = rng.randint(0, 255), 0
+            else:
+                lcv, dist = rng.randint(0, 255), rng.randint(1, 4096)
+            symbuf += [dist & 0xff, (dist >> 8) & 0xff, lcv]
+        dll.shim_set_sym_buf((ctypes.c_ubyte * len(symbuf))(*symbuf), len(symbuf))
+        dll.shim_set_bi_buf(0); dll.shim_set_bi_valid(0)
+        dll.shim_set_pending((ctypes.c_ubyte * 1)(0), 0)
+        dll.shim_run_compress_block()
+        pl = dll.shim_get_pending_len()
+        pb = (ctypes.c_ubyte * pl)(); dll.shim_get_pending(pb, pl)
+        bib = dll.shim_get_bi_buf(); biv = dll.shim_get_bi_valid()
+        ltree = "vec![" + ", ".join(_te_lit(lc[j], ll[j]) for j in range(286)) + "]"
+        dtree = "vec![" + ", ".join(_te_lit(dc[j], dl[j]) for j in range(30)) + "]"
+        sb = "vec![" + ", ".join(str(b) for b in symbuf) + "]"
+        pend = "vec![" + ", ".join(str(pb[j]) for j in range(pl)) + "]"
+        body = (
+            f"let ltree = {ltree};\nlet dtree = {dtree};\n"
+            f"let mut s = zlib_types::DeflateState::default();\n"
+            f"s.sym_buf = {sb}; s.sym_next = {len(symbuf)}; s.bi_buf = 0; s.bi_valid = 0; s.pending = vec![];\n"
+            f"super::compress_block(&mut s, &ltree, &dtree);\n"
+            f'assert_eq!(s.pending, {pend}, "compress_block pending {i}");\n'
+            f'assert_eq!(s.bi_buf, {bib}u16, "compress_block bi_buf {i}");\n'
+            f'assert_eq!(s.bi_valid, {biv}i32, "compress_block bi_valid {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"compress_block_shim_{i}",
+            source="C reference via shim: shim_run_compress_block",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vectors
+
+
+def fuzz_send_all_trees(dll, alg, *, count: int = 10, seed: int = 0x53_41_54_52):
+    """send_all_trees(s, lcodes, dcodes, blcodes): serializes the three trees'
+    bit lengths. Builds the bl_tree via build_bl_tree from fuzzed l/d lengths,
+    sets the 0xffff send_tree sentinel, runs the C shim, and asserts the
+    emitted pending bytes, bi_buf and bi_valid."""
+    def us(n, v):
+        return (ctypes.c_ushort * n)(*v)
+
+    dll.shim_get_bi_buf.restype = ctypes.c_ushort
+    dll.shim_get_bi_valid.restype = ctypes.c_int
+    dll.shim_get_pending_len.restype = ctypes.c_uint
+    dll.shim_run_build_bl_tree.restype = ctypes.c_int
+    vectors: list[SpecTestVector] = []
+    for i in range(count):
+        rng = random.Random(seed + i * 131)
+        dll.shim_reset()
+        L, Dn = 286, 30
+        ll = [rng.randint(0, 15) for _ in range(L)]; ll[-1] = rng.randint(1, 15)
+        dln = [rng.randint(0, 15) for _ in range(Dn)]; dln[-1] = rng.randint(1, 15)
+        dll.shim_set_tree_dl(0, us(L, ll), L); dll.shim_set_tree_dl(1, us(Dn, dln), Dn)
+        dll.shim_set_desc_max_code(0, ctypes.c_int(L - 1))
+        dll.shim_set_desc_max_code(1, ctypes.c_int(Dn - 1))
+        mbi = dll.shim_run_build_bl_tree()
+        blc = us(19, [0] * 19); dll.shim_get_tree_fc(2, blc, 19)
+        bll = us(19, [0] * 19); dll.shim_get_tree_dl(2, bll, 19)
+        lcodes, dcodes, blcodes = L, Dn, mbi + 1
+        dll.shim_set_bi_buf(0); dll.shim_set_bi_valid(0)
+        dll.shim_set_pending((ctypes.c_ubyte * 1)(0), 0)
+        dll.shim_run_send_all_trees(ctypes.c_int(lcodes), ctypes.c_int(dcodes), ctypes.c_int(blcodes))
+        pl = dll.shim_get_pending_len()
+        pb = (ctypes.c_ubyte * pl)(); dll.shim_get_pending(pb, pl)
+        bib = dll.shim_get_bi_buf(); biv = dll.shim_get_bi_valid()
+        bltree = "vec![" + ", ".join(_te_lit(blc[j], bll[j]) for j in range(19)) + "]"
+        # +1 sentinel element (len 0xffff) — the C send_tree lookahead reads
+        # tree[max_code+1].len and expects the sentinel there.
+        ltree = "vec![" + ", ".join(_te_lit(None, ll[j]) for j in range(L)) + ", " + _te_lit(None, 65535) + "]"
+        dtree = "vec![" + ", ".join(_te_lit(None, dln[j]) for j in range(Dn)) + ", " + _te_lit(None, 65535) + "]"
+        pend = "vec![" + ", ".join(str(pb[j]) for j in range(pl)) + "]"
+        body = (
+            f"let mut s = zlib_types::DeflateState::default();\n"
+            f"s.bl_tree = {bltree};\ns.dyn_ltree = {ltree};\ns.dyn_dtree = {dtree};\n"
+            f"s.bi_buf = 0; s.bi_valid = 0; s.pending = vec![];\n"
+            f"super::send_all_trees(&mut s, {lcodes}usize, {dcodes}usize, {blcodes}usize);\n"
+            f'assert_eq!(s.pending, {pend}, "send_all_trees pending {i}");\n'
+            f'assert_eq!(s.bi_buf, {bib}u16, "send_all_trees bi_buf {i}");\n'
+            f'assert_eq!(s.bi_valid, {biv}i32, "send_all_trees bi_valid {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"send_all_trees_shim_{i}",
+            source="C reference via shim: shim_run_send_all_trees",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vectors
+
+
 # Registry of dedicated tree-builder fuzzers, keyed by algorithm name.
 TREE_BUILDER_FUZZERS: dict[str, Callable] = {
     "pqdownheap": fuzz_pqdownheap,
@@ -756,6 +882,67 @@ TREE_BUILDER_FUZZERS: dict[str, Callable] = {
     "gen_bitlen": fuzz_gen_bitlen,
     "build_tree": fuzz_build_tree,
     "build_bl_tree": fuzz_build_bl_tree,
+    "compress_block": fuzz_compress_block,
+    "send_all_trees": fuzz_send_all_trees,
+}
+
+
+def fuzz_inflate_table(inflate_dll, deflate_dll, alg, *, seed: int = 0x49_54_42_4C):
+    """inflate_table(type, lens, codes, table, bits, work): builds a canonical
+    Huffman decode table. Valid complete code lengths are generated via the
+    deflate shim's build_tree (feeding fuzzed frequencies), then run through
+    the inflate shim; asserts the produced table (op,bits,val up to the used
+    count), *bits, and Ok result. Covers LENS/DISTS/CODES."""
+    ENOUGH = 1444
+    inflate_dll.shim_run_inflate_table.restype = ctypes.c_int
+
+    def us(n, v):
+        return (ctypes.c_ushort * n)(*v)
+
+    def valid_lens(nsym, s):
+        rng = random.Random(s)
+        deflate_dll.shim_reset()
+        deflate_dll.shim_set_tree_fc(0, us(nsym, [rng.randint(0, 50) for _ in range(nsym)]), nsym)
+        deflate_dll.shim_run_build_tree(0)
+        lens = us(nsym, [0] * nsym); deflate_dll.shim_get_tree_dl(0, lens, nsym)
+        return list(lens)
+
+    vectors: list[SpecTestVector] = []
+    plan = [(1, "Lens", 286, 9), (2, "Dists", 30, 6), (0, "Codes", 19, 7)] * 3
+    for i, (t, tname, nsym, root) in enumerate(plan):
+        lens = valid_lens(nsym, seed + i * 17)
+        bo = ctypes.c_uint(); used = ctypes.c_uint()
+        op = (ctypes.c_ubyte * ENOUGH)(); bt = (ctypes.c_ubyte * ENOUGH)()
+        val = (ctypes.c_ushort * ENOUGH)()
+        inflate_dll.shim_run_inflate_table(
+            t, us(nsym, lens), nsym, root,
+            ctypes.byref(bo), ctypes.byref(used), op, bt, val)
+        u = used.value
+        lens_lit = "vec![" + ", ".join(f"{x}u16" for x in lens) + "]"
+        tbl = "vec![" + ", ".join(f"({op[j]},{bt[j]},{val[j]})" for j in range(u)) + "]"
+        body = (
+            f"let lens: Vec<u16> = {lens_lit};\n"
+            f"let mut table = vec![zlib_types::CodeEntry::default(); {ENOUGH}];\n"
+            f"let mut bits: u32 = {root};\n"
+            f"let mut work = vec![0u16; 320];\n"
+            f"let r = super::inflate_table(zlib_types::CodeType::{tname}, &lens, "
+            f"{nsym}usize, &mut table, &mut bits, &mut work);\n"
+            f'assert!(r.is_ok(), "inflate_table ret {i}");\n'
+            f'assert_eq!(bits, {bo.value}u32, "inflate_table bits {i}");\n'
+            f"let got: Vec<(u8,u8,u16)> = table[..{u}].iter().map(|e|(e.op,e.bits,e.val)).collect();\n"
+            f'assert_eq!(got, {tbl}, "inflate_table table {i}");'
+        )
+        vectors.append(SpecTestVector(
+            description=f"inflate_table_shim_{i}",
+            source="C reference via inflate shim: shim_run_inflate_table",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vectors
+
+
+# Fuzzers that need BOTH the inflate shim and the deflate shim (the latter to
+# synthesize valid Huffman inputs). Keyed by algorithm name.
+INFLATE_FUZZERS: dict[str, Callable] = {
+    "inflate_table": fuzz_inflate_table,
 }
 
 
