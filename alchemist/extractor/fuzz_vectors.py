@@ -569,7 +569,12 @@ def _adler32_combine_pure_ref(data: bytes) -> int:
     padded = bytes(data[:16].ljust(16, b"\x00"))
     adler1 = int.from_bytes(padded[0:4], "little")
     adler2 = int.from_bytes(padded[4:8], "little")
-    len2 = int.from_bytes(padded[8:16], "little")
+    # len2 is z_off64_t (SIGNED i64) in the C. For a negative length the C
+    # returns 0xffffffff as a debugging clue — model that faithfully, else
+    # high-bit-set inputs diverge from the signed Rust `len2: i64`.
+    len2 = int.from_bytes(padded[8:16], "little", signed=True)
+    if len2 < 0:
+        return 0xFFFFFFFF
     BASE = 65521
     rem = len2 % BASE
     sum1_a = adler1 & 0xFFFF
