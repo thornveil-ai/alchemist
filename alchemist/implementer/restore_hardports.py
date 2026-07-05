@@ -141,6 +141,22 @@ def restore_hardports(
     return report
 
 
+def _terminating_semi(source: str, start: int) -> int:
+    """Index of the `;` that ends a const/static declaration beginning at
+    `start`, skipping any `;` nested inside `[]`/`()`/`{}` (e.g. the `;` in a
+    `[u64; 256]` array type). Returns -1 if none found."""
+    depth = 0
+    for i in range(start, len(source)):
+        c = source[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == ";" and depth == 0:
+            return i
+    return -1
+
+
 def _dedup_types(source: str) -> str:
     """Remove duplicate top-level `pub struct/enum/const/static NAME`
     definitions, keeping the first occurrence of each name. A hardport may
@@ -158,10 +174,10 @@ def _dedup_types(source: str) -> str:
             name = m.group(2)
             if name in seen:
                 # find and cut this whole definition (from the attrs/pub to
-                # its matching close brace, or to `;` for a unit struct)
+                # its matching close brace, or to the terminating `;`)
                 start = m.start(1) if out[m.start()] == "\n" else m.start()
                 brace = out.find("{", m.start(2))
-                semi = out.find(";", m.start(2))
+                semi = _terminating_semi(out, m.start(2))
                 if brace == -1 or (semi != -1 and semi < brace):
                     end = semi + 1
                 else:
