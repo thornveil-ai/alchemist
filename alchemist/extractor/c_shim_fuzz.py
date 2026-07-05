@@ -677,9 +677,12 @@ def fuzz_build_tree(dll, alg, *, count: int = 10, seed: int = 0x42_54_52_45):
         # slot still holds its summed Freq, not a code. Compare that range.
         ncmp = mc + 1
         tree_lit = _tree_lit({"freq": freq}, _BL_CODES)
-        heap_lit = "vec![" + ", ".join(f"{h}i32" for h in list(heap)) + "]"
         code_expect = "vec![" + ", ".join(f"{c}u16" for c in list(code)[:ncmp]) + "]"
         len_expect = "vec![" + ", ".join(f"{l}u16" for l in list(length)[:ncmp]) + "]"
+        # Assert the meaningful outputs: the Huffman symbol table (code+len
+        # over [0..=max_code]), the block cost opt_len, and max_code. The
+        # heap array is internal scratch — asserting its exact layout would
+        # over-constrain the implementation.
         body = (
             f"let mut state = zlib_types::DeflateState::default();\n"
             f"let mut desc = zlib_types::TreeDesc {{ dyn_tree: {tree_lit}, "
@@ -690,7 +693,6 @@ def fuzz_build_tree(dll, alg, *, count: int = 10, seed: int = 0x42_54_52_45):
             f'assert_eq!(desc.max_code, {mc}i32, "build_tree max_code {i}");\n'
             f'assert_eq!(codes, {code_expect}, "build_tree code {i}");\n'
             f'assert_eq!(lens, {len_expect}, "build_tree len {i}");\n'
-            f'assert_eq!(state.heap, {heap_lit}, "build_tree heap {i}");\n'
             f'assert_eq!(state.opt_len, {opt}u64, "build_tree opt_len {i}");'
         )
         vectors.append(SpecTestVector(
