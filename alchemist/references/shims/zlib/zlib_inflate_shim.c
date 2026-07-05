@@ -111,3 +111,27 @@ EXPORT int shim_run_inflateStateCheck(void) {
 EXPORT int shim_run_inflatePrime(int bits, int value) {
     return inflatePrime(&g_strm, bits, value);
 }
+
+/* ---------- inflate_table (inftrees.c) differential runner ----------
+   Builds a canonical-Huffman decode table from code lengths. The C
+   advances *table across root + sub-tables; used = how far it advanced.
+   Zero the table first so unused entries compare equal to a zeroed Rust
+   Vec<CodeEntry>. */
+static code g_itbl[ENOUGH];
+static unsigned short g_iwork[288];
+static unsigned short g_ilens[320];
+EXPORT int shim_run_inflate_table(int type, const unsigned short *lens,
+        unsigned codes, unsigned bits_in, unsigned *bits_out, unsigned *used_out,
+        unsigned char *op_out, unsigned char *bt_out, unsigned short *val_out) {
+    memset(g_itbl, 0, sizeof(g_itbl));
+    for (unsigned i = 0; i < codes && i < 320; i++) g_ilens[i] = lens[i];
+    unsigned b = bits_in;
+    code *tbl = g_itbl;
+    int ret = inflate_table((codetype)type, g_ilens, codes, &tbl, &b, g_iwork);
+    *bits_out = b;
+    *used_out = (unsigned)(tbl - g_itbl);
+    for (unsigned i = 0; i < ENOUGH; i++) {
+        op_out[i] = g_itbl[i].op; bt_out[i] = g_itbl[i].bits; val_out[i] = g_itbl[i].val;
+    }
+    return ret;
+}
