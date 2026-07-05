@@ -148,7 +148,10 @@ def test_state_fields_in_rust_definition_are_unified():
     assert "bl_tree: Vec<TreeElement>" in rd
     assert "Vec<(u16" not in rd            # no tuple leak left
     assert "heap: Vec<i32>" in rd          # non-tree field untouched
-    assert rep.field_rewrites == 3
+    # 3 tuple→TreeElement rewrites + 2 sym_buf/sym_next additions (the
+    # extractor-missed active-C fields).
+    assert rep.field_rewrites == 5
+    assert "pub sym_buf: Vec<u8>," in rd
 
 
 def test_duplicate_struct_is_dropped_and_references_rewritten():
