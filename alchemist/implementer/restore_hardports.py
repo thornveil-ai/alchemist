@@ -77,9 +77,32 @@ def restore_hardports(
     report = RestoreReport([], [], [])
     if not hp_root.exists():
         return report
+
+    # Module hardports: `<crate>/_modules/<mod>.rs` is a whole verified module
+    # (e.g. a fully-green trees.rs, or an extra consts module like
+    # static_tables.rs). Copy it over the crate's module file and ensure it is
+    # declared in lib.rs. Restored BEFORE per-fn hardports so a whole-module
+    # override wins, and function hardports for OTHER modules still apply.
+    for hp in sorted(hp_root.glob("*/_modules/*.rs")):
+        crate = hp.relative_to(hp_root).parts[0]
+        mod = hp.stem
+        src_dir = workspace_dir / crate / "src"
+        if not src_dir.exists():
+            report.missing_module.append(f"{crate}::{mod}")
+            continue
+        (src_dir / f"{mod}.rs").write_text(
+            hp.read_text(encoding="utf-8"), encoding="utf-8")
+        lib = src_dir / "lib.rs"
+        if lib.exists():
+            lt = lib.read_text(encoding="utf-8")
+            if re.search(rf"\bmod {re.escape(mod)}\b", lt) is None:
+                lt = f"pub mod {mod};\n" + lt
+                lib.write_text(lt, encoding="utf-8")
+        report.restored.append(f"{crate}::{mod} [module]")
+
     for hp in sorted(hp_root.rglob("*.rs")):
         rel = hp.relative_to(hp_root)
-        if len(rel.parts) != 3:
+        if len(rel.parts) != 3 or rel.parts[1] == "_modules":
             continue
         crate, module, fn_file = rel.parts
         fn_name = fn_file[:-3]  # strip .rs
