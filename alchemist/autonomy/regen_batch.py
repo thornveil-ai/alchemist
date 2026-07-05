@@ -87,28 +87,40 @@ def regen_function(
     llm,
     env: dict | None = None,
     max_attempts: int = 3,
+    isolate: bool = True,
     on_event: Callable[[str], None] | None = None,
 ) -> tuple[str, int]:
     """Prove `fn` autonomously reproducible. Returns (outcome, attempts).
 
-    outcome in {"retired", "resisted", "no-stub", "already-broken"}.
-    Always restores the pristine verified module afterward.
+    outcome in {"retired", "resisted", "no-stub", "already-broken",
+    "untestable-baseline"}. Always restores the pristine verified module.
+
+    `isolate=True` runs only the fn's own tests (right when a crate has
+    per-function differential vectors + unrelated pre-existing failures).
+    `isolate=False` runs the whole crate (right for a baseline-green crate whose
+    coverage is integration/e2e, e.g. inflate's round-trip tests).
     """
     original = module_path.read_text(encoding="utf-8")
+    test_filter = (fn.lstrip("_") or fn) if isolate else ""
+    # Baseline: the fn's own tests must be GREEN on the verified canon, else its
+    # tests are themselves broken and reproducing the fn can't prove anything.
+    base_ok, _ = run_crate_tests(workspace_dir, crate_name, env=env, test_filter=test_filter)
+    if not base_ok:
+        return "untestable-baseline", 0
     stubbed = stub_fn(original, fn)
     if stubbed is None:
         return "no-stub", 0
     module_path.write_text(stubbed, encoding="utf-8")
     try:
-        # Sanity: the stub must actually break the crate (else the test doesn't
-        # cover this fn and "reproducing" it proves nothing).
-        passed_stub, _ = run_crate_tests(workspace_dir, crate_name, env=env)
+        # Sanity: the stub must break THIS fn's tests (else it's uncovered).
+        passed_stub, _ = run_crate_tests(workspace_dir, crate_name, env=env,
+                                         test_filter=test_filter)
         if passed_stub:
             return "already-broken", 0  # no test exercises this fn — can't prove
         result = repair_crate(
             workspace_dir=workspace_dir, crate_name=crate_name, module_path=module_path,
             c_source_path=c_source_path, candidates=[fn], llm=llm, env=env,
-            max_attempts=max_attempts, on_event=on_event,
+            max_attempts=max_attempts, test_filter=test_filter, on_event=on_event,
         )
         return ("retired" if result.status == "fixed" else "resisted", result.attempts)
     finally:
@@ -126,6 +138,7 @@ def regen_module(
     functions: Sequence[str] | None = None,
     env: dict | None = None,
     max_attempts: int = 3,
+    isolate: bool = True,
     on_event: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Regenerate every impl function in a module, updating the ledger as it goes."""
@@ -141,7 +154,7 @@ def regen_module(
         outcome, attempts = regen_function(
             workspace_dir=workspace_dir, crate_name=crate_name, module_path=module_path,
             c_source_path=c_source_path, fn=fn, llm=llm, env=env,
-            max_attempts=max_attempts, on_event=on_event,
+            max_attempts=max_attempts, isolate=isolate, on_event=on_event,
         )
         results[fn] = outcome
         if outcome == "retired":

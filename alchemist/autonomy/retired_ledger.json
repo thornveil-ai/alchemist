@@ -1,0 +1,67 @@
+{
+  "retired": {
+    "zlib-checksum::adler32_combine_": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "adler32_combine_",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::adler32_z": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "adler32_z",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::byte_swap": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "byte_swap",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::crc32": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "crc32",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::crc32_combine_op": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "crc32_combine_op",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::write_table": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "write_table",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::write_table64": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "write_table64",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-trees::bi_reverse": {
+      "attempts": 1,
+      "crate": "zlib-trees",
+      "fn": "bi_reverse",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-trees::gen_codes": {
+      "attempts": 1,
+      "crate": "zlib-trees",
+      "fn": "gen_codes",
+      "note": "",
+      "proof": "regen-differential"
+    }
+  }
+}

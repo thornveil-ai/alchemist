@@ -195,12 +195,101 @@ def functions_from_failing_tests(
 
 # --- the live oracle + refill ---------------------------------------------
 def run_crate_tests(crate_dir: Path, crate_name: str, env: dict | None = None,
-                    timeout: int = 600) -> tuple[bool, str]:
+                    timeout: int = 600, test_filter: str = "") -> tuple[bool, str]:
+    """Run `cargo test -p crate [FILTER]`. A FILTER isolates one function's tests
+    so a crate with UNRELATED pre-existing failures (e.g. stale vectors) doesn't
+    make every regen falsely 'resist' — we only need the stubbed function's own
+    differential tests to go from red to green."""
+    args = ["cargo", "test", "-p", crate_name]
+    if test_filter:
+        args.append(test_filter)
+    args += ["--", "--nocapture"]
     r = subprocess.run(
-        ["cargo", "test", "-p", crate_name, "--", "--nocapture"],
-        cwd=str(crate_dir), capture_output=True, text=True, timeout=timeout, env=env,
+        args, cwd=str(crate_dir), capture_output=True, text=True, timeout=timeout, env=env,
     )
+    # A filter that matches zero tests exits 0 but proves nothing; callers guard
+    # that via the stub-must-break check.
     return r.returncode == 0, r.stdout + "\n" + r.stderr
+
+
+def _module_context(source: str, target_fn: str, max_consts: int = 60) -> str:
+    """In-scope constants/statics + sibling function signatures from the module.
+
+    Without these the model reinvents constant names and can't call helpers, so
+    its output fails to compile and the repair 'resists'. Cheap to extract from
+    the module the function already lives in.
+    """
+    consts = re.findall(r"^\s*(?:pub\s+)?(?:const|static)\s+\w+\s*:\s*[^=]+=", source,
+                        re.MULTILINE)
+    consts = [c.strip().rstrip("=").strip() for c in consts][:max_consts]
+    uses = re.findall(r"^\s*use\s+[^;]+;", source, re.MULTILINE)
+    sigs: list[str] = []
+    for m in re.finditer(r"^\s*(?:pub(?:\(crate\))?\s+)?fn\s+(\w+)\s*[<(]", source, re.MULTILINE):
+        name = m.group(1)
+        if name == target_fn or name.startswith("test_"):
+            continue
+        span = _rust_fn_span(source, name)
+        if span:
+            fn_text = source[span[0]:span[1]]
+            brace = fn_text.find("{")
+            if brace > 0:
+                sigs.append(fn_text[:brace].strip())
+    block = []
+    if uses:
+        block.append("## Imports in scope\n" + "\n".join(uses[:20]))
+    if consts:
+        block.append("## Constants/statics in scope (reference by name)\n" + "\n".join(consts))
+    if sigs:
+        block.append("## Sibling functions you may call\n" + "\n".join(f"{s};" for s in sigs[:40]))
+    return "\n\n".join(block)
+
+
+def _find_types_source(module_path: Path) -> str:
+    """Locate and read the workspace's zlib-types/src/types.rs, if present."""
+    for parent in module_path.parents:
+        cand = parent / "zlib-types" / "src" / "types.rs"
+        if cand.exists():
+            try:
+                return cand.read_text(encoding="utf-8")
+            except OSError:
+                return ""
+    return ""
+
+
+def _struct_defs_for(referenced: str, types_source: str, max_structs: int = 6) -> str:
+    """Extract `pub struct`/`pub enum` defs whose names appear in `referenced`."""
+    if not types_source:
+        return ""
+    out: list[str] = []
+    for m in re.finditer(r"(pub\s+(?:struct|enum)\s+(\w+))", types_source):
+        name = m.group(2)
+        if name not in referenced:
+            continue
+        # brace-match the item body
+        start = m.start()
+        clean = _blank_rust(types_source)
+        brace = clean.find("{", m.end())
+        semi = clean.find(";", m.end())
+        if brace < 0 or (0 <= semi < brace):
+            # unit/tuple struct ending in ; (rare here)
+            end = semi + 1 if semi >= 0 else m.end()
+            out.append(types_source[start:end])
+            continue
+        depth = 0
+        j = brace
+        while j < len(clean):
+            if clean[j] == "{":
+                depth += 1
+            elif clean[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    out.append(types_source[start : j + 1])
+                    break
+            j += 1
+        if len(out) >= max_structs:
+            break
+    return ("## Shared type definitions (fields you must use by exact name)\n"
+            + "\n\n".join(out) if out else "")
 
 
 def make_refill(
@@ -211,6 +300,7 @@ def make_refill(
     on_event: Callable[[str], None] | None = None,
 ) -> Callable[[str, str], bool]:
     """Build a `refill(fn, guidance)` that re-fills one Rust function via the model."""
+    types_source = _find_types_source(module_path)
 
     def refill(fn: str, guidance: str) -> bool:
         source = module_path.read_text(encoding="utf-8")
@@ -218,21 +308,26 @@ def make_refill(
         if current is None:
             return False
         c_body = extract_c_function_body(c_source_path, fn) or "(C source not found)"
+        struct_ctx = struct_context or _struct_defs_for(current + "\n" + source[:4000],
+                                                        types_source)
         # relevant idiom patterns for this function
         try:
             from alchemist.catalog import match_idioms, render_prompt_hints
             idiom_block = render_prompt_hints(match_idioms(c_body)[:5])
         except Exception:
             idiom_block = ""
+        mod_ctx = _module_context(source, fn)
         prompt = (
             f"Fix this Rust function so its output matches the C reference EXACTLY. "
             f"A differential oracle caught a divergence:\n\n{guidance}\n\n"
             f"## C reference (authoritative)\n```c\n{c_body}\n```\n\n"
             f"## Current (incorrect) Rust\n```rust\n{current}\n```\n\n"
-            f"{struct_context}\n{idiom_block}\n"
-            f"Re-derive from the C semantics. Do NOT hard-code the expected bytes or "
-            f"special-case the failing input. Return ONLY the corrected `fn {fn}` "
-            f"definition (signature + body), no markdown, no other items."
+            f"{struct_ctx}\n{mod_ctx}\n{idiom_block}\n"
+            f"Use the constants and sibling functions listed above by name — they "
+            f"already exist; do NOT redefine them. Re-derive from the C semantics. "
+            f"Do NOT hard-code the expected bytes or special-case the failing input. "
+            f"Return ONLY the corrected `fn {fn}` definition (signature + body), no "
+            f"markdown, no other items."
         )
         resp = llm.call_structured(
             messages=[{"role": "user", "content": prompt}],
@@ -269,12 +364,13 @@ def repair_crate(
     env: dict | None = None,
     struct_context: str = "",
     max_attempts: int = 4,
+    test_filter: str = "",
     on_event: Callable[[str], None] | None = None,
 ) -> RepairResult:
     """Drive the WS4 loop against a real crate until its differential tests pass."""
 
     def run_differential() -> tuple[bool, str]:
-        return run_crate_tests(workspace_dir, crate_name, env=env)
+        return run_crate_tests(workspace_dir, crate_name, env=env, test_filter=test_filter)
 
     # Order candidates by the initial failure's test names (strong localization).
     passed0, out0 = run_differential()
