@@ -142,14 +142,17 @@ def restore_hardports(
 
 
 def _dedup_types(source: str) -> str:
-    """Remove duplicate top-level `pub struct/enum NAME {…}` definitions,
-    keeping the first occurrence of each name (brace-matched)."""
+    """Remove duplicate top-level `pub struct/enum/const/static NAME`
+    definitions, keeping the first occurrence of each name. A hardport may
+    carry a supporting item alongside its fn (a `CrcTables` struct, a
+    `CRC_BIG_TABLE` const); re-running the restore would splice a second copy.
+    Struct/enum bodies are brace-matched; const/static end at `;`."""
     seen: set[str] = set()
     out = source
     while True:
         removed = False
         for m in re.finditer(
-            r"(?:^|\n)((?:#\[[^\]]*\]\s*\n)*)[ \t]*pub (?:struct|enum) (\w+)",
+            r"(?:^|\n)((?:#\[[^\]]*\]\s*\n)*)[ \t]*pub (?:struct|enum|const|static) (\w+)",
             out,
         ):
             name = m.group(2)
