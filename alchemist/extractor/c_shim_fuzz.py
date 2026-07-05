@@ -636,7 +636,7 @@ def fuzz_gen_bitlen(dll, alg, *, count: int = 10, seed: int = 0x47_42_4C_4E):
             f"state.opt_len = {st['opt_len'] & 0xFFFFFFFFFFFFFFFF}u64;\n"
             f"let mut desc = zlib_types::TreeDesc {{ dyn_tree: {tree_lit}, "
             f"max_code: {st['max_code']}i32, stat_desc: {_bl_stat_desc_lit()} }};\n"
-            f"super::gen_bitlen(&mut state, &desc);\n"
+            f"super::gen_bitlen(&mut state, &mut desc);\n"
             f"let lens: Vec<u16> = desc.dyn_tree.iter().map(|e| e.len).collect();\n"
             f'assert_eq!(lens, {len_expect}, "gen_bitlen len {i}");\n'
             f'assert_eq!(state.bl_count, {blc_expect}, "gen_bitlen bl_count {i}");\n'
