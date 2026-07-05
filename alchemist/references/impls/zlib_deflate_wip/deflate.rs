@@ -894,7 +894,74 @@ pub fn deflate_slow(strm: &mut DeflateStream, flush: i32) -> BlockState {
     BlockState::BlockDone
 }
 
-pub fn deflate_rle(strm: &mut DeflateStream, flush: i32) -> BlockState { let _ = (strm, flush); unimplemented!("deflate_rle") }
+pub fn deflate_rle(strm: &mut DeflateStream, flush: i32) -> BlockState {
+    let mut bflush = false;
+    loop {
+        if strm.state.lookahead <= MAX_MATCH {
+            fill_window(strm);
+            if strm.state.lookahead <= MAX_MATCH && flush == Z_NO_FLUSH {
+                return BlockState::NeedMore;
+            }
+            if strm.state.lookahead == 0 {
+                break;
+            }
+        }
+
+        strm.state.match_length = 0;
+        if strm.state.lookahead >= MIN_MATCH && strm.state.strstart > 0 {
+            let prev = strm.state.window[strm.state.strstart - 1];
+            if strm.state.window[strm.state.strstart] == prev
+                && strm.state.window[strm.state.strstart + 1] == prev
+                && strm.state.window[strm.state.strstart + 2] == prev
+            {
+                let mut ml = 0usize;
+                while ml < MAX_MATCH && strm.state.window[strm.state.strstart + ml] == prev {
+                    ml += 1;
+                }
+                if ml > strm.state.lookahead {
+                    ml = strm.state.lookahead;
+                }
+                strm.state.match_length = ml as u32;
+            }
+        }
+
+        if strm.state.match_length >= MIN_MATCH as u32 {
+            bflush = _tr_tally_dist(strm, 1, strm.state.match_length - MIN_MATCH as u32);
+            strm.state.lookahead -= strm.state.match_length as usize;
+            strm.state.strstart += strm.state.match_length as usize;
+            strm.state.match_length = 0;
+        } else {
+            bflush = _tr_tally_lit(strm, strm.state.window[strm.state.strstart] as u32);
+            strm.state.lookahead -= 1;
+            strm.state.strstart += 1;
+        }
+
+        if bflush {
+            flush_block_only(strm, 0);
+            if strm.avail_out == 0 {
+                return BlockState::NeedMore;
+            }
+        }
+    }
+
+    strm.state.insert = 0;
+    if flush == Z_FINISH {
+        flush_block_only(strm, 1);
+        if strm.avail_out == 0 {
+            return BlockState::FinishStarted;
+        }
+        return BlockState::FinishDone;
+    }
+
+    if strm.state.sym_next != 0 {
+        flush_block_only(strm, 0);
+        if strm.avail_out == 0 {
+            return BlockState::NeedMore;
+        }
+    }
+
+    BlockState::BlockDone
+}
 
 #[cfg(test)]
 mod tests {
@@ -902,6 +969,87 @@ mod tests {
     extern crate alloc;
     use alloc::format;
     use alloc::string::String;
+
+    #[test]
+    fn test_rle_0() {
+        let input: Vec<u8> = vec![];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![3, 0], "rle 0");
+    }
+    #[test]
+    fn test_rle_1() {
+        let input: Vec<u8> = vec![97];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![75, 4, 0], "rle 1");
+    }
+    #[test]
+    fn test_rle_2() {
+        let input: Vec<u8> = vec![97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![75, 68, 3, 0], "rle 2");
+    }
+    #[test]
+    fn test_rle_3() {
+        let input: Vec<u8> = vec![97, 97, 98, 98, 99, 99, 100, 100, 97, 97, 98, 98, 99, 99];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![75, 76, 76, 74, 74, 78, 78, 73, 73, 76, 76, 74, 74, 78, 6, 0], "rle 3");
+    }
+    #[test]
+    fn test_rle_4() {
+        let input: Vec<u8> = vec![130, 183, 14, 238, 127, 26, 80, 57, 190, 240, 126, 194, 52, 127, 6, 110, 208, 143, 93, 199, 81, 36, 71, 227, 64, 67, 0, 2, 107, 110, 84, 85, 148, 160, 101, 104, 93, 100, 196, 152, 11, 184, 212, 84, 74, 135, 33, 169, 154, 1, 173, 33, 158, 181, 156, 246, 161, 94, 246, 241, 90, 29, 131, 11, 183, 206, 9, 214, 187, 192, 4, 231, 23, 92, 100, 60, 125, 236, 176, 181, 128, 236, 55, 188, 151, 18, 221, 46, 106, 174, 185, 75, 174, 141, 47, 159, 162, 156, 90, 40, 76, 158, 247, 82, 24, 41, 207, 16, 121, 176, 128, 233, 215, 74, 28, 16, 252, 171, 106, 66, 67, 211, 54, 86, 222, 190, 76, 30, 215, 150, 72, 232, 86, 232, 249, 162, 245, 140, 149, 240, 206, 75, 57, 193, 91, 255, 173, 92, 45, 251, 139, 184, 32, 182, 17, 156, 186, 143, 248, 135, 150, 174, 91, 5, 242, 128, 166, 140, 237, 147, 182, 178, 140, 176, 209, 179, 88, 230, 186, 171, 72, 85, 101, 185, 244, 144, 40, 213, 87, 215, 154, 138, 14, 100, 81, 225, 92, 112, 92, 21];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![1, 200, 0, 55, 255, 130, 183, 14, 238, 127, 26, 80, 57, 190, 240, 126, 194, 52, 127, 6, 110, 208, 143, 93, 199, 81, 36, 71, 227, 64, 67, 0, 2, 107, 110, 84, 85, 148, 160, 101, 104, 93, 100, 196, 152, 11, 184, 212, 84, 74, 135, 33, 169, 154, 1, 173, 33, 158, 181, 156, 246, 161, 94, 246, 241, 90, 29, 131, 11, 183, 206, 9, 214, 187, 192, 4, 231, 23, 92, 100, 60, 125, 236, 176, 181, 128, 236, 55, 188, 151, 18, 221, 46, 106, 174, 185, 75, 174, 141, 47, 159, 162, 156, 90, 40, 76, 158, 247, 82, 24, 41, 207, 16, 121, 176, 128, 233, 215, 74, 28, 16, 252, 171, 106, 66, 67, 211, 54, 86, 222, 190, 76, 30, 215, 150, 72, 232, 86, 232, 249, 162, 245, 140, 149, 240, 206, 75, 57, 193, 91, 255, 173, 92, 45, 251, 139, 184, 32, 182, 17, 156, 186, 143, 248, 135, 150, 174, 91, 5, 242, 128, 166, 140, 237, 147, 182, 178, 140, 176, 209, 179, 88, 230, 186, 171, 72, 85, 101, 185, 244, 144, 40, 213, 87, 215, 154, 138, 14, 100, 81, 225, 92, 112, 92, 21], "rle 4");
+    }
+    #[test]
+    fn test_rle_5() {
+        let input: Vec<u8> = vec![1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 0, 1, 1, 1, 1, 2, 2, 0, 2, 0, 0, 2, 1, 0, 1, 1, 1, 1, 0, 2, 2, 1, 0, 2, 2, 1, 0, 1, 2, 2, 1, 2, 1, 1, 0, 1, 1, 2, 2, 2, 1, 1, 0, 0, 2, 1, 2, 1, 0, 0, 2, 0, 1, 2, 0, 1, 0, 1, 2, 2, 2, 0, 1, 2, 2, 1, 1, 1, 0, 1, 1, 1, 2, 1, 1, 0, 2, 2, 1, 2, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 2, 2, 1, 0, 1, 0, 0, 1, 0, 1, 2, 2, 1, 0, 1, 0, 0, 1, 1, 0, 2, 1, 1, 1, 2, 1, 2, 2, 2, 2, 0, 0, 0, 1, 1, 2, 2, 1, 2, 1, 2, 2, 0, 1, 1, 1, 2, 2, 2, 0, 0, 0, 1, 2, 1, 2, 0, 2, 2, 0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 0, 1, 1, 0, 1, 0, 2, 1, 2, 1, 2, 1, 1, 0, 0, 1, 2, 2, 1, 1, 2, 0, 1, 2, 2, 0, 0, 2, 0, 1, 0, 0, 2, 0, 1, 2, 1, 0, 1, 2, 1, 0, 0, 0, 0, 2, 2, 0, 2, 0, 1, 2, 1, 0, 0, 2, 0, 1, 0, 0, 2, 0, 0, 2, 0, 2, 1, 2, 0, 1, 0, 2, 2, 0, 2, 1, 2, 0, 0, 1, 0, 1, 2, 2, 1, 1, 1, 2, 1, 0, 0, 2, 1, 0, 2, 2, 2, 2, 1, 2, 2, 2, 0, 1, 0, 2, 0, 1, 1, 2, 0, 0, 1, 1, 2, 1, 0, 0, 2, 0, 2];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![29, 193, 1, 1, 0, 48, 12, 131, 48, 192, 191, 232, 245, 79, 228, 17, 9, 167, 8, 18, 135, 146, 18, 203, 20, 173, 20, 50, 33, 12, 177, 194, 82, 81, 83, 202, 28, 28, 132, 18, 65, 44, 17, 148, 212, 108, 0, 45, 179, 80, 43, 192, 140, 2, 237, 115, 10, 69, 50, 83, 176, 52, 44, 8, 33, 76, 76, 166, 8, 19, 66, 8, 34, 67, 138, 12, 196, 82, 19, 146, 198, 10, 9, 13, 52, 33, 58], "rle 5");
+    }
+    #[test]
+    fn test_rle_6() {
+        let input: Vec<u8> = vec![120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122, 120, 121, 122];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![5, 193, 1, 1, 0, 0, 0, 64, 160, 219, 88, 175, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 48, 12, 195, 6], "rle 6");
+    }
+    #[test]
+    fn test_rle_7() {
+        let input: Vec<u8> = vec![1, 1, 3, 1, 1, 1, 3, 3, 2, 1, 2, 2, 2, 1, 1, 3, 1, 3, 2, 1, 1, 2, 1, 1, 1, 2, 1, 1, 3, 2, 1, 1, 1, 1, 3, 1, 2, 2, 1, 1, 1, 2, 1, 3, 1, 3, 3, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2, 1, 3, 2, 1, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 1, 3, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 3, 1, 1, 3, 2, 1, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 3, 2, 1, 1, 2, 1, 2, 2, 1, 1, 1, 3, 3, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 3, 2, 1, 3, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 3, 1, 2, 3, 1, 2, 2, 3, 2, 3, 1, 1, 1, 2, 1, 3, 1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 3, 1, 2, 1, 1, 2, 3, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 1, 1, 1, 3, 1, 2, 1, 1, 1, 2, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 3, 3];
+        let mut strm = zlib_types::DeflateStream::default();
+        super::deflate_init2(&mut strm, 6, 8, -15, 8, 3);
+        strm.next_in = input.clone(); strm.avail_in = input.len(); strm.next_out = vec![]; strm.avail_out = 2000000;
+        let r = super::deflate(&mut strm, 4);
+        assert_eq!(r, 1);
+        assert_eq!(strm.next_out, vec![45, 193, 129, 17, 3, 33, 0, 4, 161, 97, 175, 255, 158, 163, 111, 128, 97, 75, 197, 44, 66, 44, 199, 20, 50, 27, 249, 43, 202, 82, 62, 101, 158, 124, 202, 145, 107, 44, 132, 92, 139, 20, 182, 57, 18, 10, 229, 90, 230, 154, 49, 77, 173, 33, 67, 132, 137, 134, 60, 105, 152, 16, 205, 147, 99, 251, 1], "rle 7");
+    }
 
     #[test]
     fn test_all_0() {
