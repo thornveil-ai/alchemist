@@ -102,6 +102,24 @@ DEFAULT_FIELD_OVERRIDES: tuple[FieldOverride, ...] = (
 )
 
 
+# Explicit (function, param) → Rust type corrections. The extractor infers
+# parameter mutability inconsistently: build_tree correctly takes
+# `desc: &mut TreeDesc` but gen_bitlen got `&TreeDesc` — yet gen_bitlen
+# MUTATES the tree's bit lengths (tree[n].Len = desc.dyn_tree), so an
+# immutable borrow makes it impossible to implement. The same `tree_desc *`
+# C type, mutated in both, must map to `&mut TreeDesc` in both.
+@dataclass(frozen=True)
+class ParamOverride:
+    function: str
+    param: str
+    rust_type: str
+
+
+DEFAULT_PARAM_OVERRIDES: tuple[ParamOverride, ...] = (
+    ParamOverride("gen_bitlen", "desc", "&mut TreeDesc"),
+)
+
+
 # ---------------------------------------------------------------------------
 # Rust type surgery: swap an element type while keeping the container shape.
 # ---------------------------------------------------------------------------
@@ -429,6 +447,17 @@ def unify_types(
     # Pass 6 — explicit field-type overrides for scalar-collapsed state
     # fields (DeflateState.l_desc/d_desc/bl_desc → TreeDesc).
     report.field_rewrites += _apply_field_overrides(specs, overrides)
+
+    # Pass 7 — explicit parameter-type corrections (gen_bitlen.desc → &mut).
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            for ov in DEFAULT_PARAM_OVERRIDES:
+                if alg.name != ov.function:
+                    continue
+                for p in alg.inputs or []:
+                    if p.name == ov.param and p.rust_type != ov.rust_type:
+                        p.rust_type = ov.rust_type
+                        report.rewrites += 1
 
     return report
 

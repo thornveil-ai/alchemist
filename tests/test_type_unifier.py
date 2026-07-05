@@ -217,3 +217,13 @@ def test_field_overrides_fix_scalar_collapsed_descriptors():
     assert "pub d_desc: TreeDesc," in rd
     assert "pub bl_desc: TreeDesc," in rd
     assert "pub opt_len: u64," in rd   # untouched
+
+
+def test_param_override_fixes_gen_bitlen_mutability():
+    """gen_bitlen mutates the tree's Len but was inferred as &TreeDesc;
+    the param override makes it &mut TreeDesc like build_tree."""
+    specs = [ModuleSpec(name="trees", display_name="", description="", algorithms=[
+        _alg("gen_bitlen", [("s", "&mut DeflateState"), ("desc", "&TreeDesc")])])]
+    unify_types(specs, {"files": {}})
+    types = {p.name: p.rust_type for p in specs[0].algorithms[0].inputs}
+    assert types["desc"] == "&mut TreeDesc"
