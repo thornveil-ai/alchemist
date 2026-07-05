@@ -369,6 +369,7 @@ fn scan_tree(bl_tree: &mut [TreeElement], tree: &mut [TreeElement], max_code: i3
     let mut max_count: i32 = 7;
     let mut min_count: i32 = 4;
     let mut nextlen = tree[0].len as i32;
+    if nextlen == 0 { max_count = 138; min_count = 3; }
 
     tree[(max_code + 1) as usize].len = 0xffff;
 
