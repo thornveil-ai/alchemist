@@ -436,8 +436,16 @@ def build_stateful_crate(paths: list[Path], out_dir: Path, crate_name: str,
     if not api:
         raise ValueError("no init/update/final stateful API detected")
     fields = parse_ctx_fields(src_all, api.ctx_c, typedefs, defines)
-    fill_seq = [n for n in fill_order(funcs)
-                if n in {api.init, api.update, api.final, *api.helpers}]
+    # fill the whole transitive call-closure of the API (not just ctx functions),
+    # so a static helper they call (e.g. amosnier's `consume_chunk`) is filled too.
+    need = {api.init, api.update, api.final, *api.helpers}
+    stack = list(need)
+    while stack:
+        for callee in funcs[stack.pop()].calls:
+            if callee in funcs and callee not in need:
+                need.add(callee)
+                stack.append(callee)
+    fill_seq = [n for n in fill_order(funcs) if n in need]
 
     # --- oracle: build (auto includes/stubs) + sequence harness ---
     out_dir.mkdir(parents=True, exist_ok=True)
