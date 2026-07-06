@@ -264,6 +264,22 @@ IDIOMS: tuple[Idiom, ...] = (
         example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
     ),
     Idiom(
+        id="rust-byte-literal-escaping",
+        name="C char literals -> Rust byte literals (escaping)",
+        tags=("gotcha", "syntax"),
+        c_signals=(r"'\\\\'", r"'\\\"'", r"'\\[nrt0]'", r"==\s*'[^']", r"case\s+'"),
+        rust_model=(
+            "When comparing bytes of a `&[u8]`, use byte literals: `b'{'`, `b'\"'`, "
+            "`b'0'..=b'9'`. Escaping is the trap — a BACKSLASH byte is `b'\\\\'` "
+            "(writing `b'\\'` is a syntax error: unterminated char literal). Tab/"
+            "newline/CR are `b'\\t'`/`b'\\n'`/`b'\\r'`. Match C's `'\\\\'`, `'\"'`, "
+            "`'\\n'` to the corresponding `b'..'`."
+        ),
+        rationale="C char constants become Rust byte literals; the backslash escape is a common syntax error.",
+        example="jsmn string parsing compares `js[pos]` to `'\\\\'`, `'\"'`, `'/'` -> `b'\\\\'`, `b'\"'`, `b'/'`.",
+        caution="The model deterministically writes `b'\\'` for a backslash byte — an unterminated char literal.",
+    ),
+    Idiom(
         id="complete-huffman-code",
         name="Fixed Huffman tables must form a *complete* code",
         tags=("tables", "gotcha", "bits"),

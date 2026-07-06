@@ -60,3 +60,52 @@ existing agnostic pieces, not new invention.
 
 The type model — the single biggest per-library cost on zlib — came for free on
 a library the tool had never seen. That's the compounding, measured.
+
+---
+
+## Update: the full end-to-end swing (translation + differential)
+
+We took it all the way: built a **C reference oracle** (`jsmn_ref.c` dumps
+`type start end size` per token), baked 13 JSON inputs into differential vectors,
+generated a Rust crate (inferred types + designed coherent signatures + a
+`parse_dump` harness), stubbed the 6 functions, and let the model **fill them all
+from the C source autonomously**.
+
+What happened, honestly:
+
+1. **The model filled all 6 functions** (jsmn_init/alloc/fill/parse_primitive/
+   parse_string/parse) from C, in dependency order. It compiled after one
+   escaping fix (it wrote `b'\'` for a backslash byte instead of `b'\\'` — a real
+   idiom gap now worth cataloguing).
+2. **The differential oracle immediately caught real bugs** — `{"a":1}` produced
+   `[]`, `"hello"` produced the wrong token bounds. Byte-exact-or-refused worked:
+   the tool *refused*, it did not claim success.
+3. A **naive "refill everything each round" loop oscillated** (introduced
+   regressions/compile breaks). Switching to the **disciplined surgical loop**
+   (refill one function, keep only if the pass count rises, revert regressions)
+   converged **monotonically: −1 → 0 → 2 → 6 / 13**, then plateaued at 6/13.
+
+**Result: 6/13 differentially-verified on a never-seen library, fully
+autonomously, with an honest refusal on the remaining 7.** The plateau is the
+harder cases (nested object/array size-counting, escaped strings) where the
+model needs stronger repair — higher reasoning effort, decomposition, or a
+per-function oracle instead of only the end-to-end one.
+
+### What this proves
+- The **whole pipeline runs end-to-end on a new library**: struct-parse →
+  type-infer → coherent signatures → C differential oracle → autonomous fill →
+  compile → differential repair.
+- **The oracle is sound**: it caught every wrong token and never green-washed.
+- The **surgical repair loop converges** (monotone, no oscillation) — the
+  discipline transfers from zlib.
+
+### The honest gap
+- Convergence stalls on structurally harder functions; the fix is repair
+  *strength* (effort/decomposition/per-function oracles), a known lever — not a
+  new paradigm.
+- One concrete idiom to add: **Rust byte-literal escaping** (`b'\\'` for
+  backslash) — the model got it wrong deterministically.
+
+This is the first end-to-end autonomous swing at a library the tool had never
+seen. It didn't finish jsmn — but it proved the machine turns, the oracle holds,
+and the remaining work is *strength*, not *invention*.
