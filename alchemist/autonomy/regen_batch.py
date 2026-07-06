@@ -106,6 +106,25 @@ def stub_fn(source: str, name: str) -> str | None:
     return source[: span[0]] + stub + source[span[1] :]
 
 
+def _bak_path(module_path: Path) -> Path:
+    return module_path.with_name(module_path.name + ".regenbak")
+
+
+def recover_pending(module_path: Path) -> bool:
+    """Restore a module from its .regenbak sidecar if a prior regen was killed
+    mid-modification (timeout SIGKILL skips the `finally` restore). Returns True
+    if a recovery happened. Idempotent — no sidecar means nothing to do."""
+    bak = _bak_path(module_path)
+    if not bak.exists():
+        return False
+    try:
+        module_path.write_text(bak.read_text(encoding="utf-8"), encoding="utf-8")
+        bak.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def regen_function(
     *,
     workspace_dir: Path,
@@ -129,7 +148,13 @@ def regen_function(
     `isolate=False` runs the whole crate (right for a baseline-green crate whose
     coverage is integration/e2e, e.g. inflate's round-trip tests).
     """
+    # Crash-safe recovery: if a prior run was KILLED (timeout) mid-modification,
+    # its .regenbak sidecar holds the pristine module — restore before reading,
+    # so we never snapshot a corrupted/stubbed file as the "original".
+    recover_pending(module_path)
     original = module_path.read_text(encoding="utf-8")
+    bak = _bak_path(module_path)
+    bak.write_text(original, encoding="utf-8")  # survives SIGKILL; finally cleans it up
     test_filter = (fn.lstrip("_") or fn) if isolate else ""
 
     def run() -> tuple[bool, frozenset[str], str]:
@@ -182,6 +207,7 @@ def regen_function(
         return "resisted", max_attempts
     finally:
         module_path.write_text(original, encoding="utf-8")  # restore canon
+        _bak_path(module_path).unlink(missing_ok=True)
 
 
 def regen_module(
@@ -199,6 +225,7 @@ def regen_module(
     on_event: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Regenerate every impl function in a module, updating the ledger as it goes."""
+    recover_pending(module_path)  # heal any corruption left by a killed prior run
     src = module_path.read_text(encoding="utf-8")
     fns = list(functions) if functions is not None else list_impl_functions(src)
     results: dict[str, str] = {}
