@@ -11,6 +11,33 @@ handle it (records *why*) · ⬜ mapped, not yet run.
 **Verification note:** "vectors" = differential test cases run against the compiled
 C reference. Generic per-run context (no per-library hand-tuning) unless noted.
 
+## Tier-A sweep #1 — 12 libraries, 3 lanes (zero-touch, hardened)
+**4 pass · 3 partial · 4 no-oracle · 1 runner-bug (fixed).** No false greens.
+
+| Library | Lane | Result |
+|---|---|---|
+| SHA-1, SHA-256, MurmurHash3, base64 | crypto/scalar/codec | ✅ **pass** (real vectors) |
+| MD5 | crypto | ⚠️ partial (transform panic — fill variance; passed a prior run) |
+| MD2 | crypto | ⚠️ partial (`E0061` wrong arg count) |
+| SHA-3 | crypto | ⚠️ partial (union-field ctx) |
+| base64 (B-Con) | codec | ⛔→✅ runner crashed on `int('0123456789',0)` — **onboarder bug, now fixed** |
+| rot13 | codec | 🚫 no-oracle (in-place mutation shape) |
+| arcfour/RC4, DES, Blowfish | cipher | 🚫 no-oracle (BYTE[] array-state, not a struct ctx) |
+
+**The integrity guard proved itself in the wild:** the ciphers and in-place rot13
+are shapes we don't support, and the system **honestly refused them (no-oracle)
+instead of faking passes.** That's the whole point — trustworthy at scale.
+
+### 🗺️ Error map (fix-by-class queue, updated)
+| Class | Libs | Status |
+|---|---|---|
+| runner crash on odd numeric literal | base64_bcon | ✅ fixed (robust int parse) |
+| `md5_transform` fill-hard (runtime panic) | md5 | ⬜ model frontier (passes some runs) |
+| `E0061` wrong-arg-count | md2 | ⬜ diagnoser/idiom |
+| union-field ctx emission | sha3 | ⬜ struct union handling |
+| in-place transform shape | rot13 | ⬜ shape coverage |
+| array-state (`BYTE[]`) cipher shape | arcfour/des/blowfish | ⬜ shape coverage (key-schedule ciphers) |
+
 ## Crypto-hash lane — VERIFIED (hardened, zero-touch, no false greens)
 After the 8-fix hardening pass (integrity guard · arg-order · overflow-checks ·
 murmur3 sizing · alias-macro skip · never-make-it-worse · mechanical borrow+type

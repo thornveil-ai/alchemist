@@ -90,7 +90,12 @@ def _parse_table_values(body: str) -> list[int]:
             inner = t[1:-1]
             vals.append(_ESC.get(inner, ord(inner[-1])))
         else:
-            vals.append(int(t, 0))
+            try:
+                # hex in base 16, decimal in base 10 (NOT base 0 -- a leading-zero
+                # decimal like 0123456789 is not octal and must not crash the run)
+                vals.append(int(t, 16) if t[:2].lower() == "0x" else int(t))
+            except ValueError:
+                pass  # never let one odd token crash onboarding
     return vals
 
 
