@@ -121,6 +121,10 @@ Report the pass rate and the **failure taxonomy** openly. "Any library" is hones
 - **Cost at scale** — large libraries = large compute; WS7 must keep it bounded (incremental verify, cache/hardport reuse).
 - **UB in the reference** — if the C relies on UB, "byte-exact vs C" can mean "matches a specific compiler's UB." Flag divergence across `-O` levels / compilers as a signal.
 
+## Onboarding the next library
+
+The repeatable process — what is reusable vs per-library, and the exact sequence — is in **[ONBOARDING_A_LIBRARY.md](ONBOARDING_A_LIBRARY.md)**. WS1 shim synthesis and the WS4 regen loop are now library-agnostic; the main per-library cost is the WS2 coherent type model.
+
 ## Where to point first
 
 1. **WS1 + WS4 on M1** — automated oracle synthesis and the autonomous repair loop, targeting a push-button zlib. These two convert the most human effort into capability and are directly measurable against known-good output.
