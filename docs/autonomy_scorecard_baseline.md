@@ -1,6 +1,6 @@
 # M1 autonomy scorecard - subject: zlib
 
-**Open autonomy debt: 140 human-supplied artifacts** (retired so far: 40).
+**Open autonomy debt: 127 human-supplied artifacts** (retired so far: 40).
 
 Every open item is a crutch M1 (push-button zlib) must remove by auto-synthesizing the equivalent. Byte-exact-or-refused stays sacred.
 
@@ -8,15 +8,15 @@ Every open item is a crutch M1 (push-button zlib) must remove by auto-synthesizi
 
 | Workstream | Open debt |
 |---|---:|
-| WS1 | 62 |
+| WS1 | 49 |
 | WS2 | 8 |
 | WS3 | 10 |
 | WS3/WS4 | 60 |
 
 ## Categories
 
-### [WS1] Hand-written oracle shim runners (still human-authored) - 62 shims  ([OPEN])
-- C glue that runs the reference + captures effect footprint. 61 of 123 auto-synthesized + compile-validated by the shim generator (mechanical field accessors + call-through runners); the rest are custom setup/marshalling.
+### [WS1] Hand-written oracle shim runners (still human-authored) - 49 shims  ([OPEN])
+- C glue that runs the reference + captures effect footprint. 74 of 123 auto-synthesized + compile-validated by the shim generator (mechanical field accessors + call-through runners); the rest are custom setup/marshalling.
 - **M1 action:** Extend the generator to the custom runners; effect-footprint inference for full signature-driven harness gen.
 
 ### [WS3/WS4] Human-ported Rust function bodies (unique, tests excluded) - 60 fns  ([OPEN])

@@ -1,431 +1,522 @@
 {
   "retired": {
+    "shim-accessor::shim_fw_g_block_start": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_fw_g_block_start",
+      "note": "",
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_fw_g_head": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_fw_g_head",
+      "note": "",
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_fw_g_high_water": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_fw_g_high_water",
+      "note": "",
+      "proof": "generated + compiled drop-in"
+    },
     "shim-accessor::shim_fw_g_ins_h": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_g_ins_h",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_g_insert": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_g_insert",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_g_lookahead": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_g_lookahead",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_fw_g_prev": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_fw_g_prev",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_g_strstart": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_g_strstart",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_fw_g_window": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_fw_g_window",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_hashbits": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_hashbits",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_hashshift": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_hashshift",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_hashsize": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_hashsize",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_fw_windowsize": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_fw_windowsize",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_fw_wsize": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_fw_wsize",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_adler": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_adler",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_bi_buf": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_bi_buf",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_bi_used": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_bi_used",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_bi_valid": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_bi_valid",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_bits": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_bits",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_havedict": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_havedict",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_heap_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_heap_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_heap_max": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_heap_max",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_hold": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_hold",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_matches": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_matches",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_mode": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_mode",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_opt_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_opt_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_pending_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_pending_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_static_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_static_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_sym_next": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_sym_next",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_total": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_total",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_total_in": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_total_in",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_total_out": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_total_out",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_w_size": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_w_size",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_wbits": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_wbits",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_whave": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_whave",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_wnext": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_wnext",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_wrap": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_wrap",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_get_wsize": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_get_wsize",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_run_bi_flush": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_run_bi_flush",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_bi_reverse": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_bi_reverse",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_run_bi_windup": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_run_bi_windup",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_crc_word": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_crc_word",
+      "note": "",
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_crc_word_big": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_crc_word_big",
+      "note": "",
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_detect_data_type": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_detect_data_type",
+      "note": "",
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_detect_data_type_ret": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_detect_data_type_ret",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_run_init_block": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_run_init_block",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_multmodp": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_multmodp",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_run_slide_hash": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_run_slide_hash",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_run_tr_flush_bits": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_run_tr_flush_bits",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_run_tr_init": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_run_tr_init",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
+    },
+    "shim-accessor::shim_run_x2nmodp": {
+      "attempts": 1,
+      "crate": "shim-accessor",
+      "fn": "shim_run_x2nmodp",
+      "note": "",
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_adler": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_adler",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_bi_buf": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_bi_buf",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_bi_used": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_bi_used",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_bi_valid": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_bi_valid",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_bits": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_bits",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_hash_size": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_hash_size",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_havedict": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_havedict",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_heap_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_heap_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_heap_max": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_heap_max",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_hold": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_hold",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_matches": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_matches",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_opt_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_opt_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_static_len": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_static_len",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_sym_next": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_sym_next",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_total": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_total",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_total_in": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_total_in",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_total_out": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_total_out",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_w_size": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_w_size",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_wbits": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_wbits",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_whave": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_whave",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_wnext": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_wnext",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_wrap": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_wrap",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "shim-accessor::shim_set_wsize": {
       "attempts": 1,
       "crate": "shim-accessor",
       "fn": "shim_set_wsize",
       "note": "",
-      "proof": "generated-from-struct + compiled drop-in"
+      "proof": "generated + compiled drop-in"
     },
     "zlib-checksum::adler32_combine_": {
       "attempts": 1,

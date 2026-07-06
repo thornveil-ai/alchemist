@@ -62,15 +62,24 @@ def test_non_pure_body_not_claimed():
     assert all(a.name != "shim_fw_init" for a in accs)
 
 
-def test_loop_array_copy_not_falsely_claimed():
-    # element-wise loop over a u16 array is NOT equivalent to memcpy(...,n) (bytes
-    # vs elements), so the generator must not claim it.
+def test_loop_array_copy_generates_matching_loop():
+    # element-wise loop over a u16 array must regenerate as the SAME loop (not a
+    # memcpy, which would copy bytes not elements).
     src = ("EXPORT void shim_fw_g_head(unsigned short *out, unsigned n)"
            "{ for(unsigned i=0;i<n;i++) out[i]=g_fw_s->head[i]; }\n")
     accs, _ = parse_accessors(src)
     arr = [a for a in accs if a.kind == "arr"]
-    # parsed as arr, but generator emits memcpy which is NOT equivalent -> not reproduced
-    assert all(not reproduces(a) for a in arr)
+    assert len(arr) == 1 and reproduces(arr[0])
+    assert "for(unsigned i=0;i<n;i++) out[i]=g_fw_s->head[i]" in generate_accessor(arr[0])
+
+
+def test_memcpy_array_not_confused_with_loop():
+    src = ("EXPORT void shim_fw_g_window(unsigned char *out, unsigned n)"
+           "{ memcpy(out, g_fw_s->window, n); }\n")
+    accs, _ = parse_accessors(src)
+    arr = [a for a in accs if a.kind == "arr"]
+    assert len(arr) == 1 and reproduces(arr[0])
+    assert "memcpy(out, g_fw_s->window, n)" in generate_accessor(arr[0])
 
 
 def test_synthesize_reports_reproducible_and_others():
