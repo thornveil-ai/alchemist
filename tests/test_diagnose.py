@@ -64,6 +64,20 @@ def test_refuses_false_success():
     assert diag.rounds == 3
 
 
+def test_reverts_fix_that_makes_it_worse():
+    # a fix that INTRODUCES more errors (e.g. invents a helper) must be reverted
+    applied = []
+    llm = _FakeLLM([{"root_cause": "x", "general_rule": "r",
+                     "fixed_function": "pub fn f() { transform_internal() }"}])
+    diag = diagnose_and_fix(
+        "c", "pub fn f() {}", "error[E0308]", llm,
+        apply_fixed=applied.append,
+        run_test=lambda: (False, "error[E0425]: cannot find function `transform_internal`\nerror[E0061]"),
+        max_rounds=3)
+    assert diag.fixed is False
+    assert applied[-1] == "pub fn f() {}"  # reverted to the original, not left broken
+
+
 def test_empty_fix_stops():
     llm = _FakeLLM([{"root_cause": "x", "general_rule": "r", "fixed_function": ""}])
     diag = diagnose_and_fix("c", "wrong", "fail", llm,

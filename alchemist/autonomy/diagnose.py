@@ -76,6 +76,9 @@ def diagnose_and_fix(
     """Loop: diagnose -> apply fix -> test -> (on failure) re-diagnose with the new
     error. `apply_fixed(code)` splices the corrected function; `run_test()` returns
     (passed, failure_text). Refuses to claim success unless run_test passes."""
+    def _errs(t: str) -> int:
+        return t.count("error[") + t.count("cannot find")
+
     root_cause = general_rule = ""
     for r in range(max_rounds):
         prompt = _diag_prompt(c_body, current_rust, failure_text)
@@ -92,9 +95,16 @@ def diagnose_and_fix(
         fixed = _strip_fences(d.get("fixed_function", ""))
         if not fixed:
             break
+        prev_code, prev_errs = current_rust, _errs(failure_text)
         apply_fixed(fixed)
-        passed, failure_text = run_test()
-        current_rust = fixed
+        passed, new_failure = run_test()
         if passed:
             return Diagnosis(True, root_cause, general_rule, r + 1)
+        # NEVER MAKE IT WORSE: if the model's rewrite introduced *more* errors
+        # (e.g. invented a helper that doesn't exist), REVERT it and stop — a
+        # degrading fix must not persist.
+        if _errs(new_failure) > prev_errs:
+            apply_fixed(prev_code)
+            break
+        current_rust, failure_text = fixed, new_failure
     return Diagnosis(False, root_cause, general_rule, max_rounds)
