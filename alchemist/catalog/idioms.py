@@ -300,6 +300,25 @@ IDIOMS: tuple[Idiom, ...] = (
         example="deflate_fast: `check_match(s, start, match, len);` -> omitted entirely.",
     ),
     Idiom(
+        id="c-manual-output-index-is-the-length",
+        name="C out[j++] with a manually-advanced index -> return length is j, not the buffer",
+        tags=("buffer", "gotcha"),
+        c_signals=(r"out\[j\+\+\]", r"out\[j\]\s*=", r"return\s+j\s*;", r"\bj\s*=\s*0"),
+        rust_model=(
+            "When C writes into `out[j]` and advances `j` MANUALLY (not once per "
+            "loop iteration), the returned length is `j` — and any final `out[j] = "
+            "...` that does NOT do `j++` is a PARTIAL byte that is only kept if a "
+            "later `out[j++] |= ...` commits it (e.g. base64 decode drops the "
+            "trailing partial on padding/end). Do NOT model this with Vec::push: use "
+            "a pre-sized buffer + an explicit `j` index, mirror `out[j]` / `out[j++]` "
+            "exactly, and return `out[..j].to_vec()`. Pushing every write keeps bytes "
+            "the C never counted."
+        ),
+        rationale="A hand-managed write index decouples buffer contents from the reported length; push-based Vecs over-count.",
+        example="base64_decode: case 1/2 write `out[j]=..` without j++, then break on '=' -> that byte is NOT in the j-length result.",
+        caution="Manifests as output one byte too long on padded/truncated input, or an index panic.",
+    ),
+    Idiom(
         id="c-fixed-array-field-to-vec-sizing",
         name="C fixed-size array field -> Rust Vec must be sized before indexed write",
         tags=("buffer", "gotcha", "state"),

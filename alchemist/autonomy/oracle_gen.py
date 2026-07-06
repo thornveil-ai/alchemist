@@ -21,6 +21,11 @@ from alchemist.autonomy.onboard import c_to_rust_scalar, CFunc
 
 _LEN_NAMES = {"len", "length", "size", "count", "n", "num", "nbytes", "buf_len",
               "buflen", "datalen", "num_words", "numwords", "sz", "cnt"}
+# names that mark a MUTABLE byte pointer as the OUTPUT buffer (vs an in/out we
+# won't guess). Conservative on purpose: mis-reading an input as output is worse
+# than skipping.
+_OUT_NAMES = {"out", "dst", "dest", "output", "result", "obuf", "outbuf",
+              "out_buf", "dest_buf", "o", "encoded", "decoded", "digest", "hash"}
 
 
 @dataclass
@@ -39,9 +44,20 @@ class CallSpec:
 
     @property
     def supported(self) -> bool:
-        """True iff every param classified cleanly (no structs / out-pointers)."""
+        """True iff every param classified cleanly and there's a byte buffer to
+        drive (input or output)."""
         return all(p.role != "unknown" for p in self.params) and \
-            any(p.role == "buffer" for p in self.params)
+            any(p.role in ("buffer", "out_buffer") for p in self.params)
+
+    @property
+    def buffer_output(self) -> bool:
+        """The function writes its result into a caller-provided byte buffer;
+        the coherent Rust returns a `Vec<u8>` and the C length-return is dropped."""
+        return any(p.role == "out_buffer" for p in self.params)
+
+    @property
+    def rust_ret(self) -> str:
+        return "Vec<u8>" if self.buffer_output else self.ret_rust
 
 
 def _split_params(params: str) -> list[str]:
@@ -68,15 +84,21 @@ def classify_signature(cfunc: CFunc) -> CallSpec:
         name, c_type = _name_and_type(p)
         is_ptr = "*" in p
         if is_ptr:
-            # A byte input buffer is a CONST pointer to a byte-width type
-            # (uint8_t/char/void). A wider pointer (uint32_t*), a mutable byte
-            # pointer (out-param), or a struct pointer is NOT — flag unknown.
+            # A byte INPUT buffer is a CONST pointer to a byte-width type
+            # (uint8_t/char/void). A MUTABLE byte pointer named like an output
+            # (out/dst/digest/...) is the OUTPUT buffer. Wider pointers
+            # (uint32_t*), unnamed-as-output mutable pointers, and struct
+            # pointers we don't guess -> unknown.
             byte_ptr = bool(re.search(r"\b(char|uint8_t|u8|void)\b", c_type))
             if byte_ptr and "const" in c_type:
                 out.append(Param("buffer", c_type, name, "u8"))
+            elif byte_ptr and name.lower() in _OUT_NAMES:
+                out.append(Param("out_buffer", c_type, name, "u8"))
             else:
                 out.append(Param("unknown", c_type, name, "u8"))
-        elif name.lower() in _LEN_NAMES and any(q.role == "buffer" for q in out):
+        elif (name.lower() in _LEN_NAMES
+              or re.search(r"(len|size|count|bytes|words)$", name.lower())) \
+                and any(q.role in ("buffer", "out_buffer") for q in out):
             out.append(Param("len", c_type, name, c_to_rust_scalar(c_type)))
         else:
             out.append(Param("scalar", c_type, name, c_to_rust_scalar(c_type)))
@@ -84,7 +106,8 @@ def classify_signature(cfunc: CFunc) -> CallSpec:
 
 
 def rust_signature(spec: CallSpec) -> str:
-    """Coherent Rust signature: buffer+len collapse to one `&[u8]`; scalars stay."""
+    """Coherent Rust signature: buffer+len collapse to one `&[u8]`; scalars stay;
+    an output buffer becomes a `Vec<u8>` RETURN (the C length-return is dropped)."""
     args: list[str] = []
     buffer_done = False
     for p in spec.params:
@@ -92,22 +115,24 @@ def rust_signature(spec: CallSpec) -> str:
             if not buffer_done:
                 args.append("data: &[u8]")
                 buffer_done = True
-        elif p.role == "len":
-            continue  # folded into data.len()
+        elif p.role in ("len", "out_buffer"):
+            continue  # len folded into data.len(); out_buffer becomes the return
         elif p.role == "scalar":
             args.append("%s: %s" % (p.name, p.rust_type))
-    return "pub fn %s(%s) -> %s" % (spec.func, ", ".join(args), spec.ret_rust)
+    return "pub fn %s(%s) -> %s" % (spec.func, ", ".join(args), spec.rust_ret)
 
 
 def c_call_args(spec: CallSpec, buf_expr: str = "in", len_expr: str = "l",
-                scalar_expr: str = "0") -> str:
+                scalar_expr: str = "0", out_expr: str = "outbuf") -> str:
     """The C argument list to invoke the function in the harness."""
     out = []
     for p in spec.params:
         if p.role == "buffer":
-            out.append(buf_expr)
+            out.append("(%s)%s" % (p.c_type.strip(), buf_expr))  # cast: char* vs uint8_t*
         elif p.role == "len":
             out.append(len_expr)
+        elif p.role == "out_buffer":
+            out.append("(%s)%s" % (p.c_type.strip(), out_expr))
         else:
             out.append(scalar_expr)
     return ", ".join(out)
@@ -129,17 +154,25 @@ def rust_call(spec: CallSpec, input_bytes: bytes, scalar: str = "0") -> str:
 
 
 def generate_c_harness(specs: list[CallSpec], header: str) -> str:
-    """A dispatch `main()` — argv[1] names the function, stdin is the byte buffer,
-    scalars default to 0, result printed as an unsigned integer."""
-    calls = "\n".join(
-        '    if(!strcmp(n,"%s")) { printf("%%llu",(unsigned long long)%s(%s)); return 0; }'
-        % (s.func, s.func, c_call_args(s))
-        for s in specs if s.supported
-    )
+    """A dispatch `main()` — argv[1] names the function, stdin is the input byte
+    buffer, scalars default to 0. A scalar-return function prints its value; an
+    output-buffer function writes the produced bytes (length = the C return)."""
+    lines = []
+    for s in specs:
+        if not s.supported:
+            continue
+        if s.buffer_output:
+            call = ("    if(!strcmp(n,\"%s\")) { unsigned long long m=(unsigned long long)%s(%s); "
+                    "fwrite(outbuf,1,(size_t)m,stdout); return 0; }"
+                    % (s.func, s.func, c_call_args(s)))
+        else:
+            call = ('    if(!strcmp(n,"%s")) { printf("%%llu",(unsigned long long)%s(%s)); return 0; }'
+                    % (s.func, s.func, c_call_args(s)))
+        lines.append(call)
     return (
         '#include <cstdio>\n#include <cstring>\n#include <cstdint>\n#include "%s"\n'
         "int main(int argc, char** argv){\n"
-        "  const char* n = argv[1]; static uint8_t in[65536];\n"
+        "  const char* n = argv[1]; static uint8_t in[65536]; static uint8_t outbuf[262144];\n"
         "  uint32_t l = (uint32_t)fread(in, 1, sizeof(in), stdin);\n"
-        "%s\n  return 1;\n}\n" % (header, calls)
+        "%s\n  return 1;\n}\n" % (header, "\n".join(lines))
     )

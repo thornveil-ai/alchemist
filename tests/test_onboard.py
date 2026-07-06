@@ -6,6 +6,7 @@ extract EVERY table (not a subset) and fill in dependency order.
 
 from alchemist.autonomy.onboard import (
     extract_tables, discover_functions, fill_order, c_to_rust_scalar, CTable,
+    extract_char_defines,
 )
 
 CRC_LIKE = r"""
@@ -88,6 +89,30 @@ def test_fill_order_tolerates_cycles():
     funcs = discover_functions(src)
     order = fill_order(funcs)
     assert set(order) == {"a", "b"}
+
+
+def test_char_literal_table():
+    src = "static const char b64en[] = { 'A', 'B', 'C', '+', '/' };"
+    tabs = extract_tables(src)
+    assert tabs["b64en"].values == [65, 66, 67, 43, 47]
+
+
+def test_kandr_multiline_function_definition():
+    # return type on its own line (base64.c style)
+    src = (
+        "unsigned int\n"
+        "base64_encode(const unsigned char *in, unsigned int inlen, char *out)\n"
+        "{\n    return 0;\n}\n"
+    )
+    funcs = discover_functions(src)
+    assert "base64_encode" in funcs
+    assert funcs["base64_encode"].ret.replace(" ", "") == "unsignedint"
+
+
+def test_extract_char_defines():
+    src = "#define BASE64_PAD '='\n#define FIRST '+'\n#define NL '\\n'\n#define NOTACHAR 42\n"
+    d = extract_char_defines(src)
+    assert d == {"BASE64_PAD": 61, "FIRST": 43, "NL": 10}  # integer #define excluded
 
 
 def test_c_to_rust_scalar():

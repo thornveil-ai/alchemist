@@ -14,7 +14,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from alchemist.autonomy.onboard import extract_tables, discover_functions, fill_order
+from alchemist.autonomy.onboard import (
+    extract_tables, discover_functions, fill_order, extract_char_defines,
+)
 from alchemist.autonomy.oracle_gen import (
     classify_signature, rust_signature, generate_c_harness, rust_call,
 )
@@ -67,9 +69,13 @@ def build_crate_from_c(c_path: Path, header_name: str, out_dir: Path,
                     "-o", str(oracle_bin), str(out_dir/"_oracle.cpp"), str(c_path)],
                    check=True)
 
-    def run_oracle(fn: str, inp: bytes) -> int:
+    def run_oracle_scalar(fn: str, inp: bytes) -> int:
         r = subprocess.run([str(oracle_bin), fn], input=inp, capture_output=True)
         return int(r.stdout or b"0")
+
+    def run_oracle_bytes(fn: str, inp: bytes) -> bytes:
+        r = subprocess.run([str(oracle_bin), fn], input=inp, capture_output=True)
+        return r.stdout
 
     # --- Rust crate skeleton: tables (data) + stubs (for the model) + tests ---
     crate = out_dir/crate_name
@@ -78,18 +84,26 @@ def build_crate_from_c(c_path: Path, header_name: str, out_dir: Path,
         '[package]\nname="%s"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="src/lib.rs"\n'
         % crate_name)
     tables_rs = "\n".join(t.rust_const() for t in tables.values())
+    consts_rs = "\n".join("pub const %s: u8 = %d;" % (n.upper(), v)
+                          for n, v in extract_char_defines(src).items())
     stubs = "\n".join("%s { unimplemented!() }" % rust_signature(specs[n]) for n in fill_seq)
     tests, ntests = [], 0
     for n in tested:
         for i, inp in enumerate(inputs):
-            exp = run_oracle(n, inp)
-            tests.append("    #[test]\n    fn t_%s_%d(){ assert_eq!(%s, %d); }"
-                         % (n, i, rust_call(specs[n], inp), exp))
+            if specs[n].buffer_output:
+                exp = run_oracle_bytes(n, inp)
+                expected = "&[" + ", ".join(str(b) for b in exp) + "]"
+                tests.append("    #[test]\n    fn t_%s_%d(){ assert_eq!(%s.as_slice(), %s); }"
+                             % (n, i, rust_call(specs[n], inp), expected))
+            else:
+                exp = run_oracle_scalar(n, inp)
+                tests.append("    #[test]\n    fn t_%s_%d(){ assert_eq!(%s, %d); }"
+                             % (n, i, rust_call(specs[n], inp), exp))
             ntests += 1
     (crate/"src"/"lib.rs").write_text(
         "#![allow(dead_code, clippy::needless_range_loop, unused_variables)]\n"
         "// Auto-onboarded from %s. Tables provided as data; functions for the model.\n"
         % c_path.name
-        + tables_rs + "\n\n" + stubs + "\n"
+        + consts_rs + "\n" + tables_rs + "\n\n" + stubs + "\n"
         + "#[cfg(test)]\nmod tests {\n    use super::*;\n" + "\n".join(tests) + "\n}\n")
     return OnboardResult(crate, fill_seq, tested, skipped, len(tables), ntests)

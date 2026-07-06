@@ -19,21 +19,21 @@ def test_buffer_len():
     roles = [p.role for p in s.params]
     assert roles == ["buffer", "len"]
     assert rust_signature(s) == "pub fn crc_crc8(data: &[u8]) -> u8"
-    assert c_call_args(s) == "in, l"
+    assert c_call_args(s) == "(const uint8_t *)in, l"
 
 
 def test_seed_buffer_len():
     s = classify_signature(_fn("crc_crc32", "uint32_t", "uint32_t crc, const uint8_t *buf, uint32_t size"))
     assert [p.role for p in s.params] == ["scalar", "buffer", "len"]
     assert rust_signature(s) == "pub fn crc_crc32(crc: u32, data: &[u8]) -> u32"
-    assert c_call_args(s) == "0, in, l"
+    assert c_call_args(s) == "0, (const uint8_t *)in, l"
 
 
 def test_buffer_len_seed():
     s = classify_signature(_fn("crc16_ccitt", "uint16_t", "const uint8_t *buf, uint32_t len, uint16_t crc"))
     assert [p.role for p in s.params] == ["buffer", "len", "scalar"]
     assert rust_signature(s) == "pub fn crc16_ccitt(data: &[u8], crc: u16) -> u16"
-    assert c_call_args(s) == "in, l, 0"
+    assert c_call_args(s) == "(const uint8_t *)in, l, 0"
 
 
 def test_void_pointer_buffer():
@@ -56,6 +56,31 @@ def test_default_arg_stripped():
     roles = [p.role for p in s.params]
     assert roles == ["buffer", "len", "scalar", "scalar"]
     assert "initial_value: u8" in rust_signature(s)
+
+
+def test_output_buffer_classified():
+    # base64's REAL signature: in + inlen + a mutable `out` buffer, returns length
+    s = classify_signature(_fn("base64_encode", "unsigned int",
+                               "const unsigned char *in, unsigned int inlen, char *out"))
+    assert [p.role for p in s.params] == ["buffer", "len", "out_buffer"]
+    assert s.supported and s.buffer_output
+    assert rust_signature(s) == "pub fn base64_encode(data: &[u8]) -> Vec<u8>"
+
+
+def test_output_buffer_harness_dumps_bytes():
+    s = classify_signature(_fn("base64_encode", "unsigned int",
+                               "const unsigned char *in, unsigned int inlen, char *out"))
+    h = generate_c_harness([s], "base64.h")
+    assert "fwrite(outbuf" in h            # writes produced bytes, not a scalar
+    assert "base64_encode((const unsigned char *)in, l, (char *)outbuf)" in h
+
+
+def test_mutable_input_pointer_not_output():
+    # a mutable byte pointer NOT named like an output stays unknown (don't guess
+    # in/out) — e.g. crc_crc16_ibm(uint16_t crc, uint8_t *data_blk_ptr, uint16_t size)
+    s = classify_signature(_fn("crc_crc16_ibm", "uint16_t",
+                               "uint16_t crc_accum, uint8_t *data_blk_ptr, uint16_t data_blk_size"))
+    assert not s.supported
 
 
 def test_harness_only_includes_supported():

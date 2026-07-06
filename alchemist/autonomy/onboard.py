@@ -77,22 +77,52 @@ class CTable:
             ", ".join(str(v) for v in self.values))
 
 
+_ESC = {"\\n": 10, "\\t": 9, "\\r": 13, "\\0": 0, "\\\\": 92, "\\'": 39, '\\"': 34}
+
+
+def _parse_table_values(body: str) -> list[int]:
+    """Numbers (dec/hex) AND char literals ('A', '\\n') — real C tables use both
+    (base64's encode table is char literals, its decode table is numbers)."""
+    vals: list[int] = []
+    for tok in re.finditer(r"0x[0-9a-fA-F]+|'(?:\\.|[^'])'|\d+", body):
+        t = tok.group(0)
+        if t.startswith("'"):
+            inner = t[1:-1]
+            vals.append(_ESC.get(inner, ord(inner[-1])))
+        else:
+            vals.append(int(t, 0))
+    return vals
+
+
 def extract_tables(source: str) -> dict[str, CTable]:
     """Every `static const T name[...] = { ... }` in the source, typed.
 
     Parses the comment/string-blanked copy so numbers inside comments (e.g.
-    base64's `/* '0','1',.. */` rows) never leak into the values.
+    base64's `/* '0','1',.. */` rows) never leak into the values. Handles both
+    numeric and char-literal element lists.
     """
-    clean = _blank_comments_strings(source)
     out: dict[str, CTable] = {}
     for m in re.finditer(
         r"static\s+const\s+([\w ]+?)\s+(\w+)\s*\[[^\]]*\]\s*=\s*\{(.*?)\}\s*;",
-        clean, re.S,
+        source, re.S,
     ):
         cty, name, body = m.group(1).strip(), m.group(2), m.group(3)
-        vals = [int(v, 0) for v in re.findall(r"0x[0-9a-fA-F]+|\d+", body)]
+        # strip comments from the body (keep char literals), then parse values
+        body = re.sub(r"/\*.*?\*/", " ", body, flags=re.S)
+        body = re.sub(r"//[^\n]*", " ", body)
+        vals = _parse_table_values(body)
         if vals:
             out[name] = CTable(name, c_to_rust_scalar(cty), vals)
+    return out
+
+
+def extract_char_defines(source: str) -> dict[str, int]:
+    """`#define NAME 'x'` byte constants (e.g. base64's `BASE64_PAD '='`). The
+    code compares bytes against these; emit them as `pub const NAME: u8`."""
+    out: dict[str, int] = {}
+    for m in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+'(\\?.)'", source, re.M):
+        name, ch = m.group(1), m.group(2)
+        out[name] = _ESC.get("\\" + ch[-1], ord(ch[-1])) if ch.startswith("\\") else ord(ch)
     return out
 
 
@@ -114,8 +144,8 @@ def discover_functions(source: str) -> dict[str, CFunc]:
     for m in re.finditer(
         r"(?:^|\n)[ \t]*"
         r"((?:static|inline|extern)\s+)*"          # storage
-        r"([A-Za-z_][\w \t]*?[\w])"                # return type tokens
-        r"[ \t\*]+([A-Za-z_]\w*)[ \t]*"            # * / space then NAME
+        r"([A-Za-z_][\w \t]*?[\w])"                # return type tokens (one line)
+        r"[ \t\n\*]+([A-Za-z_]\w*)[ \t\n]*"        # newline/space/star then NAME (K&R)
         r"\(([^;{]*?)\)[ \t\n]*(?:const[ \t]*)?\{",  # ( params ) {
         clean,
     ):
