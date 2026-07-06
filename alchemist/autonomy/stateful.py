@@ -256,6 +256,36 @@ def emit_macro_helpers(src: str) -> tuple[str, list[str]]:
 
 
 @dataclass
+class ArrayCipher:
+    """A stream cipher whose state is a byte ARRAY (not a struct): key-setup(state,
+    key, len) then generate(state, out, len). RC4/arcfour is the canonical shape."""
+    init: str
+    gen: str
+    state_size: int
+
+
+def detect_array_cipher(funcs: dict) -> ArrayCipher | None:
+    def first_is_byte_array(f) -> bool:
+        parts = [p.strip() for p in f.params.split(",") if p.strip()]
+        return bool(parts) and "[" in parts[0] and \
+            bool(re.search(r"\b(BYTE|uint8_t|u8|unsigned char)\b", parts[0]))
+    on_state = [n for n, f in funcs.items() if first_is_byte_array(funcs[n])]
+    if len(on_state) < 2:
+        return None
+    init = next((n for n in on_state if any(k in n.lower()
+                 for k in ("setup", "init", "schedule", "ksa"))), None)
+    gen = next((n for n in on_state if any(k in n.lower()
+                for k in ("generate", "stream", "crypt", "prga", "keystream"))), None)
+    if not (init and gen):
+        return None
+    # infer the state array size from the init body (`< 256`, `state[255]`), else 256
+    body = funcs[init].body
+    m = re.search(r"[<]=?\s*(\d{2,4})|\[\s*(\d{2,4})\s*\]", body)
+    size = int(next((g for g in (m.groups() if m else ()) if g), 256))
+    return ArrayCipher(init, gen, size if size >= 16 else 256)
+
+
+@dataclass
 class StatefulResult:
     crate_dir: Path
     fill_order: list[str]
@@ -263,6 +293,90 @@ class StatefulResult:
     num_vectors: int
     stubbed: list[str] = field(default_factory=list)
     macro_names: list[str] = field(default_factory=list)
+
+
+def build_array_cipher_crate(paths: list[Path], out_dir: Path, crate_name: str,
+                             key_lengths: list[int], gcc: str = "g++",
+                             keystream_len: int = 64) -> StatefulResult:
+    """Onboard an array-state stream cipher (RC4/arcfour): key_setup(state,key,len)
+    then generate(state,out,len). State modelled as `[u8; N]`; the fuzz input is the
+    KEY; the oracle generates a fixed keystream and compares byte-exact."""
+    from alchemist.autonomy.onboard import fill_order, extract_char_defines
+    out_dir = Path(out_dir).resolve()
+    sources = []
+    for p in [Path(x) for x in paths]:
+        sources += (sorted(p.rglob("*.c")) + sorted(p.rglob("*.cpp"))) if p.is_dir() else [p]
+    sources = [s for s in sources if out_dir not in s.resolve().parents
+               and s.name not in ("_seq.cpp", "_oracle.cpp")]
+    headers = sorted({h for s in sources for h in s.parent.glob("*.h")})
+    src_all = "\n".join(s.read_text(errors="replace") for s in sources + headers)
+    funcs, tables, typedefs = {}, {}, {}
+    for s in sources + headers:
+        txt = s.read_text(errors="replace")
+        funcs.update(discover_functions(txt)); tables.update(extract_tables(txt))
+        typedefs.update(resolve_typedefs(txt))
+    cipher = detect_array_cipher(funcs)
+    if not cipher:
+        raise ValueError("no-oracle: no array-state cipher (init+generate) detected")
+    N, K = cipher.state_size, keystream_len
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plan = discover_build(sources, list({s.parent for s in sources}), out_dir, gcc=gcc)
+    incs = "".join('#include "%s"\n' % h.name for h in headers)
+    harness = (
+        "#include <cstdio>\n#include <cstring>\n#include <cstdint>\n%s"
+        "int main(){ static unsigned char in[65536]; int l=(int)fread(in,1,sizeof(in),stdin);\n"
+        "  unsigned char state[%d]; unsigned char out[%d];\n"
+        "  %s(state, in, l); %s(state, out, %d);\n"
+        "  fwrite(out,1,%d,stdout); return 0; }\n"
+        % (incs, N, K, cipher.init, cipher.gen, K, K))
+    (out_dir / "_seq.cpp").write_text(harness)
+    oracle = out_dir / "_seq"
+    subprocess.run(plan.compile_cmd([out_dir / "_seq.cpp"], oracle), check=True)
+
+    def gen_key(length, seed):
+        b, x = bytearray(), (seed * 2654435761 + 1) & 0xFFFFFFFF
+        for _ in range(length):
+            x = (1103515245 * x + 12345) & 0xFFFFFFFF
+            b.append((x >> 16) & 0xFF)
+        return bytes(b)
+    vectors = []
+    for i, L in enumerate(key_lengths):
+        k = gen_key(max(1, L), i)  # key must be non-empty for RC4
+        ks = subprocess.run([str(oracle)], input=k, capture_output=True).stdout
+        vectors.append((k, ks))
+    if not any(v for _, v in vectors):
+        raise ValueError("no-oracle: array-cipher harness produced empty output")
+
+    crate = out_dir / crate_name
+    (crate / "src").mkdir(parents=True, exist_ok=True)
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname="%s"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="src/lib.rs"\n'
+        '[profile.dev]\noverflow-checks = false\n[profile.test]\noverflow-checks = false\n' % crate_name)
+    macro_rs, _ = emit_macro_helpers(src_all)
+    tables_rs = "\n".join(t.rust_const() for t in tables.values())
+    consts = "\n".join("pub const %s: u8 = %d;" % (n.upper(), v)
+                       for n, v in extract_char_defines(src_all).items())
+    aliases = "\n".join("#[allow(non_camel_case_types)] pub type %s = %s;" % (a, _rust_scalar(a, typedefs))
+                        for a in typedefs if _rust_scalar(a, typedefs) in ("u8", "u16", "u32", "u64"))
+    sig = {cipher.init: "pub fn %s(state: &mut [u8; %d], key: &[u8])" % (cipher.init, N),
+           cipher.gen: "pub fn %s(state: &mut [u8; %d], out_len: usize) -> Vec<u8>" % (cipher.gen, N)}
+    fill_seq = [cipher.init, cipher.gen]
+    stubs = "\n".join("%s { unimplemented!() }" % sig[n] for n in fill_seq)
+    vec_lits = ",\n        ".join("(&[%s], &[%s])" % (", ".join(map(str, k)), ", ".join(map(str, ks)))
+                                  for k, ks in vectors)
+    test = ("#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn fuzz_%s() {\n"
+            "        let vectors: &[(&[u8], &[u8])] = &[\n        %s];\n"
+            "        for (key, expected) in vectors {\n"
+            "            let mut state = [0u8; %d];\n"
+            "            %s(&mut state, key);\n"
+            "            assert_eq!(%s(&mut state, %d).as_slice(), *expected, \"keylen {}\", key.len());\n"
+            "        }\n    }\n}\n"
+            % (crate_name, vec_lits, N, cipher.init, cipher.gen, K))
+    (crate / "src" / "lib.rs").write_text(
+        "#![allow(dead_code, non_snake_case, clippy::needless_range_loop, unused_variables)]\n"
+        + aliases + "\n" + consts + "\n" + tables_rs + "\n\n" + macro_rs + "\n\n" + stubs + "\n\n" + test)
+    return StatefulResult(crate, fill_seq, None, len(vectors), plan.stubbed, [])
 
 
 def build_stateful_crate(paths: list[Path], out_dir: Path, crate_name: str,

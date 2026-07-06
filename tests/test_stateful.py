@@ -77,6 +77,23 @@ def test_stateful_signatures():
     assert stateful_signature("sha256_final", funcs, api) == "pub fn sha256_final(ctx: &mut Sha256Ctx) -> Vec<u8>"
 
 
+def test_detect_array_cipher():
+    from alchemist.autonomy.stateful import detect_array_cipher
+    src = ("void rc4_key_setup(BYTE state[], const BYTE key[], int len) { for(int i=0;i<256;i++) state[i]=i; }\n"
+           "void rc4_generate_stream(BYTE state[], BYTE out[], size_t len) { for(size_t i=0;i<len;i++) out[i]=0; }")
+    c = detect_array_cipher(discover_functions(src))
+    assert c is not None
+    assert c.init == "rc4_key_setup" and c.gen == "rc4_generate_stream"
+    assert c.state_size == 256
+
+
+def test_array_cipher_needs_init_and_generate():
+    from alchemist.autonomy.stateful import detect_array_cipher
+    # only one array-state function -> not a cipher pattern
+    src = "void hash_bytes(BYTE state[], const BYTE data[], int n) { }"
+    assert detect_array_cipher(discover_functions(src)) is None
+
+
 def test_macro_helpers_expression_vs_statement():
     from alchemist.autonomy.stateful import emit_macro_helpers
     src = (
