@@ -153,7 +153,11 @@ def build_scorecard(repo_root: Path | None = None, subject: str = "zlib") -> Sco
     shims = root / "alchemist" / "references" / "shims" / subject
 
     # --- WS1: hand-written oracle glue (shim runners) ---
-    n_shims, _ = _count_shim_runners(shims)
+    n_shims_total, _ = _count_shim_runners(shims)
+    from alchemist.autonomy.ledger import Ledger as _L
+    _lg = _L.load()
+    n_shims_retired = sum(1 for v in _lg.retired.values() if v.get("crate") == "shim-accessor")
+    n_shims = max(0, n_shims_total - n_shims_retired)
 
     # --- WS3/WS4: human-ported Rust bodies (hardports, wip, verified snapshots) ---
     hardport_rs: list[Path] = []
@@ -196,11 +200,14 @@ def build_scorecard(repo_root: Path | None = None, subject: str = "zlib") -> Sco
     sc.categories = [
         DebtCategory(
             key="oracle_shims", workstream="WS1",
-            title="Hand-written oracle shim runners",
+            title="Hand-written oracle shim runners (still human-authored)",
             count=n_shims, unit="shims",
-            detail="C glue that runs the reference and captures return + effect footprint.",
-            checklist="Auto-generate the harness from (header, compiled lib, fn) — signature-"
-                      "driven FFI/shim gen + effect-footprint inference.",
+            detail=f"C glue that runs the reference + captures effect footprint. "
+                   f"{n_shims_retired} of {n_shims_total} auto-synthesized + compile-validated "
+                   f"by the shim generator (mechanical field accessors + call-through runners); "
+                   f"the rest are custom setup/marshalling.",
+            checklist="Extend the generator to the custom runners; effect-footprint inference "
+                      "for full signature-driven harness gen.",
         ),
         DebtCategory(
             key="hardported_bodies", workstream="WS3/WS4",
