@@ -27,9 +27,38 @@ from alchemist.autonomy.ledger import Ledger
 from alchemist.autonomy.live_repair import (
     _blank_rust,
     _rust_fn_span,
-    repair_crate,
+    make_refill,
     run_crate_tests,
 )
+
+
+_FAILED_RE = re.compile(r"^test\s+(\S+)\s+\.\.\.\s+FAILED", re.MULTILINE)
+
+
+def failing_tests(output: str) -> frozenset[str]:
+    """Names of tests that FAILED in a cargo run (order-independent set)."""
+    return frozenset(_FAILED_RE.findall(output))
+
+
+def _extract_cargo_errors(output: str, limit: int = 24) -> str:
+    """Pull the actionable failure lines from a cargo run: compile errors (with
+    their message + note lines) and assert_eq diffs. This is what gets fed back
+    to the model so it fixes the CAUSE (e.g. 'cannot find function put_short' ->
+    inline the C macro) instead of guessing again."""
+    keep: list[str] = []
+    lines = output.splitlines()
+    for i, l in enumerate(lines):
+        s = l.strip()
+        if s.startswith(("error[", "error:", "warning: unused")) or "cannot find" in s \
+           or "no method named" in s or "mismatched types" in s \
+           or s.startswith(("left:", "right:", "assertion")) or "panicked at" in s:
+            keep.append(l.rstrip())
+            # include the immediately-following help/note line for compile errors
+            if i + 1 < len(lines) and lines[i + 1].strip().startswith(("-->", "help:", "note:", "=")):
+                keep.append(lines[i + 1].rstrip())
+        if len(keep) >= limit:
+            break
+    return "\n".join(keep)
 
 _IMPL_FN_RE = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:unsafe\s+)?fn\s+(\w+)\s*[<(]",
                          re.MULTILINE)
@@ -102,27 +131,55 @@ def regen_function(
     """
     original = module_path.read_text(encoding="utf-8")
     test_filter = (fn.lstrip("_") or fn) if isolate else ""
-    # Baseline: the fn's own tests must be GREEN on the verified canon, else its
-    # tests are themselves broken and reproducing the fn can't prove anything.
-    base_ok, _ = run_crate_tests(workspace_dir, crate_name, env=env, test_filter=test_filter)
-    if not base_ok:
+
+    def run() -> tuple[bool, frozenset[str], str]:
+        ok, out = run_crate_tests(workspace_dir, crate_name, env=env, test_filter=test_filter)
+        compiled = ok or ("test result:" in out)  # tests actually ran (not a compile error)
+        return compiled, failing_tests(out), out
+
+    # Baseline failing set on the verified canon. We prove reproduction by
+    # RETURNING TO this set (not "all green"), so a crate with unrelated stale
+    # failures (deflate has 21, trees 16) is still a valid target.
+    base_compiled, baseline_fails, _ = run()
+    if not base_compiled:
         return "untestable-baseline", 0
     stubbed = stub_fn(original, fn)
     if stubbed is None:
         return "no-stub", 0
     module_path.write_text(stubbed, encoding="utf-8")
     try:
-        # Sanity: the stub must break THIS fn's tests (else it's uncovered).
-        passed_stub, _ = run_crate_tests(workspace_dir, crate_name, env=env,
-                                         test_filter=test_filter)
-        if passed_stub:
-            return "already-broken", 0  # no test exercises this fn — can't prove
-        result = repair_crate(
-            workspace_dir=workspace_dir, crate_name=crate_name, module_path=module_path,
-            c_source_path=c_source_path, candidates=[fn], llm=llm, env=env,
-            max_attempts=max_attempts, test_filter=test_filter, on_event=on_event,
-        )
-        return ("retired" if result.status == "fixed" else "resisted", result.attempts)
+        # The stub must ADD failures (this fn's tests) beyond baseline, else no
+        # test in scope exercises it and reproducing it proves nothing.
+        stub_compiled, stub_fails, _ = run()
+        if not (stub_compiled and stub_fails > baseline_fails):
+            return "already-broken", 0
+        # Iterative refill with compile/test-error feedback — the model sees its
+        # own last attempt plus the exact error and fixes the CAUSE.
+        refill = make_refill(module_path, c_source_path, llm, on_event=on_event)
+        base_msg = ("The differential oracle rejects this function's output. Match the "
+                    "C reference exactly.")
+        prev_err = ""
+        for attempt in range(1, max_attempts + 1):
+            guidance = base_msg
+            if prev_err:
+                guidance += (
+                    "\n\n## Your previous attempt FAILED with this compiler/test output "
+                    "— fix the CAUSE:\n```\n" + prev_err + "\n```\n"
+                    "Reminder: C macros (put_byte, put_short, Assert, Tracev) are NOT "
+                    "functions here — inline them. The pending output buffer is the Vec "
+                    "`state.pending`: put_byte(s,b) => state.pending.push(b as u8); "
+                    "put_short(s,w) => state.pending.push((w & 0xff) as u8); "
+                    "state.pending.push((w >> 8) as u8). Only call functions listed as "
+                    "in scope above; never invent a helper."
+                )
+            changed = refill(fn, guidance)
+            if not changed:
+                break
+            compiled, cur_fails, out = run()
+            if compiled and cur_fails == baseline_fails:
+                return "retired", attempt  # back to baseline -> reproduced
+            prev_err = _extract_cargo_errors(out) or "(non-compiling or new failures)"
+        return "resisted", max_attempts
     finally:
         module_path.write_text(original, encoding="utf-8")  # restore canon
 
