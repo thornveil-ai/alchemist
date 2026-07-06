@@ -77,11 +77,29 @@ def _name_and_type(param: str) -> tuple[str, str]:
     return name, c_type
 
 
-def classify_signature(cfunc: CFunc) -> CallSpec:
+def _resolve_typedefs_in(text: str, typedefs: dict) -> str:
+    if not typedefs:
+        return text
+
+    def rep(m):
+        w = m.group(0)
+        seen: set = set()
+        while w in typedefs and w not in seen:
+            seen.add(w)
+            w = typedefs[w]
+        return w
+    return re.sub(r"\b[A-Za-z_]\w*\b", rep, text)
+
+
+def classify_signature(cfunc: CFunc, typedefs: dict | None = None) -> CallSpec:
     parts = _split_params(cfunc.params)
     out: list[Param] = []
     for p in parts:
+        # array-syntax params decay to pointers: `const BYTE data[]` -> `const BYTE * data`
+        p = re.sub(r"([A-Za-z_]\w*)\s*\[\s*\w*\s*\]", r"* \1", p)
         name, c_type = _name_and_type(p)
+        # resolve typedef'd byte types (BYTE -> unsigned char) for detection
+        c_type = _resolve_typedefs_in(c_type, typedefs or {})
         is_ptr = "*" in p
         if is_ptr:
             # A byte INPUT buffer is a CONST pointer to a byte-width type
