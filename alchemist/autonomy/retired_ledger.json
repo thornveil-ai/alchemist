@@ -14,6 +14,13 @@
       "note": "",
       "proof": "regen-differential"
     },
+    "zlib-checksum::braid": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "braid",
+      "note": "",
+      "proof": "regen-differential"
+    },
     "zlib-checksum::byte_swap": {
       "attempts": 1,
       "crate": "zlib-checksum",
@@ -35,6 +42,20 @@
       "note": "",
       "proof": "regen-differential"
     },
+    "zlib-checksum::get_crc_table": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "get_crc_table",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-checksum::multmodp": {
+      "attempts": 1,
+      "crate": "zlib-checksum",
+      "fn": "multmodp",
+      "note": "",
+      "proof": "regen-differential"
+    },
     "zlib-checksum::write_table": {
       "attempts": 1,
       "crate": "zlib-checksum",
@@ -49,6 +70,83 @@
       "note": "",
       "proof": "regen-differential"
     },
+    "zlib-deflate::deflate_huff": {
+      "attempts": 1,
+      "crate": "zlib-deflate",
+      "fn": "deflate_huff",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::deflate_rle": {
+      "attempts": 3,
+      "crate": "zlib-deflate",
+      "fn": "deflate_rle",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::deflate_state_check": {
+      "attempts": 1,
+      "crate": "zlib-deflate",
+      "fn": "deflate_state_check",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::insert_string": {
+      "attempts": 2,
+      "crate": "zlib-deflate",
+      "fn": "insert_string",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::lm_init": {
+      "attempts": 2,
+      "crate": "zlib-deflate",
+      "fn": "lm_init",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::longest_match": {
+      "attempts": 3,
+      "crate": "zlib-deflate",
+      "fn": "longest_match",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::zmemcmp": {
+      "attempts": 1,
+      "crate": "zlib-deflate",
+      "fn": "zmemcmp",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::zmemcpy": {
+      "attempts": 1,
+      "crate": "zlib-deflate",
+      "fn": "zmemcpy",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-deflate::zmemzero": {
+      "attempts": 1,
+      "crate": "zlib-deflate",
+      "fn": "zmemzero",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-trees::_tr_align": {
+      "attempts": 3,
+      "crate": "zlib-trees",
+      "fn": "_tr_align",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-trees::bi_flush": {
+      "attempts": 2,
+      "crate": "zlib-trees",
+      "fn": "bi_flush",
+      "note": "",
+      "proof": "regen-differential"
+    },
     "zlib-trees::bi_reverse": {
       "attempts": 1,
       "crate": "zlib-trees",
@@ -56,10 +154,31 @@
       "note": "",
       "proof": "regen-differential"
     },
+    "zlib-trees::bi_windup": {
+      "attempts": 2,
+      "crate": "zlib-trees",
+      "fn": "bi_windup",
+      "note": "",
+      "proof": "regen-differential"
+    },
     "zlib-trees::gen_codes": {
       "attempts": 1,
       "crate": "zlib-trees",
       "fn": "gen_codes",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-trees::pqdownheap": {
+      "attempts": 2,
+      "crate": "zlib-trees",
+      "fn": "pqdownheap",
+      "note": "",
+      "proof": "regen-differential"
+    },
+    "zlib-trees::send_bits": {
+      "attempts": 2,
+      "crate": "zlib-trees",
+      "fn": "send_bits",
       "note": "",
       "proof": "regen-differential"
     }
