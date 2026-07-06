@@ -56,6 +56,10 @@ class CallSpec:
         return any(p.role == "out_buffer" for p in self.params)
 
     @property
+    def has_out_len(self) -> bool:
+        return any(p.role == "out_length_ptr" for p in self.params)
+
+    @property
     def rust_ret(self) -> str:
         return "Vec<u8>" if self.buffer_output else self.ret_rust
 
@@ -112,6 +116,11 @@ def classify_signature(cfunc: CFunc, typedefs: dict | None = None) -> CallSpec:
                 out.append(Param("buffer", c_type, name, "u8"))
             elif byte_ptr and name.lower() in _OUT_NAMES:
                 out.append(Param("out_buffer", c_type, name, "u8"))
+            elif (re.search(r"\b(int|size_t|unsigned|uint\d+_t|long|size)\b", c_type)
+                  and (name.lower() in _LEN_NAMES
+                       or re.search(r"(len|size|count)$", name.lower()))):
+                # pointer to an integer named like a length = OUTPUT length pointer
+                out.append(Param("out_length_ptr", c_type, name, "usize"))
             else:
                 out.append(Param("unknown", c_type, name, "u8"))
         elif (name.lower() in _LEN_NAMES
@@ -133,8 +142,8 @@ def rust_signature(spec: CallSpec) -> str:
             if not buffer_done:
                 args.append("data: &[u8]")
                 buffer_done = True
-        elif p.role in ("len", "out_buffer"):
-            continue  # len folded into data.len(); out_buffer becomes the return
+        elif p.role in ("len", "out_buffer", "out_length_ptr"):
+            continue  # len -> data.len(); out_buffer -> return; out-length -> Vec len
         elif p.role == "scalar":
             args.append("%s: %s" % (p.name, p.rust_type))
     return "pub fn %s(%s) -> %s" % (spec.func, ", ".join(args), spec.rust_ret)
@@ -151,6 +160,8 @@ def c_call_args(spec: CallSpec, buf_expr: str = "in", len_expr: str = "l",
             out.append(len_expr)
         elif p.role == "out_buffer":
             out.append("(%s)%s" % (p.c_type.strip(), out_expr))
+        elif p.role == "out_length_ptr":
+            out.append("(%s)&__ol" % p.c_type.strip())
         else:
             out.append(scalar_expr)
     return ", ".join(out)
@@ -183,7 +194,12 @@ def generate_c_harness(specs: list[CallSpec], header) -> str:
     for s in specs:
         if not s.supported:
             continue
-        if s.buffer_output:
+        if s.buffer_output and s.has_out_len:
+            # output length is written through a pointer arg, not the return value
+            call = ("    if(!strcmp(n,\"%s\")) { unsigned long __ol=0; %s(%s); "
+                    "fwrite(outbuf,1,(size_t)__ol,stdout); return 0; }"
+                    % (s.func, s.func, c_call_args(s)))
+        elif s.buffer_output:
             call = ("    if(!strcmp(n,\"%s\")) { unsigned long long m=(unsigned long long)%s(%s); "
                     "fwrite(outbuf,1,(size_t)m,stdout); return 0; }"
                     % (s.func, s.func, c_call_args(s)))

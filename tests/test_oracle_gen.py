@@ -83,6 +83,22 @@ def test_mutable_input_pointer_not_output():
     assert not s.supported
 
 
+def test_out_length_ptr_shape():
+    s = classify_signature(_fn("codec_encode", "int",
+                               "const uint8_t *in, size_t inlen, uint8_t *out, size_t *outlen"))
+    assert [p.role for p in s.params] == ["buffer", "len", "out_buffer", "out_length_ptr"]
+    assert s.buffer_output and s.has_out_len
+    assert rust_signature(s) == "pub fn codec_encode(data: &[u8]) -> Vec<u8>"
+
+
+def test_out_length_ptr_harness_uses_pointer():
+    s = classify_signature(_fn("codec_encode", "int",
+                               "const uint8_t *in, size_t inlen, uint8_t *out, size_t *outlen"))
+    h = generate_c_harness([s], "codec.h")
+    assert "unsigned long __ol=0" in h
+    assert "fwrite(outbuf,1,(size_t)__ol,stdout)" in h  # length from the pointer, not the return
+
+
 def test_harness_only_includes_supported():
     supported = classify_signature(_fn("crc_crc8", "uint8_t", "const uint8_t *p, uint8_t len"))
     unsupported = classify_signature(_fn("hash_fnv_1a", "void", "uint32_t len, const uint8_t *buf, uint64_t *hash"))

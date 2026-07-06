@@ -116,6 +116,23 @@ def extract_tables(source: str) -> dict[str, CTable]:
     return out
 
 
+def gen_fuzz_lengths(n: int, max_len: int = 4096) -> list[int]:
+    """`n` diverse input lengths for deep differential fuzzing: every boundary
+    value (powers of two, block edges) first, then a deterministic spread up to
+    `max_len`. Deterministic (no RNG) so runs are reproducible."""
+    boundary = [0, 1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 55, 56, 57, 63, 64,
+                65, 71, 127, 128, 129, 191, 192, 255, 256, 257, 383, 384, 511, 512,
+                513, 1023, 1024, 1025, 2047, 2048, 4095, 4096]
+    out = list(dict.fromkeys(x for x in boundary if x <= max_len))
+    x = 12345
+    while len(out) < n:
+        x = (1103515245 * x + 12345) & 0x7FFFFFFF
+        v = x % (max_len + 1)
+        if v not in out:
+            out.append(v)
+    return out[:n]
+
+
 def extract_char_defines(source: str) -> dict[str, int]:
     """`#define NAME 'x'` byte constants (e.g. base64's `BASE64_PAD '='`). The
     code compares bytes against these; emit them as `pub const NAME: u8`."""
