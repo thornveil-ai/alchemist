@@ -332,12 +332,30 @@ def make_refill(
         except Exception:
             idiom_block = ""
         mod_ctx = _module_context(source, fn)
+        # C compile-time constants (#defines) referenced in this body — they are
+        # NOT Rust consts, so the model must INLINE their integer values.
+        defines_block = ""
+        try:
+            from alchemist.autonomy.c_struct import resolve_c_defines
+            dsrc = c_source_path.read_text(encoding="utf-8", errors="replace")
+            for hp in c_source_path.parent.glob("*.h"):
+                dsrc += "\n" + hp.read_text(encoding="utf-8", errors="replace")
+            used = {k: v for k, v in resolve_c_defines(dsrc).items()
+                    if re.search(r"\b" + re.escape(k) + r"\b", c_body)}
+            if used:
+                defines_block = (
+                    "## C compile-time constants — INLINE these integer VALUES "
+                    "(they are NOT Rust consts; e.g. write 573 not HEAP_SIZE):\n"
+                    + ", ".join(f"{k} = {v}" for k, v in sorted(used.items())) + "\n"
+                )
+        except Exception:
+            defines_block = ""
         prompt = (
             f"Fix this Rust function so its output matches the C reference EXACTLY. "
             f"A differential oracle caught a divergence:\n\n{guidance}\n\n"
             f"## C reference (authoritative)\n```c\n{c_body}\n```\n\n"
             f"## Current (incorrect) Rust\n```rust\n{current}\n```\n\n"
-            f"{struct_ctx}\n{mod_ctx}\n{idiom_block}\n"
+            f"{struct_ctx}\n{mod_ctx}\n{defines_block}{idiom_block}\n"
             f"Use the constants and sibling functions listed above by name — they "
             f"already exist; do NOT redefine them. Re-derive from the C semantics. "
             f"Do NOT hard-code the expected bytes or special-case the failing input. "

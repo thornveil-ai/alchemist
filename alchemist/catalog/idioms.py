@@ -264,6 +264,23 @@ IDIOMS: tuple[Idiom, ...] = (
         example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
     ),
     Idiom(
+        id="c-fixed-array-field-to-vec-sizing",
+        name="C fixed-size array field -> Rust Vec must be sized before indexed write",
+        tags=("buffer", "gotcha", "state"),
+        c_signals=(r"->\s*\w+\s*\[[^\]]+\]\s*[+\-^|&]?=", r"s->\w+\[", r"for\s*\([^)]*\)\s*\w*->\w+\["),
+        rust_model=(
+            "A C fixed-size array field (`ush bl_count[MAX_BITS+1]`, `int heap[..]`) "
+            "is ALWAYS allocated; the coherent Rust models it as `Vec<T>`, which may "
+            "be EMPTY on a default/fresh state. Before writing OR reading it by index, "
+            "ensure it is sized: `if s.field.len() < N { s.field.resize(N, 0); }` where "
+            "N is the C array length (inline the value). Do NOT assume the Vec is "
+            "pre-sized like the C array — indexing an empty Vec panics."
+        ),
+        rationale="C arrays are always allocated; the coherent-model Vec is not, so indexed writes panic on empty.",
+        example="gen_bitlen: `if s.bl_count.len() < 16 { s.bl_count.resize(16, 0); }` before `s.bl_count[bits] = 0`.",
+        caution="Panics as 'index out of bounds: the len is 0' at the first indexed write — logic looks correct.",
+    ),
+    Idiom(
         id="for-loop-post-increment-cursor",
         name="C for(;;cursor++) with helper calls -> increment at loop END",
         tags=("control-flow", "gotcha"),

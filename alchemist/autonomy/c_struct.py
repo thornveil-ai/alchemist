@@ -71,6 +71,56 @@ def _find_struct_body(source: str, struct_name: str) -> str | None:
     return None
 
 
+_DEFINE_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+(.+?)[ \t]*(?:/\*.*|//.*)?$",
+                        re.MULTILINE)
+_ARITH_OK = re.compile(r"^[\d\s+\-*/()<>|&^~]+$")
+
+
+def resolve_c_defines(source: str) -> dict[str, int]:
+    """Resolve `#define NAME <int-expr>` macros to integer VALUES, following
+    references between them (e.g. `HEAP_SIZE (2*L_CODES+1)` -> 573). Only pure
+    integer-arithmetic macros are resolved; function-like and string macros are
+    skipped. Lets the translator INLINE C constant values, which don't exist as
+    Rust consts — the #1 compile failure on ported functions (MAX_BITS, HEAP_SIZE,
+    L_CODES...)."""
+    raw: dict[str, str] = {}
+    for m in _DEFINE_RE.finditer(source):
+        name, val = m.group(1), m.group(2).strip()
+        if "(" in name or not val:  # skip function-like macros
+            continue
+        raw[name] = val
+    resolved: dict[str, int] = {}
+
+    def resolve(name: str, seen: frozenset = frozenset()) -> int | None:
+        if name in resolved:
+            return resolved[name]
+        if name not in raw or name in seen:
+            return None
+        expr = raw[name].replace("U", "").replace("L", "")
+
+        def sub(mm):
+            n = mm.group(0)
+            if n in resolved:
+                return str(resolved[n])
+            r = resolve(n, seen | {name})
+            return str(r) if r is not None else "None"
+        e = re.sub(r"[A-Za-z_]\w*", sub, expr)
+        if "None" in e or not _ARITH_OK.match(e):
+            return None
+        try:
+            v = eval(e, {"__builtins__": {}}, {})  # sandboxed: arithmetic only
+        except Exception:
+            return None
+        if isinstance(v, int):
+            resolved[name] = v
+            return v
+        return None
+
+    for n in list(raw):
+        resolve(n)
+    return resolved
+
+
 def parse_struct_fields(source: str, struct_name: str) -> dict[str, str]:
     """Return {field_name: c_type} for `struct_name` found in `source`.
 
