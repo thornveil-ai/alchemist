@@ -230,12 +230,18 @@ def emit_macro_helpers(src: str) -> tuple[str, list[str]]:
     macros: OrderedDict = OrderedDict()
     for m in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+(\w+)\(([^)]*)\)[ \t]+(.+)$", src, re.M):
         macros[m.group(1)] = ([a.strip() for a in m.group(2).split(",")], m.group(3).strip())
+    macro_set = set(macros)
     out, emitted = [], []
     for name, (args, body) in macros.items():
         # STATEMENT macros (block bodies, or mutating an arg like `a += ...`) are
         # NOT pure functions -- skip them; the model inlines them from the C. Only
         # EXPRESSION macros become helper fns.
         if "{" in body or ";" in body or re.search(r"\b\w+\s*[-+*^|&]?=[^=]", body):
+            continue
+        # ALIAS macros that call a real function (e.g. shake128_init(c) ->
+        # sha3_init(c,16)) are API aliases, not arithmetic -- skip them, else we
+        # emit a bogus `fn shake128_init(c: u32) -> u32` that miscalls sha3_init.
+        if set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", body)) - macro_set:
             continue
         emitted.append(name)
         if "<<" in body and ">>" in body and "32" in body and len(args) == 2:
