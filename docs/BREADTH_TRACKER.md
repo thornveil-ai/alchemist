@@ -20,16 +20,32 @@ C reference. Generic per-run context (no per-library hand-tuning) unless noted.
 | base64 (zhicheng) | buffer (codec) | zhicheng/base64 | 2 | 24+32 | ✅ | real `char *out` sig; encode+decode |
 | jsmn | parser | zserge/jsmn | 6 | 13 | ✅ | 1 diagnosis (loop-cursor) |
 | SHA-256 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 300 | ✅ | no borrow hint; mechanical borrow-fix |
-| SHA-1 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 120 | ⚠️ | auto-onboarded + filled + compiled; residual `E0308 mismatched types` (u32/i32 coercion) — one diagnosis away |
-| MD5 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 120 | 🔄 | generic-runner batch |
-| MD2 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 120 | 🔄 | generic-runner batch |
+| SHA-1 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 120 | ✅ | **auto-diagnosed to green (2 rounds)** — zero human touch |
+| MD5 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 120 | ⚠️→🔄 | hit multi-line-macro class-bug (now FIXED); re-running |
+| MD2 | stateful (crypto) | B-Con/crypto-algorithms | 4 | 120 | ⚠️ | `u8 ^= u32` width mismatch (open error class) |
+| SHA-3 (tiny_sha3) | stateful (crypto) | mjosaarinen/tiny_sha3 | — | — | 🔄 | comprehensive lane |
+| MurmurHash3 | scalar (stress) | PeterScott/murmur3 | — | — | 🔄 | fixed-output-void-return shape — deliberate stress |
 
-**Batch note (honest):** the generic runner (no per-library hand-tuning) onboards
-every crypto hash cleanly — API detection, ctx struct, macros, oracle, fuzz all
-autonomous. SHA-1's fill compiled but left a type-coercion mismatch; that's the
-*generic-context* tax (SHA-256 needed a targeted state-word hint). Per-library
-convergence is a diagnosis loop, not a wall — recording raw generic-run results
-here to be honest about where a zero-touch run lands vs a guided one.
+## Zero-touch batch #1 — honest results (generic runner + auto-diagnoser)
+The full autonomous loop (onboard → fill → borrow-fix → **auto-diagnose** → verify),
+no per-library hand-tuning, across the crypto-hash lane:
+- **SHA-1 ✅ pass** — 2 diagnosis rounds closed a `E0308` type-coercion residual.
+- **MD5 ⚠️** — `unclosed delimiter`: `\`-continued **statement macros** (MD5's
+  `FF/GG/HH/II` round functions) mis-emitted as pure fns. **Root cause fixed** —
+  now joins line-continuations + skips mutating macros (model inlines them).
+- **MD2 ⚠️** — `E0308` + `u8 ^= u32` (byte state XOR'd with a word). Open.
+
+### 🗺️ Error map (fix-by-class queue)
+| Error class | Seen in | Fix | Status |
+|---|---|---|---|
+| multi-line / statement macros (`\`, mutating blocks) | MD5 | join continuations + skip stmt macros in emit_macro_helpers | ✅ fixed (commit a05099c) |
+| `u8 ^= u32` integer-width coercion | MD2 | width-aware coercion idiom / diagnoser rule | ⬜ open |
+| fixed-output void-return (`f(in,len,seed,out)` writes N bytes, returns void) | MurmurHash3 (expected) | detect fixed digest size for non-stateful out-buffers | ⬜ open |
+
+**Honest read:** the generic runner onboards the whole lane autonomously; the
+auto-diagnoser converts *some* partials to green unaided (SHA-1); the rest bucket
+into a small set of **error classes**, each a one-time harness/idiom fix that
+lifts the whole family. This is the flywheel: run → map class → fix once → re-run.
 
 ## Mapped candidates (single-file, public-domain / permissive, differentiable)
 
