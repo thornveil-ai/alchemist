@@ -329,6 +329,14 @@ def build_stateful_crate(paths: list[Path], out_dir: Path, crate_name: str,
                        for n, v in extract_char_defines(src_all).items())
     tables_rs = "\n".join(t.rust_const() for t in tables.values())
     struct_rs = emit_ctx_struct(api.ctx_rust, fields)
+    # type aliases so the model may use the C names verbatim (ctx type + scalar
+    # typedefs) -- kills the "cannot find type MD2_CTX / BYTE / WORD" (E0425) class.
+    alias_lines = ["#[allow(non_camel_case_types)] pub type %s = %s;" % (api.ctx_c, api.ctx_rust)]
+    for alias in typedefs:
+        rt = _rust_scalar(alias, typedefs)
+        if rt in ("u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "usize", "bool"):
+            alias_lines.append("#[allow(non_camel_case_types)] pub type %s = %s;" % (alias, rt))
+    struct_rs = "\n".join(alias_lines) + "\n" + struct_rs
     stubs = "\n".join("%s { unimplemented!() }" % stateful_signature(n, funcs, api) for n in fill_seq)
     vec_lits = ",\n        ".join(
         "(&[%s], &[%s])" % (", ".join(map(str, inp)), ", ".join(map(str, dig)))
