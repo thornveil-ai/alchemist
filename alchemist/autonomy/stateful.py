@@ -324,7 +324,11 @@ def build_stateful_crate(paths: list[Path], out_dir: Path, crate_name: str,
     crate = out_dir / crate_name
     (crate / "src").mkdir(parents=True, exist_ok=True)
     (crate / "Cargo.toml").write_text(
-        '[package]\nname="%s"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="src/lib.rs"\n' % crate_name)
+        # overflow-checks=false: C unsigned arithmetic is DEFINED to wrap (hashes/
+        # ciphers rely on it); this gives byte-identical semantics while the
+        # differential oracle still catches any real logic bug.
+        '[package]\nname="%s"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="src/lib.rs"\n'
+        '[profile.dev]\noverflow-checks = false\n[profile.test]\noverflow-checks = false\n' % crate_name)
     consts = "\n".join("pub const %s: u8 = %d;" % (n.upper(), v)
                        for n, v in extract_char_defines(src_all).items())
     tables_rs = "\n".join(t.rust_const() for t in tables.values())

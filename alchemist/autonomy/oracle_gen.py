@@ -42,18 +42,19 @@ class CallSpec:
     params: list[Param]
     ret_rust: str
     ret_void: bool = False
+    fixed_output_bytes: int = 0   # for void-return hashes whose digest size is fixed
 
     @property
     def supported(self) -> bool:
         """True iff every param classified cleanly and there's a byte buffer to
-        drive (input or output). An output buffer with a VOID return and no
-        out-length pointer is NOT supported — we can't size the output, so we'd
-        have no honest oracle (murmur3's `f(key,len,seed,out)` writes a fixed but
-        undeclared N bytes)."""
+        drive (input or output). A VOID-return output buffer needs a KNOWN output
+        size (out-length pointer, or a digest width encoded in the name like
+        `..._128`); otherwise we can't size the output -> no honest oracle."""
         if not (all(p.role != "unknown" for p in self.params)
                 and any(p.role in ("buffer", "out_buffer") for p in self.params)):
             return False
-        if self.buffer_output and self.ret_void and not self.has_out_len:
+        if self.buffer_output and self.ret_void and not self.has_out_len \
+                and not self.fixed_output_bytes:
             return False
         return True
 
@@ -137,8 +138,17 @@ def classify_signature(cfunc: CFunc, typedefs: dict | None = None) -> CallSpec:
             out.append(Param("len", c_type, name, c_to_rust_scalar(c_type)))
         else:
             out.append(Param("scalar", c_type, name, c_to_rust_scalar(c_type)))
-    return CallSpec(cfunc.name, out, c_to_rust_scalar(cfunc.ret),
+    spec = CallSpec(cfunc.name, out, c_to_rust_scalar(cfunc.ret),
                     ret_void=bool(re.match(r"^\s*(static\s+|inline\s+)*void\b", cfunc.ret or "")))
+    # a void-return output hash often encodes its digest width in the name
+    # (MurmurHash3_x86_32 -> 32 bits -> 4 bytes; ..._128 -> 16 bytes)
+    if spec.buffer_output and spec.ret_void and not spec.has_out_len:
+        m = re.search(r"(\d+)$", cfunc.name)
+        _WIDTHS = {"32": 4, "64": 8, "128": 16, "160": 20, "224": 28,
+                   "256": 32, "384": 48, "512": 64}
+        if m and m.group(1) in _WIDTHS:
+            spec.fixed_output_bytes = _WIDTHS[m.group(1)]
+    return spec
 
 
 def rust_signature(spec: CallSpec) -> str:
@@ -203,7 +213,11 @@ def generate_c_harness(specs: list[CallSpec], header) -> str:
     for s in specs:
         if not s.supported:
             continue
-        if s.buffer_output and s.has_out_len:
+        if s.buffer_output and s.fixed_output_bytes:
+            # void-return hash with a fixed digest width (from the name)
+            call = ("    if(!strcmp(n,\"%s\")) { %s(%s); fwrite(outbuf,1,%d,stdout); return 0; }"
+                    % (s.func, s.func, c_call_args(s), s.fixed_output_bytes))
+        elif s.buffer_output and s.has_out_len:
             # output length is written through a pointer arg, not the return value
             call = ("    if(!strcmp(n,\"%s\")) { unsigned long __ol=0; %s(%s); "
                     "fwrite(outbuf,1,(size_t)__ol,stdout); return 0; }"

@@ -99,13 +99,28 @@ def test_out_length_ptr_harness_uses_pointer():
     assert "fwrite(outbuf,1,(size_t)__ol,stdout)" in h  # length from the pointer, not the return
 
 
-def test_void_return_out_buffer_unsupported():
-    # murmur3: void f(key,len,seed,out) writes a fixed but undeclared N bytes ->
-    # can't size the output -> no honest oracle -> unsupported (not a broken green)
-    s = classify_signature(_fn("MurmurHash3_x86_32", "void",
+def test_void_out_buffer_no_size_unsupported():
+    # void out-buffer with NO width in the name and no length -> can't size -> unsupported
+    s = classify_signature(_fn("hash_into", "void",
                                "const void *key, int len, uint32_t seed, void *out"))
     assert s.ret_void and s.buffer_output
-    assert not s.supported
+    assert not s.supported and s.fixed_output_bytes == 0
+
+
+def test_murmur3_fixed_output_from_name():
+    # MurmurHash3_x86_32: void, out-buffer, digest width (32 bits -> 4 bytes) in the name
+    s = classify_signature(_fn("MurmurHash3_x86_32", "void",
+                               "const void *key, int len, uint32_t seed, void *out"))
+    assert s.fixed_output_bytes == 4 and s.supported and s.buffer_output
+    assert rust_signature(s) == "pub fn MurmurHash3_x86_32(data: &[u8], seed: u32) -> Vec<u8>"
+    h = generate_c_harness([s], "murmur3.h")
+    assert "fwrite(outbuf,1,4,stdout)" in h
+
+
+def test_murmur3_x64_128_output():
+    s = classify_signature(_fn("MurmurHash3_x64_128", "void",
+                               "const void *key, int len, uint32_t seed, void *out"))
+    assert s.fixed_output_bytes == 16  # 128 bits
 
 
 def test_scalar_return_still_supported():

@@ -120,7 +120,10 @@ def build_crate_from_sources(paths: list[Path], out_dir: Path, crate_name: str,
     crate = out_dir / crate_name
     (crate / "src").mkdir(parents=True, exist_ok=True)
     (crate / "Cargo.toml").write_text(
+        # C unsigned arithmetic is defined to wrap; match it (the oracle still
+        # catches real logic bugs) instead of panicking in debug.
         '[package]\nname="%s"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="src/lib.rs"\n'
+        '[profile.dev]\noverflow-checks = false\n[profile.test]\noverflow-checks = false\n'
         % crate_name)
     consts_rs = "\n".join("pub const %s: u8 = %d;" % (n.upper(), v)
                           for n, v in char_defs.items())
