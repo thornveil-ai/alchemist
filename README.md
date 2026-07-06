@@ -8,6 +8,7 @@
 [![tests](https://img.shields.io/badge/tests-744%2F744-success.svg)](#testing)
 [![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 [![jsmn](https://img.shields.io/badge/jsmn-autonomous%2013%2F13-brightgreen.svg)](docs/m2_jsmn_first_swing.md)
+[![base64](https://img.shields.io/badge/base64-first--shot%2032%2F32-brightgreen.svg)](docs/m2_base64_clean_translation.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
 
 ---
@@ -64,6 +65,8 @@ struct-parse → type-infer → coherent signatures → C oracle → autonomous 
 ```
 
 The one hard function cracked not by brute force but by **diagnosis** — reading the model's output against the C surfaced a single coherent-model bug, fixed first-try once named and captured as a reusable idiom. **The "hard" functions are usually diagnosable mismatches, not model ceilings.**
+
+**And the compounding is measured — [base64](docs/m2_base64_clean_translation.md), a never-seen codec, translated C→safe Rust in *one fill*: 32/32 differential tests (encode + round-trip) byte-exact, zero repair.** The idioms discovered while cracking zlib and jsmn now land on the first try somewhere new. The trajectory: zlib (heavy) → jsmn (one diagnosis) → base64 (first-shot).
 
 **The charted path from here — any C library, fully automatic: [docs/PATH_TO_AUTONOMY.md](docs/PATH_TO_AUTONOMY.md).**
 
