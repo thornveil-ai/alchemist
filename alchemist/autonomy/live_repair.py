@@ -336,20 +336,28 @@ def make_refill(
         # NOT Rust consts, so the model must INLINE their integer values.
         defines_block = ""
         try:
-            from alchemist.autonomy.c_struct import resolve_c_defines
+            from alchemist.autonomy.c_struct import resolve_c_defines, resolve_c_aliases
             dsrc = c_source_path.read_text(encoding="utf-8", errors="replace")
             for hp in c_source_path.parent.glob("*.h"):
                 dsrc += "\n" + hp.read_text(encoding="utf-8", errors="replace")
             used = {k: v for k, v in resolve_c_defines(dsrc).items()
                     if re.search(r"\b" + re.escape(k) + r"\b", c_body)}
             if used:
-                defines_block = (
+                defines_block += (
                     "## C compile-time constants — INLINE these integer VALUES "
                     "(they are NOT Rust consts; e.g. write 573 not HEAP_SIZE):\n"
                     + ", ".join(f"{k} = {v}" for k, v in sorted(used.items())) + "\n"
                 )
+            aliases = {k: v for k, v in resolve_c_aliases(dsrc).items()
+                       if re.search(r"\b" + re.escape(k) + r"\b", c_body)}
+            if aliases:
+                defines_block += (
+                    "## C macro aliases — these are NOT struct fields; use the aliased "
+                    "name instead (e.g. `s.max_lazy_match`, not `s.max_insert_length`):\n"
+                    + ", ".join(f"{k} -> {v}" for k, v in sorted(aliases.items())) + "\n"
+                )
         except Exception:
-            defines_block = ""
+            pass
         prompt = (
             f"Fix this Rust function so its output matches the C reference EXACTLY. "
             f"A differential oracle caught a divergence:\n\n{guidance}\n\n"

@@ -264,6 +264,42 @@ IDIOMS: tuple[Idiom, ...] = (
         example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
     ),
     Idiom(
+        id="rust-borrow-split-self-call",
+        name="s->field = f(s, ..) -> split into let tmp = f(&mut s); s.field = tmp",
+        tags=("ownership", "gotcha"),
+        c_signals=(r"->\w+\s*=\s*\w+\s*\([^)]*\bs\b", r"=\s*longest_match\s*\(",
+                   r"\w+\(\s*&?s\s*,", r"->\w+\s*=\s*\w+\([^)]*strm"),
+        rust_model=(
+            "C aliases freely; Rust forbids using a value that is simultaneously "
+            "mutably borrowed (E0502/E0503). Two rules: (1) split self-borrowing "
+            "assignments — `s.field = f(&mut s, ..)` becomes `let tmp = f(&mut s, ..); "
+            "s.field = tmp;`. (2) Before a call that takes `&mut s` (or `&mut s.state`), "
+            "COPY any `s.field` you also pass/read into a local first: "
+            "`let cur = s.strstart; g(&mut s, cur);`. Extract-then-call; never read a "
+            "field of the same struct you are mutably borrowing in one expression."
+        ),
+        rationale="C's free aliasing becomes Rust borrow-checker conflicts; extract locals to break them.",
+        example="deflate_fast: `s.match_length = longest_match(&mut s, head)` -> "
+                "`let ml = longest_match(&mut s, head); s.match_length = ml;`.",
+        caution="Manifests as E0502/E0503 'cannot borrow/use ... because it is/was mutably borrowed'.",
+    ),
+    Idiom(
+        id="c-debug-macros-are-noops",
+        name="C debug/assert macros -> omit (no-ops in release)",
+        tags=("gotcha", "control-flow"),
+        c_signals=(r"\bcheck_match\s*\(", r"\bAssert\s*\(", r"\bTracev+\s*\(",
+                   r"\bTrace\s*\(", r"\bsend_debug\b", r"zmemzero\s*\("),
+        rust_model=(
+            "C debug-only macros compile to nothing in release builds — `check_match`, "
+            "`Assert`, `Tracev`/`Tracevv`/`Tracecv`, `Trace`, `send_debug` are guarded by "
+            "ZLIB_DEBUG and expand to `do {} while (0)`. DELETE these calls entirely in "
+            "Rust; they have no runtime effect. Do NOT translate them into function calls "
+            "(they are not functions) — that is an undefined-symbol compile error."
+        ),
+        rationale="Debug macros are no-ops in release C; translating them as calls fails to compile.",
+        example="deflate_fast: `check_match(s, start, match, len);` -> omitted entirely.",
+    ),
+    Idiom(
         id="c-fixed-array-field-to-vec-sizing",
         name="C fixed-size array field -> Rust Vec must be sized before indexed write",
         tags=("buffer", "gotcha", "state"),

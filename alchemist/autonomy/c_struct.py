@@ -121,6 +121,21 @@ def resolve_c_defines(source: str) -> dict[str, int]:
     return resolved
 
 
+def resolve_c_aliases(source: str) -> dict[str, str]:
+    """Resolve `#define NAME other_identifier` object-like macros that ALIAS one
+    name to another (e.g. `#define max_insert_length max_lazy_match`). The model
+    otherwise treats `max_insert_length` as a struct field that doesn't exist.
+    Only single-identifier RHS (a rename), not expressions or function macros."""
+    out: dict[str, str] = {}
+    for m in _DEFINE_RE.finditer(source):
+        name, val = m.group(1), m.group(2).strip()
+        if "(" in name:
+            continue
+        if re.fullmatch(r"[A-Za-z_]\w*", val) and val != name:
+            out[name] = val
+    return out
+
+
 def parse_struct_fields(source: str, struct_name: str) -> dict[str, str]:
     """Return {field_name: c_type} for `struct_name` found in `source`.
 
