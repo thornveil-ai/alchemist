@@ -11,6 +11,26 @@ handle it (records *why*) · ⬜ mapped, not yet run.
 **Verification note:** "vectors" = differential test cases run against the compiled
 C reference. Generic per-run context (no per-library hand-tuning) unless noted.
 
+## Wave #3 (13 libs) — the hardening validated, and the frontier shifted
+`4 pass · 7 partial · 1 fail · 1 no-oracle`. **Every hardening fix from the prior
+round landed** (it advanced the library to a deeper class):
+- arcfour ✅ (array-cipher confirmed in a full sweep) · base64_bcon → honest no-oracle
+- sha3: union/comma parse ✅ → new class `E0609` union member views (`st.b`/`st.q`)
+- amosnier: naming ✅ → `consume_chunk` helper unfilled → **fixed (call-closure fill)**
+- siphash: method-hallucination ✅ → surfaced `E0061`
+
+**The inflection:** the mechanical compile-error classes are largely conquered.
+The remaining tail is now dominated by:
+1. **`E0061` wrong-arg-count** (md2, sha3, siphash) — model called a fn with wrong
+   args. MODEL-FILL, not mechanical.
+2. **Invented symbols** (reid_sha1 `block`) — model-fill.
+3. **Fill variance** — murmur3 was pass, partial this run; md5 flips. Same code,
+   different fill outcome (temp 0 is not fully deterministic through diagnosis).
+4. **Hard shapes** — union member views (sha3), block ciphers (key schedules).
+
+These need model-fill *quality* (reasoning effort / better prompts) or new shapes,
+NOT more mechanical fixers. That's the honest boundary of the deterministic arsenal.
+
 ## New shape unlocked: array-state stream ciphers ✅
 `detect_array_cipher` + `build_array_cipher_crate`: RC4-style byte-array state
 (`key_setup(state,key,len)` + `generate(state,out,len)`), state modelled as
