@@ -307,8 +307,14 @@ def make_refill(
     llm,
     struct_context: str = "",
     on_event: Callable[[str], None] | None = None,
+    temperature: float = 0.0,
 ) -> Callable[[str, str], bool]:
-    """Build a `refill(fn, guidance)` that re-fills one Rust function via the model."""
+    """Build a `refill(fn, guidance)` that re-fills one Rust function via the model.
+
+    `temperature` > 0 lets a repair loop draw *different* attempts on retry (at 0
+    every retry is identical); pair it with keep-only-if-better to explore hard
+    functions without risking regressions.
+    """
     types_source = _find_types_source(module_path)
 
     def refill(fn: str, guidance: str) -> bool:
@@ -344,7 +350,7 @@ def make_refill(
             tool_schema={"type": "object", "properties": {"function": {"type": "string"}},
                          "required": ["function"]},
             max_tokens=2600,
-            temperature=0.0,
+            temperature=temperature,
         )
         new_fn = _fix_byte_escapes(_strip_fences((resp.structured or {}).get("function", "")))
         if not new_fn or f"fn {fn}" not in new_fn:

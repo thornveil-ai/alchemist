@@ -264,6 +264,29 @@ IDIOMS: tuple[Idiom, ...] = (
         example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
     ),
     Idiom(
+        id="pointer-return-into-array-to-index",
+        name="Pointer-into-array return -> index (pool allocation)",
+        tags=("ownership", "buffer"),
+        c_signals=(r"return\s+&\w+\s*\[", r"return\s+NULL\s*;", r"\)\s*;\s*\n[^;]*->",
+                   r"=\s*\w+_alloc\w*\("),
+        rust_model=(
+            "A C function that returns a POINTER into an array (e.g. "
+            "`return &tokens[i++];`, `return NULL;` when full) and whose callers "
+            "mutate through it (`tok->field = ...`) must, in Rust, return the "
+            "INDEX (i32, with -1 for the null/full case). Callers become: "
+            "`let i = alloc(...); if i < 0 { return ERR; } tokens[i as usize].field = ...`. "
+            "NEVER return a `&mut` you keep using across further calls that also "
+            "borrow the array — index into the array each time instead. Keep the "
+            "'current container/parent' as a stored INDEX too (e.g. `toksuper: i32`, "
+            "-1 = none), and update it exactly where the C reassigns the pointer."
+        ),
+        rationale="C pool-allocators hand back a pointer to mutate; safe Rust can't alias, so it indexes.",
+        example="jsmn `jsmn_alloc_token` returns `jsmntok_t*`; the Rust returns the token index; "
+                "`parser.toksuper` is the current-container index (-1=none), reassigned on `:` and reset on `,`.",
+        caution="If callers mutate through a kept pointer AND the array is re-borrowed, container size "
+                "counts double — reassign the index at the exact points C reassigns the pointer.",
+    ),
+    Idiom(
         id="rust-byte-literal-escaping",
         name="C char literals -> Rust byte literals (escaping)",
         tags=("gotcha", "syntax"),
