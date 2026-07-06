@@ -11,6 +11,24 @@ handle it (records *why*) · ⬜ mapped, not yet run.
 **Verification note:** "vectors" = differential test cases run against the compiled
 C reference. Generic per-run context (no per-library hand-tuning) unless noted.
 
+## New shape unlocked: array-state stream ciphers ✅
+`detect_array_cipher` + `build_array_cipher_crate`: RC4-style byte-array state
+(`key_setup(state,key,len)` + `generate(state,out,len)`), state modelled as
+`[u8; N]`, key-fuzzed, keystream compared byte-exact.
+- **arcfour / RC4 → ✅ PASS** (8 keystream vectors) — was `no-oracle` before.
+
+## Widened sweep #2 (new repos)
+`3 pass · 3 partial · 1 no-oracle · 2 fail` — new libraries, new error classes:
+- SHA-256 (B-Con), MurmurHash3, base64 → ✅ pass
+- **base64 (B-Con) → `no-oracle`** — was a runner CRASH (`int('0123...',0)`), the
+  robustness fix converted it to an honest refusal ✅
+- reid_sha1 / amosnier_sha256 → partial (`E0425` name-res: `block` var, `Sha_256` type)
+- siphash → partial (`E0599 wrapping_rotate_left` — **now mechanically fixed**)
+- jb55_sha256 → fail (word-pointer transform shape)
+
+New mechanical fixers added this pass: **method-hallucination** (E0599) +
+**comma-declarator / union** struct emission.
+
 ## Tier-A sweep #1 — 12 libraries, 3 lanes (zero-touch, hardened)
 **4 pass · 3 partial · 4 no-oracle · 1 runner-bug (fixed).** No false greens.
 
