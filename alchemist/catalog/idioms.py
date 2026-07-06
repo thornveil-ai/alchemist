@@ -264,6 +264,27 @@ IDIOMS: tuple[Idiom, ...] = (
         example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
     ),
     Idiom(
+        id="for-loop-post-increment-cursor",
+        name="C for(;;cursor++) with helper calls -> increment at loop END",
+        tags=("control-flow", "gotcha"),
+        c_signals=(r"for\s*\([^;]*;[^;]*;\s*\w*(?:pos|cursor|i|p)\w*\s*\+\+\s*\)",
+                   r"for\s*\(\s*;", r"parser->pos\+\+", r"->pos\b"),
+        rust_model=(
+            "A C `for (init; cond; cursor++)` advances the cursor at the END of each "
+            "iteration, so inside the body the cursor still points AT the current "
+            "element. Translate as `while cond { let c = seq[cursor]; match c { .. }; "
+            "cursor += 1; }` — increment at the END, NOT right after reading. This "
+            "matters when the body calls a sub-function that itself reads/advances the "
+            "cursor (e.g. a sub-parser that expects the cursor AT the opening "
+            "delimiter): pre-incrementing hands it the wrong position and every such "
+            "element is off by one."
+        ),
+        rationale="Post-increment for-loops keep the cursor on the current element during the body; eager increment breaks helper calls.",
+        example="jsmn_parse `for(; pos<len; pos++)`: calling jsmn_parse_string with pos AT the opening quote. "
+                "Eager `pos+=1` before dispatch made every string/primitive off by one (2/13); end-of-loop increment -> 13/13.",
+        caution="The single most common cause of off-by-one token bounds when porting a hand-written parser loop.",
+    ),
+    Idiom(
         id="pointer-return-into-array-to-index",
         name="Pointer-into-array return -> index (pool allocation)",
         tags=("ownership", "buffer"),

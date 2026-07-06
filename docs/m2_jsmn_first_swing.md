@@ -109,3 +109,43 @@ per-function oracle instead of only the end-to-end one.
 This is the first end-to-end autonomous swing at a library the tool had never
 seen. It didn't finish jsmn — but it proved the machine turns, the oracle holds,
 and the remaining work is *strength*, not *invention*.
+
+---
+
+## Update 2: jsmn FINISHED — 13/13, fully autonomous, byte-exact
+
+We took it the rest of the way, and the lesson is the important part.
+
+The plateau was **not** the model's capability ceiling. It was **one
+diagnosable coherent-model bug.** Reading the model's `jsmn_parse` against the C
+showed it: the C loop is `for (; pos < len; pos++)` — the cursor advances at the
+*end* of each iteration, so inside the body `pos` still points at the current
+char. The model translated it as `let c = js[pos]; pos += 1; match c { .. }` —
+incrementing *eagerly*, so when it called `jsmn_parse_string` (which expects
+`pos` AT the opening quote and advances it itself), every string and primitive
+came out off by one. That single mismatch failed 11 of 13 cases.
+
+Given that exact guidance — *"increment `pos` at the END of the loop, not before
+dispatch"* — the model rewrote `jsmn_parse` correctly on the **first try at
+temperature 0**: **13/13, byte-exact token streams vs the C reference.**
+
+```
+start: 2/13
+  t=0.0: jsmn_parse -> 13/13
+ALL GREEN
+```
+
+### The real lesson (this changes the roadmap)
+The "hard frontier" functions — jsmn's parser, and by extension zlib's resisted
+`build_tree`/`compress_block` — are often **not** beyond the model. They fail on
+a *specific, findable coherent-model mismatch*. The winning move isn't brute
+force (more attempts, higher temperature all plateaued) — it's **diagnosis**:
+read the model's output against the C, find the one wrong idiom, and encode it as
+a catalog pattern so it never recurs. Two idioms came out of jsmn alone:
+- `for-loop-post-increment-cursor` (increment at loop end) — the one that cracked it
+- `pointer-return-into-array-to-index` (pool-alloc pointer → index)
+
+**jsmn is the first COMPLETE autonomous translation of a library the tool had
+never seen — byte-exact, differential-verified, 6 functions, zero hand-written
+Rust.** The prep compounded, the oracle held throughout, and the frontier turned
+out to be a *diagnosis* problem, not an *invention* one.
