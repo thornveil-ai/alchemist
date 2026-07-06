@@ -11,6 +11,24 @@ handle it (records *why*) · ⬜ mapped, not yet run.
 **Verification note:** "vectors" = differential test cases run against the compiled
 C reference. Generic per-run context (no per-library hand-tuning) unless noted.
 
+## Crypto-hash lane — VERIFIED (hardened, zero-touch, no false greens)
+After the 8-fix hardening pass (integrity guard · arg-order · overflow-checks ·
+murmur3 sizing · alias-macro skip · never-make-it-worse · mechanical borrow+type
+fixers · C-name aliases): **4/6 pass, every pass with real vectors.**
+
+| Library | Result | Vectors |
+|---|---|---|
+| SHA-1 | ✅ pass | 80 |
+| MD5 | ✅ pass | 80 |
+| SHA-256 | ✅ pass | 80 |
+| MurmurHash3 | ✅ pass | 33 |
+| MD2 | ⚠️ partial | `E0499` borrow-more-than-once (extend borrow-fixer) |
+| SHA-3 | ⚠️ partial | union-field ctx not fully emitted (struct union handling) |
+
+**No false greens** — SHA-3 is an honest partial (real oracle), not the vacuous
+"0-vector pass" it started as. Open classes: `E0499` (2-mut-borrow) · union-field
+struct emission.
+
 ## Scoreboard
 
 | Library | Class | Source | Fns | Vectors | Status | Notes |
