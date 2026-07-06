@@ -5,8 +5,9 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
-[![tests](https://img.shields.io/badge/tests-661%2F661-success.svg)](#testing)
+[![tests](https://img.shields.io/badge/tests-744%2F744-success.svg)](#testing)
 [![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
+[![jsmn](https://img.shields.io/badge/jsmn-autonomous%2013%2F13-brightgreen.svg)](docs/m2_jsmn_first_swing.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
 
 ---
@@ -45,7 +46,26 @@ Why it counts: the differential oracle didn't just translate — it **caught ~9 
 
 **→ Read the full write-up, including honest limitations: [docs/zlib_case_study.md](docs/zlib_case_study.md)**
 
-**Next mountain — any C library, fully automatic: [docs/PATH_TO_AUTONOMY.md](docs/PATH_TO_AUTONOMY.md)** (the charted roadmap).
+---
+
+## 🤖 Autonomy: from one library to a library it's never seen
+
+zlib proved the *method*. The next question was whether the machine could drive itself — and generalize. It's built and measured:
+
+- **Diagnose-and-repair loop** — stub a function → the model refills it from the C → the differential oracle gates it → iterate on the *exact* discrepancy → verify-or-revert → **refuse rather than fake-green.** Proven live repairing an injected bug with no human.
+- **Auto oracle-shim + type-model synthesis** — the oracle glue and the coherent Rust type model are generated from a struct's own header (`window→Vec<u8>`, `strstart→usize`, back-refs flagged for review), library-agnostic.
+- **On zlib: 100 items autonomously retired** — 26 functions differential-proven + 74 oracle shims compile-validated — each with a proof in the ledger.
+
+**Then the real test — [jsmn](docs/m2_jsmn_first_swing.md), a JSON tokenizer the tool had never seen:**
+
+```
+struct-parse → type-infer → coherent signatures → C oracle → autonomous fill → repair
+   →  6 functions, 0 hand-written Rust, 13/13 byte-exact token streams vs C
+```
+
+The one hard function cracked not by brute force but by **diagnosis** — reading the model's output against the C surfaced a single coherent-model bug, fixed first-try once named and captured as a reusable idiom. **The "hard" functions are usually diagnosable mismatches, not model ceilings.**
+
+**The charted path from here — any C library, fully automatic: [docs/PATH_TO_AUTONOMY.md](docs/PATH_TO_AUTONOMY.md).**
 
 ---
 

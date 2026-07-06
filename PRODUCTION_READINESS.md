@@ -1,7 +1,65 @@
 # Alchemist Production Readiness Report
 
-**Date**: 2026-04-14 (addendum 2026-07-03)
-**Status**: Research prototype with proven methodology, NOT production-ready
+**Date**: 2026-04-14 (addenda 2026-07-03, **2026-07-06**)
+**Status**: Research prototype — methodology now proven on a *whole* library end-to-end and a *second, never-seen* library, autonomously. Still NOT a one-command tool for arbitrary C.
+
+## Addendum 2026-07-06 — byte-exact whole-library + first autonomous never-seen library
+
+Large jumps since the 2026-07-03 addendum below. Several of that report's core
+claims are now **superseded** (noted inline); the honest framing still holds.
+
+### 1. zlib is byte-exact end to end (the "non-functional stubs" are gone)
+The 2026-07-03 report said "compress/uncompress/inflate/deflate remain
+non-functional stubs." **No longer true.** zlib `deflate` **and** `inflate` are
+translated to pure safe Rust and verified **byte-identical to the C reference**:
+- `deflate` byte-exact at levels 1–9 + `Z_HUFFMAN_ONLY` + `Z_RLE`
+- `inflate` byte-exact on stored / dynamic / fixed Huffman streams (LZ77 back-refs)
+- **Full round-trip** `Rust deflate → Rust inflate → original` byte-identical:
+  21/21 across levels 1/6/9, plus 8/8 large-input (50–90 KB) stress, both raw and
+  the standard zlib format (header + adler32 validated). Zero `unsafe`.
+- The whole ~30-state `inflate()` machine, `goto`, unions, pointer aliasing, and
+  bit-twiddling re-expressed in safe Rust. See `docs/zlib_case_study.md`.
+
+The differential oracle caught ~9 real integration bugs unit tests passed clean
+over — the correctness engine works.
+
+### 2. An autonomy layer now exists — and retired 100 items on zlib
+New workstreams (`alchemist/autonomy/`, `alchemist/catalog/`), all tested:
+- **WS4 diagnose-and-repair loop** — stub → model refill from C → differential
+  gate → iterate on the exact discrepancy → verify-or-revert → refuse (never
+  fake-green). Proven live: repaired an injected `adler32_z` bug autonomously.
+- **WS1 shim synthesis** — auto-generates the mechanical oracle glue from a
+  struct's fields (library-agnostic via `c_struct.py`), compile-validated.
+- **WS2 type-model inference** — infers the coherent owned-Rust type model from a
+  C struct (pointers→`Vec`, indices→`usize`, back-refs flagged) — reproduced
+  10/10 zlib decisions from the header alone.
+- **WS6 idiom catalog** — `C→safe-Rust` patterns injected per function by signal.
+- **M1 autonomy scorecard** — a real metric. **100 items autonomously retired**
+  (26 functions differential-proven + 74 oracle shims compile-validated); open
+  debt 227 → 127. Every retirement has a proof in `retired_ledger.json`.
+
+### 3. First COMPLETE autonomous translation of a never-seen library (jsmn)
+Pointed the agnostic stack at **jsmn** (a JSON tokenizer never seen before) with
+zero jsmn-specific code: struct-parse → type-infer → coherent signatures → C
+reference oracle → the model filled all 6 functions from C → differential-repair
+→ **13/13 byte-exact token streams vs C.** First end-to-end autonomous
+translation of a new library. The one hard function cracked not by brute force
+but by **diagnosis** — reading the model's output vs the C found a single
+coherent-model bug (loop cursor increment placement), fixed first-try once named
+and captured as a reusable idiom. See `docs/m2_jsmn_first_swing.md`.
+
+### What this does and does NOT mean
+- **Does**: the methodology is proven on a whole hard library (zlib, byte-exact)
+  AND a second never-seen library (jsmn, autonomous); the engines are agnostic
+  and measured; "hard-frontier" functions are usually *diagnosable* mismatches,
+  not model ceilings.
+- **Does NOT**: make it one-command for arbitrary C. Still needs WS3 (auto
+  control-flow structuring for goto/state-machines), WS5 (build/harness
+  detection), the custom-shim tail, and human confirmation of WS2 review flags.
+  zlib still has 127 open debt items (the hard stateful tail). See
+  `docs/PATH_TO_AUTONOMY.md` for the honest milestone ladder (M0✅ → M1 → M5).
+
+---
 
 ## Addendum 2026-07-03 — the differential gate is now real for checksums
 
