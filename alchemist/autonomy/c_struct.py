@@ -88,27 +88,20 @@ def parse_struct_fields(source: str, struct_name: str) -> dict[str, str]:
         stmt = stmt.strip()
         if not stmt or stmt.startswith("#") or stmt.startswith("//"):
             continue
-        # comma-separated declarators share a type: `int a, b;`
-        m = re.match(r"^(?P<type>.+?)(?P<decls>[\w\s,*\[\]]+)$", stmt)
-        # simpler: strip array subscripts, then last token is the name
-        cleaned = re.sub(r"\[[^\]]*\]", "", stmt)
-        # split off the last declarator group by commas
-        head, _, last = cleaned.rpartition(",")
-        decl = (last or cleaned).strip()
-        toks = decl.replace("*", " * ").split()
-        if len(toks) < 2:
+        cleaned = re.sub(r"\[[^\]]*\]", "", stmt)  # drop array subscripts
+        # `TYPE [*]name0, [*]name1, ...` — the type comes from the first declarator,
+        # and every comma-declarator shares that base type.
+        parts = [p.strip() for p in cleaned.split(",") if p.strip()]
+        first = parts[0].replace("*", " * ").split()
+        if len(first) < 2:
             continue
-        name = toks[-1]
-        if not re.fullmatch(r"[A-Za-z_]\w*", name):
+        name0 = first[-1]
+        base = " ".join(t for t in first[:-1] if t != "*").strip()
+        if not base or not re.fullmatch(r"[A-Za-z_]\w*", name0):
             continue
-        ctype = " ".join(t for t in toks[:-1] if t != "*").strip()
-        if ctype:
-            fields[name] = ctype
-        # also register earlier comma-declarators with the same base type
-        if head:
-            base = " ".join(t for t in toks[:-1] if t != "*").strip()
-            for extra in head.split(","):
-                e = extra.replace("*", " ").split()
-                if e and re.fullmatch(r"[A-Za-z_]\w*", e[-1]):
-                    fields.setdefault(e[-1], base)
+        fields[name0] = base
+        for extra in parts[1:]:
+            toks = extra.replace("*", " ").split()
+            if toks and re.fullmatch(r"[A-Za-z_]\w*", toks[-1]):
+                fields.setdefault(toks[-1], base)
     return fields
