@@ -113,6 +113,21 @@ def c_call_args(spec: CallSpec, buf_expr: str = "in", len_expr: str = "l",
     return ", ".join(out)
 
 
+def rust_call(spec: CallSpec, input_bytes: bytes, scalar: str = "0") -> str:
+    """A Rust call expression for a differential test: buffer -> byte-slice
+    literal, len folded away, scalars default to `scalar`."""
+    slice_lit = "&[" + ", ".join(str(b) for b in input_bytes) + "]"
+    args = []
+    for p in spec.params:
+        if p.role == "buffer":
+            args.append(slice_lit)
+        elif p.role == "len":
+            continue
+        elif p.role == "scalar":
+            args.append(scalar)
+    return "%s(%s)" % (spec.func, ", ".join(args))
+
+
 def generate_c_harness(specs: list[CallSpec], header: str) -> str:
     """A dispatch `main()` — argv[1] names the function, stdin is the byte buffer,
     scalars default to 0, result printed as an unsigned integer."""
