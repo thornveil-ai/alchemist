@@ -39,6 +39,20 @@ _SCALAR: dict[str, str] = {
     "z_off_t": "i64", "z_off64_t": "i64", "z_word_t": "u64", "z_crc_t": "u32",
 }
 
+# Rust keywords that a C field name can collide with -> raw identifier `r#name`
+_RUST_KEYWORDS = frozenset(
+    "as break const continue crate dyn else enum extern false fn for if impl in "
+    "let loop match mod move mut pub ref return self Self static struct super trait "
+    "true type unsafe use where while async await box do final macro override priv "
+    "typeof unsized virtual yield".split()
+)
+
+
+def rust_ident(name: str) -> str:
+    """Escape a C field name that collides with a Rust keyword (`type` -> `r#type`)."""
+    return f"r#{name}" if name in _RUST_KEYWORDS else name
+
+
 # fields whose name strongly implies a size/index/count -> usize in Rust
 _INDEXISH = re.compile(
     r"(?:_size|_len|_length|start|pos|index|_bits$|head|tail|next|max$|"
@@ -78,6 +92,18 @@ class StructModel:
         if self.buffer_pairs:
             lines.append("  buffer (ptr,len) pairs: " + ", ".join(f"{p}/{l}" for p, l in self.buffer_pairs))
         return "\n".join(lines)
+
+    def render_rust(self) -> str:
+        """Emit the inferred coherent Rust struct definition."""
+        out = [f"#[derive(Clone, Default)]", f"pub struct {self.name} {{"]
+        for f in self.fields:
+            if f.kind == "back_ptr":
+                out.append(f"    // {f.name}: back-reference to the owning stream — modeled by ownership, omitted")
+                continue
+            note = "  // ⚠ review" if f.review else ""
+            out.append(f"    pub {rust_ident(f.name)}: {f.rust_type},{note}")
+        out.append("}")
+        return "\n".join(out)
 
 
 def _scalar_rust(c_type: str, name: str) -> str:

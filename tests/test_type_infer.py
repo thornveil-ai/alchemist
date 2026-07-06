@@ -4,7 +4,7 @@ Locks the mechanical classification decisions and the review flags. Grounded in
 the zlib coherent model the inference reproduces.
 """
 
-from alchemist.autonomy.type_infer import infer_struct_model, classify_field
+from alchemist.autonomy.type_infer import infer_struct_model, classify_field, rust_ident
 
 
 def _model(src, name, known=None):
@@ -63,6 +63,28 @@ def test_sub_struct_owned_by_value():
     by = {f.name: f for f in m.fields}
     assert by["l_desc"].kind == "sub_struct"
     assert by["l_desc"].rust_type == "TreeDesc"
+
+
+def test_rust_keyword_field_escaped():
+    assert rust_ident("type") == "r#type"
+    assert rust_ident("match") == "r#match"
+    assert rust_ident("start") == "start"
+
+
+def test_render_rust_emits_valid_field_lines():
+    m = _model("typedef struct { int type; unsigned int pos; Bytef *buf; } S;", "S")
+    rust = m.render_rust()
+    assert "pub struct S {" in rust
+    assert "pub r#type: i32," in rust      # keyword escaped
+    assert "pub pos: usize," in rust        # index-ish
+    assert "pub buf: Vec<u8>," in rust       # owned buffer
+
+
+def test_render_rust_omits_back_pointer():
+    m = _model("typedef struct { z_streamp strm; int n; } S;", "S")
+    rust = m.render_rust()
+    assert "back-reference" in rust
+    assert "pub strm:" not in rust           # not a field; ownership models it
 
 
 def test_review_fields_surface_not_silently_guessed():
