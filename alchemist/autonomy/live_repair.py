@@ -165,6 +165,15 @@ def _strip_fences(text: str) -> str:
     return t
 
 
+def _fix_byte_escapes(code: str) -> str:
+    """Deterministic autofix for a known model syntax error: writing `b'\\'`
+    (an unterminated byte constant) when the intended literal is a backslash
+    byte `b'\\\\'`. Like a linter autofix — the model owns the logic, this only
+    corrects the escaping. Leaves the valid escaped-quote `b'\\''` untouched.
+    """
+    return re.sub(r"b'\\'(?!')", r"b'\\\\'", code)
+
+
 # --- failing-test -> function localization ---------------------------------
 def functions_from_failing_tests(
     cargo_output: str, candidates: Sequence[str]
@@ -337,7 +346,7 @@ def make_refill(
             max_tokens=2600,
             temperature=0.0,
         )
-        new_fn = _strip_fences((resp.structured or {}).get("function", ""))
+        new_fn = _fix_byte_escapes(_strip_fences((resp.structured or {}).get("function", "")))
         if not new_fn or f"fn {fn}" not in new_fn:
             if on_event:
                 on_event(f"refill({fn}): model returned no usable function")

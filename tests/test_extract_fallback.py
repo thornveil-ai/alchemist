@@ -81,6 +81,37 @@ def test_missing_function_returns_none():
     assert _extract_by_brace_match("int a(void){return 0;}", "nope") is None
 
 
+def test_api_macro_function_recovered_by_brace_match():
+    # jsmn-style: an API macro before the return type. tree-sitter matches a
+    # zero-width definition; the brace-matcher must recover the real body.
+    src = (
+        "/* Run JSON parser. */\n"
+        "JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js,\n"
+        "                        const size_t len, jsmntok_t *tokens,\n"
+        "                        const unsigned int num_tokens) {\n"
+        "    int r = 0;\n"
+        "    for (; parser->pos < len; parser->pos++) { r++; }\n"
+        "    return r;\n"
+        "}\n"
+    )
+    body = _extract_by_brace_match(src, "jsmn_parse")
+    assert body is not None
+    assert body.startswith("JSMN_API int jsmn_parse(")
+    assert body.rstrip().endswith("}")
+    assert "return r;" in body
+
+
+def test_declaration_then_definition_picks_definition():
+    # a forward declaration (ends with ;) must be skipped for the definition.
+    src = (
+        "int f(int x);\n"                 # declaration
+        "int other(void){return 0;}\n"
+        "int f(int x) { return x + 1; }\n"  # definition
+    )
+    body = _extract_by_brace_match(src, "f")
+    assert body == "int f(int x) { return x + 1; }"
+
+
 def test_real_zlib_inflate_if_source_available():
     # Opportunistic: only runs where the zlib subject exists (the box / a checkout).
     for root in (

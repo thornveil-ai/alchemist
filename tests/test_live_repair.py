@@ -10,7 +10,24 @@ from alchemist.autonomy.live_repair import (
     extract_rust_fn,
     replace_rust_fn,
     functions_from_failing_tests,
+    _fix_byte_escapes,
 )
+
+
+def test_fix_byte_escapes_backslash():
+    # the model's deterministic error: b'\' (unterminated) for a backslash byte
+    assert _fix_byte_escapes(r"if c == b'\' { }") == r"if c == b'\\' { }"
+
+
+def test_fix_byte_escapes_leaves_valid_quote():
+    # a valid escaped-quote byte must be untouched
+    src = r"if c == b'\'' { }"
+    assert _fix_byte_escapes(src) == src
+
+
+def test_fix_byte_escapes_leaves_already_correct():
+    src = r"if c == b'\\' { }"
+    assert _fix_byte_escapes(src) == src
 
 _SRC = """use core::mem;
 

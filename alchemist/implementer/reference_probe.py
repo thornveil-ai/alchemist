@@ -166,7 +166,14 @@ def extract_c_function_body(source_path: Path, function_name: str) -> str | None
         import tree_sitter_c as tsc
         from tree_sitter import Language, Parser
     except ImportError:
-        return None
+        # No tree-sitter in this environment — the brace-matcher is pure Python
+        # and handles the common cases, so fall back to it instead of giving up
+        # (returning None here made the model translate with NO reference C).
+        try:
+            text = source_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        return _extract_by_brace_match(text, function_name)
 
     source = source_path.read_bytes()
     language = Language(tsc.language())
@@ -194,12 +201,14 @@ def extract_c_function_body(source_path: Path, function_name: str) -> str | None
         return None
 
     result = walk(tree.root_node)
-    if result is not None:
+    # Fall back not just when tree-sitter returns None, but also when it returns
+    # an EMPTY/whitespace body — which is what happens on API-macro'd signatures
+    # (e.g. jsmn's `JSMN_API int jsmn_parse(...)`, whose unknown `JSMN_API` token
+    # makes tree-sitter match a zero-width definition). A brace-matching text scan
+    # recovers these and the huge macro-heavy zlib functions alike.
+    # See docs/PATH_TO_AUTONOMY.md (WS1).
+    if result is not None and result.strip():
         return result
-    # Fallback: tree-sitter can choke on huge, macro-heavy functions (e.g. zlib's
-    # inflate(), whose for(;;)switch + embedded #ifdef blocks produce an ERROR
-    # node that corrupts extraction of it and every function after it). A
-    # brace-matching text scan recovers these. See docs/PATH_TO_AUTONOMY.md (WS1).
     return _extract_by_brace_match(
         source.decode("utf-8", errors="replace"), function_name
     )
