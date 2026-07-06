@@ -94,26 +94,36 @@ class StatefulAPI:
     typedefs: dict = field(default_factory=dict)
 
 
-def _first_ptr_type(params: str) -> str | None:
-    parts = [p.strip() for p in params.split(",") if p.strip()]
-    if not parts or "*" not in parts[0]:
-        return None
-    ty = re.sub(r"[\*\s]+\w+$", "", parts[0]).replace("const", "").strip()
-    toks = ty.split()
-    return toks[-1] if toks else None
+_NON_CTX_TYPES = {"void", "char", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+                  "int", "unsigned", "long", "short", "size_t", "BYTE", "WORD",
+                  "u8", "u16", "u32", "u64", "uchar", "uint", "ulong"}
+
+
+def _ptr_types(params: str) -> list[str]:
+    """Struct/typedef pointer-param types (ctx candidates), from ANY position —
+    not just the first param (some finals put the ctx second: `final(md, ctx)`)."""
+    out = []
+    for p in [x.strip() for x in params.split(",") if x.strip()]:
+        p = re.sub(r"([A-Za-z_]\w*)\s*\[\s*\w*\s*\]", r"* \1", p)  # array -> ptr
+        if "*" in p:
+            ty = re.sub(r"[\*\s]+\w+$", "", p).replace("const", "").strip()
+            toks = ty.split()
+            if toks:
+                out.append(toks[-1])
+    return out
 
 
 def detect_stateful_api(funcs: dict, defines: dict[str, int],
                         typedefs: dict | None = None) -> StatefulAPI | None:
     ctx_counts: Counter = Counter()
     for f in funcs.values():
-        t = _first_ptr_type(f.params)
-        if t:
-            ctx_counts[t] += 1
+        for t in _ptr_types(f.params):
+            if t not in _NON_CTX_TYPES:  # the ctx is a struct/typedef, not a scalar
+                ctx_counts[t] += 1
     if not ctx_counts:
         return None
     ctx_c, _ = ctx_counts.most_common(1)[0]
-    on_ctx = [n for n, f in funcs.items() if _first_ptr_type(f.params) == ctx_c]
+    on_ctx = [n for n, f in funcs.items() if ctx_c in _ptr_types(f.params)]
 
     def find(keys):
         for n in on_ctx:
@@ -166,22 +176,47 @@ def stateful_signature(fn: str, funcs: dict, api: StatefulAPI) -> str:
     return "pub fn %s(%s)%s" % (fn, ", ".join(args), ret)
 
 
+def _harness_call(fn: str, funcs: dict, api: StatefulAPI) -> str:
+    """C call for a ctx function, filling each param by ROLE (ctx -> &ctx, input
+    buffer -> in, length -> n, output buffer -> out, size scalar -> digest_len),
+    so it works regardless of param ORDER (e.g. `final(md, ctx)`)."""
+    parts = [p.strip() for p in funcs[fn].params.split(",") if p.strip()]
+    args, buf_seen = [], False
+    for p in parts:
+        p = re.sub(r"([A-Za-z_]\w*)\s*\[\s*\w*\s*\]", r"* \1", p)  # array -> ptr
+        m = re.search(r"([A-Za-z_]\w*)\s*$", p)
+        name = m.group(1) if m else ""
+        ctype = (p[:m.start()] if m else p)
+        is_ptr = "*" in p
+        byte_ptr = bool(re.search(r"\b(char|uint8_t|void|BYTE|u8|unsigned char)\b", ctype))
+        if is_ptr and api.ctx_c in _ptr_types(p):
+            args.append("&ctx")
+        elif is_ptr and "const" in ctype and byte_ptr:
+            args.append("in"); buf_seen = True
+        elif is_ptr and byte_ptr:                       # mutable byte/void ptr = output
+            args.append("out")
+        elif not is_ptr and (name.lower() in {"len", "length", "size", "count", "inlen",
+                                              "mdlen", "outlen", "n"} or re.search(r"(len|size)$", name.lower())):
+            args.append("n" if buf_seen else str(api.digest_len))
+        else:
+            args.append("0")
+    return "%s(%s)" % (fn, ", ".join(args))
+
+
 def generate_sequence_harness(api: StatefulAPI, funcs: dict, headers: list[str]) -> str:
     """C harness: read stdin, run init -> update(data,len) -> final(out), dump the
-    digest. Uses the real C types; scalar params default to 0."""
-    ctx = api.ctx_c
+    digest. Calls are built by param ROLE so any arg order works."""
     incs = "".join('#include "%s"\n' % h for h in headers)
     return (
         "#include <cstdio>\n#include <cstring>\n#include <cstdint>\n%s"
         "int main(){\n"
         "  static unsigned char in[65536]; unsigned char out[256];\n"
         "  size_t n = fread(in,1,sizeof(in),stdin);\n"
-        "  %s ctx;\n"
-        "  %s(&ctx);\n"
-        "  %s(&ctx, in, n);\n"
-        "  %s(&ctx, out);\n"
+        "  %s ctx;\n  %s;\n  %s;\n  %s;\n"
         "  fwrite(out,1,%d,stdout);\n  return 0;\n}\n"
-        % (incs, ctx, api.init, api.update, api.final, api.digest_len))
+        % (incs, api.ctx_c, _harness_call(api.init, funcs, api),
+           _harness_call(api.update, funcs, api), _harness_call(api.final, funcs, api),
+           api.digest_len))
 
 
 def emit_macro_helpers(src: str) -> tuple[str, list[str]]:
@@ -279,6 +314,11 @@ def build_stateful_crate(paths: list[Path], out_dir: Path, crate_name: str,
             b.append((x >> 16) & 0xFF)
         return bytes(b)
     vectors = [(gen(L, i), run(gen(L, i))) for i, L in enumerate(input_lengths)]
+    # INTEGRITY: if the sequence oracle produced no bytes for any input, it's
+    # broken (wrong API shape) -> refuse rather than ship a vacuous green.
+    if not any(dig for _, dig in vectors):
+        raise ValueError("no-oracle: sequence harness produced empty output "
+                         "(check init/update/final signatures for %s)" % api.ctx_c)
 
     # --- crate: ctx struct + tables + stateful stubs + one deep fuzz test ---
     crate = out_dir / crate_name

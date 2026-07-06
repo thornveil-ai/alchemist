@@ -99,6 +99,21 @@ def test_out_length_ptr_harness_uses_pointer():
     assert "fwrite(outbuf,1,(size_t)__ol,stdout)" in h  # length from the pointer, not the return
 
 
+def test_void_return_out_buffer_unsupported():
+    # murmur3: void f(key,len,seed,out) writes a fixed but undeclared N bytes ->
+    # can't size the output -> no honest oracle -> unsupported (not a broken green)
+    s = classify_signature(_fn("MurmurHash3_x86_32", "void",
+                               "const void *key, int len, uint32_t seed, void *out"))
+    assert s.ret_void and s.buffer_output
+    assert not s.supported
+
+
+def test_scalar_return_still_supported():
+    # a scalar-returning hash stays supported (ret_void guard must not over-reject)
+    s = classify_signature(_fn("xxh32", "uint32_t", "const void *input, size_t len, uint32_t seed"))
+    assert s.supported and not s.ret_void
+
+
 def test_harness_only_includes_supported():
     supported = classify_signature(_fn("crc_crc8", "uint8_t", "const uint8_t *p, uint8_t len"))
     unsupported = classify_signature(_fn("hash_fnv_1a", "void", "uint32_t len, const uint8_t *buf, uint64_t *hash"))

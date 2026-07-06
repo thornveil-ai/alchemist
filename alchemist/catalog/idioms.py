@@ -264,6 +264,40 @@ IDIOMS: tuple[Idiom, ...] = (
         example="`configuration_table[10]` (good/lazy/nice/chain per level); static Huffman trees.",
     ),
     Idiom(
+        id="rust-integer-width-coercion",
+        name="C mixes integer widths freely -> Rust needs explicit `as` + masking",
+        tags=("gotcha", "types"),
+        c_signals=(r"unsigned char\s+\w+\s*\^=", r"\bBYTE\b.*[\^|&]=", r"\w+\s*\^=\s*\w+",
+                   r"uint8_t.*=.*uint32_t", r">>\s*\d+\s*&\s*0xff"),
+        rust_model=(
+            "C silently converts between integer widths; Rust does not. When a "
+            "narrow variable is combined with a wider one (`u8 ^= u32`, `state[i] = "
+            "word`), you MUST cast explicitly and mask to the target width: "
+            "`x ^= (y & 0xff) as u8;` or `x = ((x as u32) ^ y) as u8;`. When packing "
+            "bytes into a word or unpacking, cast each byte `as u32` before shifting. "
+            "Never rely on implicit truncation — it is a compile error (E0277)."
+        ),
+        rationale="C's implicit integer conversions become explicit `as` casts + masks in Rust.",
+        example="md2 `c ^= s[k]` where c:u8, s[k]:u32 -> `c ^= (s[k] & 0xff) as u8;`.",
+        caution="Manifests as E0277 'no implementation for `u8 ^= u32`' or E0308 mismatched types.",
+    ),
+    Idiom(
+        id="rust-type-annotation-needed",
+        name="ambiguous integer literal/let -> annotate the type (E0282)",
+        tags=("gotcha", "types"),
+        c_signals=(r"unsigned\s+\w+\s*=\s*0x", r"for\s*\(\s*(?:unsigned\s+)?int"),
+        rust_model=(
+            "When a `let`, accumulator, or literal has no inferable type (common "
+            "translating C where the type is implicit), Rust reports E0282 'type "
+            "annotations needed'. Annotate explicitly: `let mut acc: u32 = 0;`, "
+            "`let i = 0usize;`, or suffix the literal (`1u64`). Match the C variable's "
+            "declared width."
+        ),
+        rationale="C variable types are declared; a naked Rust `let 0` can be ambiguous — annotate to the C width.",
+        example="`unsigned a = 0` accumulating u32 words -> `let mut a: u32 = 0;`.",
+        caution="Manifests as E0282 'type annotations needed'.",
+    ),
+    Idiom(
         id="rust-borrow-split-self-call",
         name="s->field = f(s, ..) -> split into let tmp = f(&mut s); s.field = tmp",
         tags=("ownership", "gotcha"),

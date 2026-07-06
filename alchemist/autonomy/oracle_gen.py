@@ -41,13 +41,21 @@ class CallSpec:
     func: str
     params: list[Param]
     ret_rust: str
+    ret_void: bool = False
 
     @property
     def supported(self) -> bool:
         """True iff every param classified cleanly and there's a byte buffer to
-        drive (input or output)."""
-        return all(p.role != "unknown" for p in self.params) and \
-            any(p.role in ("buffer", "out_buffer") for p in self.params)
+        drive (input or output). An output buffer with a VOID return and no
+        out-length pointer is NOT supported — we can't size the output, so we'd
+        have no honest oracle (murmur3's `f(key,len,seed,out)` writes a fixed but
+        undeclared N bytes)."""
+        if not (all(p.role != "unknown" for p in self.params)
+                and any(p.role in ("buffer", "out_buffer") for p in self.params)):
+            return False
+        if self.buffer_output and self.ret_void and not self.has_out_len:
+            return False
+        return True
 
     @property
     def buffer_output(self) -> bool:
@@ -129,7 +137,8 @@ def classify_signature(cfunc: CFunc, typedefs: dict | None = None) -> CallSpec:
             out.append(Param("len", c_type, name, c_to_rust_scalar(c_type)))
         else:
             out.append(Param("scalar", c_type, name, c_to_rust_scalar(c_type)))
-    return CallSpec(cfunc.name, out, c_to_rust_scalar(cfunc.ret))
+    return CallSpec(cfunc.name, out, c_to_rust_scalar(cfunc.ret),
+                    ret_void=bool(re.match(r"^\s*(static\s+|inline\s+)*void\b", cfunc.ret or "")))
 
 
 def rust_signature(spec: CallSpec) -> str:

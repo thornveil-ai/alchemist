@@ -88,6 +88,11 @@ def build_crate_from_sources(paths: list[Path], out_dir: Path, crate_name: str,
     # only NON-static, cleanly-classified fns are oracle-testable (harness is a
     # separate translation unit — it can't call `static` functions)
     tested = [n for n in order if specs[n].supported and not _is_static(funcs[n])]
+    if not tested:
+        # INTEGRITY: no differential-testable function means no oracle -> refuse,
+        # never emit a crate whose (empty) test suite vacuously "passes".
+        raise ValueError("no-oracle: no differential-testable functions in %s"
+                         % [s.name for s in sources])
     needed = _closure(tested, funcs)
     fill_seq = [n for n in order if n in needed]
     skipped = [n for n in order if n not in needed]
