@@ -190,11 +190,19 @@ def emit_macro_helpers(src: str) -> tuple[str, list[str]]:
     rotate_left/right (avoids Rust's shift-by-width panic); other bodies map `~`
     to `!`. Common in crypto (ROTRIGHT/CH/MAJ/EP0/SIG0...)."""
     from collections import OrderedDict
+    # join `\`-continued lines first (MD5/SHA round macros span multiple lines)
+    src = re.sub(r"\\[ \t]*\r?\n", " ", src)
     macros: OrderedDict = OrderedDict()
     for m in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+(\w+)\(([^)]*)\)[ \t]+(.+)$", src, re.M):
         macros[m.group(1)] = ([a.strip() for a in m.group(2).split(",")], m.group(3).strip())
-    out = []
+    out, emitted = [], []
     for name, (args, body) in macros.items():
+        # STATEMENT macros (block bodies, or mutating an arg like `a += ...`) are
+        # NOT pure functions -- skip them; the model inlines them from the C. Only
+        # EXPRESSION macros become helper fns.
+        if "{" in body or ";" in body or re.search(r"\b\w+\s*[-+*^|&]?=[^=]", body):
+            continue
+        emitted.append(name)
         if "<<" in body and ">>" in body and "32" in body and len(args) == 2:
             op = "rotate_left" if body.index("<<") < body.index(">>") else "rotate_right"
             out.append("#[allow(non_snake_case)] fn %s(%s: u32, %s: u32) -> u32 { (%s).%s(%s) }"
@@ -203,7 +211,7 @@ def emit_macro_helpers(src: str) -> tuple[str, list[str]]:
             params = ", ".join("%s: u32" % a for a in args)
             out.append("#[allow(non_snake_case)] fn %s(%s) -> u32 { %s }"
                        % (name, params, body.replace("~", "!")))
-    return "\n".join(out), list(macros)
+    return "\n".join(out), emitted
 
 
 @dataclass

@@ -77,6 +77,23 @@ def test_stateful_signatures():
     assert stateful_signature("sha256_final", funcs, api) == "pub fn sha256_final(ctx: &mut Sha256Ctx) -> Vec<u8>"
 
 
+def test_macro_helpers_expression_vs_statement():
+    from alchemist.autonomy.stateful import emit_macro_helpers
+    src = (
+        "#define F(x,y,z) (((x) & (y)) | (~(x) & (z)))\n"
+        "#define ROTLEFT(a,b) (((a) << (b)) | ((a) >> (32-(b))))\n"
+        "#define FF(a,b,c,d,m,s,t) { \\\n"
+        "  (a) += F((b),(c),(d)) + (m) + (t); \\\n"
+        "  (a) = ROTLEFT((a),(s)) + (b); }\n"
+    )
+    helpers, names = emit_macro_helpers(src)
+    # expression macros become fns; the mutating block macro FF is skipped (inlined)
+    assert "F" in names and "ROTLEFT" in names
+    assert "FF" not in names
+    assert "unclosed" not in helpers and "\\" not in helpers  # no continuation leak
+    assert "rotate_left" in helpers
+
+
 def test_sequence_harness_runs_the_trio():
     funcs, api = _api()
     h = generate_sequence_harness(api, funcs, ["sha256.h"])
