@@ -153,10 +153,14 @@ def rust_call(spec: CallSpec, input_bytes: bytes, scalar: str = "0") -> str:
     return "%s(%s)" % (spec.func, ", ".join(args))
 
 
-def generate_c_harness(specs: list[CallSpec], header: str) -> str:
+def generate_c_harness(specs: list[CallSpec], header) -> str:
     """A dispatch `main()` — argv[1] names the function, stdin is the input byte
     buffer, scalars default to 0. A scalar-return function prints its value; an
-    output-buffer function writes the produced bytes (length = the C return)."""
+    output-buffer function writes the produced bytes (length = the C return).
+
+    `header` is a header name or a list of header names to `#include`."""
+    headers = [header] if isinstance(header, str) else list(header)
+    includes = "".join('#include "%s"\n' % h for h in headers)
     lines = []
     for s in specs:
         if not s.supported:
@@ -170,9 +174,9 @@ def generate_c_harness(specs: list[CallSpec], header: str) -> str:
                     % (s.func, s.func, c_call_args(s)))
         lines.append(call)
     return (
-        '#include <cstdio>\n#include <cstring>\n#include <cstdint>\n#include "%s"\n'
+        '#include <cstdio>\n#include <cstring>\n#include <cstdint>\n%s'
         "int main(int argc, char** argv){\n"
         "  const char* n = argv[1]; static uint8_t in[65536]; static uint8_t outbuf[262144];\n"
         "  uint32_t l = (uint32_t)fread(in, 1, sizeof(in), stdin);\n"
-        "%s\n  return 1;\n}\n" % (header, "\n".join(lines))
+        "%s\n  return 1;\n}\n" % (includes, "\n".join(lines))
     )
