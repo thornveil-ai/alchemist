@@ -215,7 +215,7 @@ def parse_accessors(source: str) -> tuple[list[Accessor], list[str]]:
     return accessors, sorted(set(others))
 
 
-def generate_accessor(acc: Accessor) -> str:
+def generate_accessor(acc: Accessor, struct_types: dict | None = None) -> str:
     """Regenerate the accessor from (kind, field, target) + the struct type.
 
     A real template: the field type is looked up from the struct, and the cast
@@ -238,7 +238,7 @@ def generate_accessor(acc: Accessor) -> str:
         _, op, np, i = parts
         return (f"EXPORT void {acc.name}({acc.params})"
                 f"{{ for(unsigned {i}=0;{i}<{np};{i}++) {op}[{i}]={acc.target}{acc.field}[{i}]; }}")
-    ctype = DEFLATE_STATE_TYPES.get(acc.field)
+    ctype = (struct_types or DEFLATE_STATE_TYPES).get(acc.field)
     pub = acc.pub_type
     if acc.kind == "set":
         cast = f"({ctype})" if ctype and _ACCESSOR_TYPE.get(ctype, ctype) != pub else ""
@@ -247,7 +247,7 @@ def generate_accessor(acc: Accessor) -> str:
     return f"EXPORT {pub} {acc.name}(void) {{ return {cast}{acc.target}{acc.field}; }}"
 
 
-def reproduces(acc: Accessor) -> bool:
+def reproduces(acc: Accessor, struct_types: dict | None = None) -> bool:
     """True iff the generated accessor is semantically equivalent to the hand
     one: same kind/target/field access. (Casts are value-preserving coercions
     to/from the field's own type, so a cast difference does not change what the
@@ -256,7 +256,7 @@ def reproduces(acc: Accessor) -> bool:
         # already proven a pure single call-through (state + params only, no other
         # logic) by _parse_call_through; the canonical body is that same call.
         return True
-    gen = generate_accessor(acc)
+    gen = generate_accessor(acc, struct_types)
     # Compare the essential access: strip value-preserving casts + all formatting
     # (whitespace, incl. around punctuation) from both.
     def essence(s: str) -> str:
@@ -267,10 +267,10 @@ def reproduces(acc: Accessor) -> bool:
     return essence(gen) == essence(acc.handwritten)
 
 
-def synthesize(source: str) -> dict:
+def synthesize(source: str, struct_types: dict | None = None) -> dict:
     accessors, others = parse_accessors(source)
-    repro = [a for a in accessors if reproduces(a)]
-    non_repro = [a for a in accessors if not reproduces(a)]
+    repro = [a for a in accessors if reproduces(a, struct_types)]
+    non_repro = [a for a in accessors if not reproduces(a, struct_types)]
     generated = "\n".join(generate_accessor(a) for a in repro)
     return {
         "accessors": accessors,
@@ -279,3 +279,10 @@ def synthesize(source: str) -> dict:
         "runner_and_other_shims": others,
         "generated_source": generated,
     }
+
+
+def field_types_from_header(header_source: str, struct_name: str) -> dict[str, str]:
+    """Derive {field: c_type} for the shim generator from ANY library header.
+    Library-agnostic: no hardcoded field table needed for a new subject."""
+    from alchemist.autonomy.c_struct import parse_struct_fields
+    return parse_struct_fields(header_source, struct_name)
