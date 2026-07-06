@@ -153,9 +153,10 @@ def detect_stateful_api(funcs: dict, defines: dict[str, int],
             if any(k in n.lower() for k in keys):
                 return n
         return None
-    init = find(["init", "reset", "start", "begin"])
-    update = find(["update", "add", "write", "absorb"])
-    final = find(["final", "finish", "digest", "result", "end", "done"])
+    init = find(["init", "reset", "start", "begin", "new", "setup", "open"])
+    update = find(["update", "add", "write", "absorb", "process", "input", "feed"])
+    final = find(["final", "finish", "digest", "result", "end", "done", "close",
+                  "fini", "output", "sum", "complete"])
     if not (init and update and final):
         return None
     helpers = [n for n in on_ctx if n not in (init, update, final)]
