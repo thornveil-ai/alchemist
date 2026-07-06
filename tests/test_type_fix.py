@@ -49,6 +49,28 @@ def test_skips_let_with_type_annotation():
     assert apply_type_fix(src, 2, "u8") is None
 
 
+def test_fix_method_hallucination():
+    import tempfile
+    from pathlib import Path
+    from alchemist.autonomy.type_fix import fix_method_names
+    f = Path(tempfile.mkdtemp()) / "lib.rs"
+    f.write_text("fn g(a: u64) -> u64 { a.wrapping_rotate_left(13) }")
+    outs = iter(["error[E0599]: no method named `wrapping_rotate_left` found for type `u64`", ""])
+    assert fix_method_names(f, lambda: next(outs)) is True
+    txt = f.read_text()
+    assert "rotate_left(13)" in txt and "wrapping_rotate_left" not in txt
+
+
+def test_fix_method_unknown_returns_false():
+    import tempfile
+    from pathlib import Path
+    from alchemist.autonomy.type_fix import fix_method_names
+    f = Path(tempfile.mkdtemp()) / "lib.rs"
+    f.write_text("fn g() {}")
+    # an unknown hallucinated method -> hand back (don't loop forever)
+    assert fix_method_names(f, lambda: "error[E0599]: no method named `frobnicate` found") is False
+
+
 def test_non_int_expected_ignored():
     # E0308 with a struct type is not our job
     out = "error[E0308]: mismatched types\n   --> src/lib.rs:5:1\n   expected `Foo`, found `Bar`\n"

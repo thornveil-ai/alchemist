@@ -71,6 +71,35 @@ def apply_type_fix(source: str, line_no: int, target: str) -> str | None:
     return None
 
 
+# Methods the model commonly hallucinates -> the real Rust method. Rotations are
+# ALREADY wrapping, so `wrapping_rotate_left` isn't a thing; `checked_`/`saturating_`
+# rotate likewise collapse to plain rotate.
+_METHOD_FIXES = {
+    "wrapping_rotate_left": "rotate_left", "wrapping_rotate_right": "rotate_right",
+    "checked_rotate_left": "rotate_left", "checked_rotate_right": "rotate_right",
+    "wrapping_swap_bytes": "swap_bytes", "wrapping_reverse_bits": "reverse_bits",
+}
+
+
+def fix_method_names(module_path: Path, run_build: Callable[[], str], max_iters: int = 8) -> bool:
+    """Rename hallucinated methods (E0599) to their real Rust equivalent, one at a
+    time. Deterministic — rustc names the missing method."""
+    module_path = Path(module_path)
+    for _ in range(max_iters):
+        m = re.search(r"error\[E0599\]: no method named `(\w+)`", run_build())
+        if not m:
+            return True
+        repl = _METHOD_FIXES.get(m.group(1))
+        if not repl:
+            return False  # unknown method -> hand back to the diagnoser
+        src = module_path.read_text(encoding="utf-8")
+        new = src.replace("." + m.group(1) + "(", "." + repl + "(")
+        if new == src:
+            return False
+        module_path.write_text(new, encoding="utf-8")
+    return False
+
+
 def fix_types(module_path: Path, run_build: Callable[[], str], max_iters: int = 24) -> bool:
     """Resolve E0277/E0308 integer-width mismatches mechanically. True if cleared."""
     module_path = Path(module_path)

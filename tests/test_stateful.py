@@ -49,6 +49,16 @@ def test_parse_ctx_fields_keeps_arrays():
                   "bitlen": "u64", "state": "[u32; 8]"}
 
 
+def test_parse_ctx_fields_comma_declarators_and_union():
+    # SHA-3's ctx: a union field + comma-declared scalars (int pt, rsiz, mdlen)
+    src = ("typedef struct { union { unsigned char b[200]; unsigned long long q[25]; } st; "
+           "int pt, rsiz, mdlen; } sha3_ctx_t;")
+    fields = parse_ctx_fields(src, "sha3_ctx_t", {}, {})
+    by = {f.name: f.rust_type for f in fields}
+    assert by.get("st") == "[u8; 200]"          # union collapsed to a byte array
+    assert by.get("pt") == "i32" and by.get("rsiz") == "i32" and by.get("mdlen") == "i32"
+
+
 def test_emit_ctx_struct_has_default():
     td = resolve_typedefs(SHA_LIKE)
     fields = parse_ctx_fields(SHA_LIKE, "SHA256_CTX", td, {})

@@ -55,21 +55,44 @@ def parse_ctx_fields(src: str, struct_name: str, typedefs: dict[str, str],
     body = _find_struct_body(src, struct_name)
     if not body:
         return []
+
+    def dim_val(d):
+        return int(d) if d and d.isdigit() else defines.get(d, 0)
+
     fields: list[CtxField] = []
-    for stmt in body.split(";"):
+    _SZ = {"uint8_t": 1, "uint16_t": 2, "uint32_t": 4, "uint64_t": 8, "char": 1,
+           "BYTE": 1, "WORD": 4, "int": 4, "unsigned": 4, "long": 8}
+    # 1. anonymous union/struct fields -> a byte array sized to the largest member
+    #    (so the field EXISTS; the model does byte access). e.g. sha3's `union { u8
+    #    b[200]; u64 q[25]; } st` -> `st: [u8; 200]`.
+    for um in re.finditer(r"(?:union|struct)\s*\{(.*?)\}\s*(\w+)", body, re.S):
+        maxb = 0
+        for mm in re.finditer(r"([\w ]+?)\s+\w+\s*\[\s*(\w+)\s*\]", um.group(1)):
+            maxb = max(maxb, _SZ.get(mm.group(1).strip().split()[-1], 8) * dim_val(mm.group(2)))
+        if maxb:
+            fields.append(CtxField(um.group(2), "[u8; %d]" % maxb, "[0; %d]" % maxb))
+    # 2. remaining scalar/array fields, handling comma-declarators (`int pt, rsiz, mdlen`)
+    flat = re.sub(r"(?:union|struct)\s*\{[^{}]*\}\s*\w+", "", body)
+    for stmt in flat.split(";"):
         stmt = re.sub(r"//.*", "", stmt).strip()
         if not stmt:
             continue
-        m = re.match(r"(.+?)\s+(\w+)\s*(?:\[\s*(\w+)\s*\])?$", stmt)
+        parts = [p.strip() for p in stmt.split(",")]
+        m = re.match(r"(.+?)\s+\*?(\w+)\s*(?:\[\s*(\w+)\s*\])?$", parts[0])
         if not m:
             continue
-        base, name, dim = m.group(1), m.group(2), m.group(3)
-        rty = _rust_scalar(base, typedefs)
-        if dim:
-            n = int(dim) if dim.isdigit() else defines.get(dim, 0)
-            fields.append(CtxField(name, "[%s; %d]" % (rty, n), "[0; %d]" % n))
-        else:
-            fields.append(CtxField(name, rty, "0"))
+        rty = _rust_scalar(m.group(1), typedefs)
+        decls = [(m.group(2), m.group(3))]
+        for p in parts[1:]:
+            pm = re.match(r"\*?(\w+)\s*(?:\[\s*(\w+)\s*\])?$", p)
+            if pm:
+                decls.append((pm.group(1), pm.group(2)))
+        for name, dim in decls:
+            if dim:
+                n = dim_val(dim)
+                fields.append(CtxField(name, "[%s; %d]" % (rty, n), "[0; %d]" % n))
+            else:
+                fields.append(CtxField(name, rty, "0"))
     return fields
 
 
