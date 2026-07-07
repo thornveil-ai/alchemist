@@ -121,21 +121,54 @@ def classify_pointer_param(fn_body: str, param: str, is_const: bool = False) -> 
     return "borrow"
 
 
+_ELEM = {"BYTE": "u8", "uint8_t": "u8", "char": "u8", "WORD": "u32", "uint32_t": "u32",
+         "uint16_t": "u16", "uint64_t": "u64", "DWORD": "u32"}
+
+
+def _elem_of(c_param: str, default: str) -> str:
+    """Element type of a buffer param from its C base type (BYTE[] -> u8, WORD[] -> u32)."""
+    if re.search(r"\bunsigned\s+char\b", c_param):
+        return "u8"
+    for k, v in _ELEM.items():
+        if re.search(r"\b" + re.escape(k) + r"\b", c_param):
+            return v
+    return default
+
+
 def infer_param_ownership(fn, elem_rust: str = "u8") -> list[tuple[str, str, str]]:
     """(param_name, role, rust_type) per param — coherent ownership typing: read-only
     view -> &[T], written output -> owned Vec<T>, freed/returned -> owned Vec<T> by
-    value. Non-pointer scalars pass through."""
+    value. The element type is inferred PER param (BYTE->u8, WORD->u32), so a mixed
+    signature (byte buffers + a word key) types each buffer correctly."""
     body = getattr(fn, "body", "")
     out = []
     for p in [x.strip() for x in fn.params.split(",") if x.strip() and x.strip() != "void"]:
-        nm = p.split()[-1].lstrip("*")
+        nm = re.sub(r"\[[^\]]*\]", "", p.split()[-1]).lstrip("*")   # strip array brackets from the name
         if "*" in p or "[" in p:
             role = classify_pointer_param(body, nm, is_const="const" in p)
-            rty = ("&[%s]" % elem_rust) if role == "borrow" else ("Vec<%s>" % elem_rust)
+            elem = _elem_of(p, elem_rust)
+            rty = ("&[%s]" % elem) if role == "borrow" else ("Vec<%s>" % elem)
             out.append((nm, role, rty))
         else:
             out.append((nm, "scalar", c_to_rust_scalar(" ".join(p.split()[:-1]))))
     return out
+
+
+_MODE = re.compile(r"_(cbc|ctr|ccm|cfb|ofb|gcm|xts)(_mac)?\b")
+
+
+def detect_mode_cipher(funcs: dict) -> str | None:
+    """A block-cipher mode function (AES-CBC/CTR/CCM...): name carries the mode and
+    the signature has 2+ byte buffers plus a key. Composes with multibuffer_signature
+    (per-param element types) to give a coherent wide signature."""
+    for n, f in funcs.items():
+        if not _MODE.search(n.lower()):
+            continue
+        params = getattr(f, "params", "")
+        nbuf = len(re.findall(r"(?:const\s+)?(?:BYTE|unsigned char|uint8_t)\b[^,]*\[", params))
+        if nbuf >= 2 and re.search(r"\bkey\b", params):
+            return n
+    return None
 
 
 def multibuffer_signature(fn, elem_rust: str = "u8") -> str:

@@ -79,3 +79,21 @@ def test_multibuffer_signature_cipher_shape():
     assert "in_: &[u8]" in sig and "key: &[u8]" in sig   # inputs borrowed; `in` keyword-escaped
     assert "-> Vec<u8>" in sig                           # output buffer returned
     assert " n:" not in sig                              # length dropped (implicit in slice)
+
+
+def test_mode_cipher_element_aware_signature():
+    from alchemist.autonomy.ownership import multibuffer_signature, detect_mode_cipher
+    src = ("int aes_encrypt_cbc(const BYTE in[], size_t in_len, BYTE out[], "
+           "const WORD key[], int keysize, const BYTE iv[]) {\n    out[0] = in[0] ^ iv[0];\n}\n")
+    funcs = discover_functions(src)
+    assert detect_mode_cipher(funcs) == "aes_encrypt_cbc"      # mode + 2+ buffers + key
+    sig = multibuffer_signature(funcs["aes_encrypt_cbc"])
+    assert "in_: &[u8]" in sig and "iv: &[u8]" in sig          # byte buffers -> &[u8]
+    assert "key: &[u32]" in sig                                # WORD key -> &[u32] (element-aware)
+    assert "-> Vec<u8>" in sig                                 # output buffer returned
+
+
+def test_detect_mode_cipher_rejects_plain_hash():
+    from alchemist.autonomy.ownership import detect_mode_cipher
+    src = "void sha_update(struct Ctx *c, const BYTE d[], size_t n) {\n    c->x = d[0];\n}\n"
+    assert detect_mode_cipher(discover_functions(src)) is None
