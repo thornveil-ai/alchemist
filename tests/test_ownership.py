@@ -52,3 +52,15 @@ def test_infer_param_ownership_mixed_signature():
     assert roles["in"] == ("borrow", "&[u8]")     # const input -> borrowed view
     assert roles["out"] == ("out", "Vec<u8>")     # written output -> owned Vec
     assert roles["n"][0] == "scalar"
+
+
+def test_multibuffer_signature_cipher_shape():
+    from alchemist.autonomy.ownership import multibuffer_signature
+    src = ("void xcrypt(const unsigned char *in, unsigned long n, "
+           "const unsigned char *key, unsigned char *out) {\n"
+           "    for (unsigned long i = 0; i < n; i++) out[i] = in[i] ^ key[i % 16];\n}\n")
+    fn = discover_functions(src)["xcrypt"]
+    sig = multibuffer_signature(fn)
+    assert "in_: &[u8]" in sig and "key: &[u8]" in sig   # inputs borrowed; `in` keyword-escaped
+    assert "-> Vec<u8>" in sig                           # output buffer returned
+    assert " n:" not in sig                              # length dropped (implicit in slice)

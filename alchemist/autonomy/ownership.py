@@ -25,6 +25,15 @@ from pathlib import Path
 from alchemist.autonomy.onboard import c_to_rust_scalar
 
 
+_RUST_KW = {"in", "type", "match", "move", "ref", "box", "fn", "let", "mut", "use",
+            "mod", "as", "impl", "trait", "self", "loop", "where", "become", "final"}
+
+
+def _esc(name: str) -> str:
+    """Escape a C identifier that collides with a Rust keyword (`in` -> `in_`)."""
+    return name + "_" if name in _RUST_KW else name
+
+
 @dataclass
 class HeapAlloc:
     name: str            # allocator function
@@ -102,6 +111,30 @@ def infer_param_ownership(fn, elem_rust: str = "u8") -> list[tuple[str, str, str
         else:
             out.append((nm, "scalar", c_to_rust_scalar(" ".join(p.split()[:-1]))))
     return out
+
+
+def multibuffer_signature(fn, elem_rust: str = "u8") -> str:
+    """Coherent Rust signature for a multi-buffer 'complex' function: every input
+    buffer -> &[T] (borrow), every output buffer -> RETURNED (owned Vec), scalars
+    pass through. Length params paired with a buffer are dropped (the slice carries
+    its length). This is what unlocks the wide cipher/codec signatures triage marks
+    complex -- the wideness is coherent once ownership is inferred per parameter."""
+    roles = infer_param_ownership(fn, elem_rust)
+    has_buffer = any(role in ("borrow", "out", "owned") for _, role, _ in roles)
+    args, rets = [], []
+    for nm, role, rty in roles:
+        if role == "out":
+            rets.append(rty)
+        elif role == "scalar" and has_buffer and re.fullmatch(r"len|n|size|count|nbytes|inlen|outlen", nm):
+            continue                                   # length is implicit in the slice
+        else:
+            args.append("%s: %s" % (_esc(nm), rty))
+    ret_c = getattr(fn, "ret", "").strip()
+    if rets:
+        ret = rets[0] if len(rets) == 1 else "(%s)" % ", ".join(rets)
+    else:
+        ret = c_to_rust_scalar(ret_c) if ret_c not in ("void", "") else "()"
+    return "pub fn %s(%s) -> %s" % (fn.name, ", ".join(args), ret)
 
 
 def owned_signatures(api: HeapAPI) -> dict[str, str]:
