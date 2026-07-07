@@ -41,14 +41,41 @@ def _is_pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if sys.platform.startswith("win"):
+        # Prefer psutil when present, but do NOT assume-alive without it —
+        # fall back to a ctypes OpenProcess probe so stale locks are still
+        # reclaimed on machines/CI runners that lack psutil.
         try:
             import psutil  # type: ignore
+
+            try:
+                return psutil.pid_exists(pid)
+            except Exception:
+                return True
         except ImportError:
-            # Conservative: assume alive if we can't check.
-            return True
+            pass
         try:
-            return psutil.pid_exists(pid)
+            import ctypes
+            from ctypes import wintypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            ERROR_INVALID_PARAMETER = 87  # no such process
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+            )
+            if not handle:
+                # Couldn't open: only "invalid parameter" reliably means gone.
+                return ctypes.get_last_error() != ERROR_INVALID_PARAMETER
+            try:
+                code = wintypes.DWORD()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return code.value == STILL_ACTIVE
+                return True
+            finally:
+                kernel32.CloseHandle(handle)
         except Exception:
+            # Last resort: assume alive rather than clobber a live holder.
             return True
     # POSIX: sending signal 0 tests whether the pid exists.
     try:
