@@ -39,3 +39,19 @@ def test_triage_report_counts_in_scope():
     assert rep["total"] == 4
     assert rep["in_scope"] == 2          # make (heap) + checksum; log_line & run_cb are oos
     assert rep["by_scope"]["oos"] == 2
+
+
+def test_complex_multibuffer_function_classified_complex():
+    # AES-style: two buffers + a key + a size -> complex, not mislabelled scalar
+    src = ("void aes_encrypt(const unsigned char in[], unsigned char out[], "
+           "const unsigned int key[], int keysize) {\n    out[0] = in[0];\n}\n")
+    s = {x.name: x for x in scope_triage(discover_functions(src))}["aes_encrypt"]
+    assert s.scope == "complex"
+
+
+def test_route_maps_scope_to_builder():
+    from alchemist.autonomy.ingest import route
+    assert route("heap") == "build_ownership_crate"
+    assert route("stateful") == "build_stateful_crate"
+    assert route("effectful") == "build_effectful_crate"
+    assert route("oos") is None and route("complex") is None   # not auto-translatable

@@ -91,14 +91,33 @@ def scope_triage(funcs: dict, globals_names: set[str] | None = None) -> list[FnS
             out.append(FnScope(n, "effectful", "reads/writes file-static global state"))
         elif re.search(r"(?:_CTX|_ctx|_state|_context)\s*\*|\bstruct\s+\w+\s*\*", params):
             out.append(FnScope(n, "stateful", "carries a context/state struct"))
-        elif re.search(r"\b(?:const\s+)?(?:unsigned\s+)?char\s*\*|\bBYTE\s*\*|\buint8_t\s*\*|\[\s*\]",
-                       params) and re.search(r"\b(len|n|size|count)\b", params):
-            kind = "buffer" if ("*" in ret or "void" not in ret and re.search(r"out|dst|dest", params)) \
-                else "scalar"
-            out.append(FnScope(n, kind, "byte buffer + length"))
         else:
-            out.append(FnScope(n, "scalar", "scalar/simple signature"))
+            plist = [p for p in params.split(",") if p.strip() and p.strip() != "void"]
+            nptr = sum(1 for p in plist if "*" in p or "[" in p)
+            has_len = bool(re.search(r"\b(len|n|size|count|nbytes)\b", params))
+            if nptr >= 2 or len(plist) > 3:
+                out.append(FnScope(n, "complex", "multi-buffer / many-param — needs decomposition"))
+            elif nptr == 1 and has_len:
+                is_out = re.search(r"\b(out|dst|dest|result)\b", params) is not None
+                out.append(FnScope(n, "buffer" if is_out else "scalar", "byte buffer + length"))
+            else:
+                out.append(FnScope(n, "scalar", "scalar/simple signature"))
     return out
+
+
+# which crate builder handles each in-scope shape
+_ROUTES = {
+    "scalar": "build_crate_from_sources",
+    "buffer": "build_crate_from_sources",
+    "stateful": "build_stateful_crate",
+    "heap": "build_ownership_crate",
+    "effectful": "build_effectful_crate",
+}
+
+
+def route(scope: str) -> str | None:
+    """The builder that handles a triaged scope, or None if not auto-translatable."""
+    return _ROUTES.get(scope)
 
 
 def triage_report(scopes: list[FnScope]) -> dict:
