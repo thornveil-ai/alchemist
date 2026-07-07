@@ -1012,7 +1012,7 @@ class TDDGenerator:
                     _cbody = extract_c_function_body(_cf, alg.name)
                     if _cbody:
                         prompt = (
-                            f"## Original C source for `{alg.name}` — translate this "
+                            f"## Original C source for `{alg.name}` â€” translate this "
                             f"FAITHFULLY into safe Rust. Preserve the EXACT arithmetic, "
                             f"integer widths and overflow/wraparound behaviour, sign "
                             f"handling, loop bounds and edge cases. Do NOT invent a "
