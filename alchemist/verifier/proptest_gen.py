@@ -34,7 +34,7 @@ from alchemist.standards import TestVector, lookup_test_vectors
 VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
-    "protocol", "scheduler", "utility", "other", "scalar", "inplace"}
+    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator"}
 
 
 @dataclass
@@ -68,6 +68,9 @@ class AlgorithmHarness:
     # unkeyed) and `digest_len` are baked into both wrappers.
     digest: bool = False
     key: bytes | None = None
+    state_rust: str | None = None
+    mutator_bind: str | None = None
+    mutator_arg_types: list | None = None
     digest_len: int = 8
     # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
     # braid alignment, batch thresholds). Random sampling rarely lands
@@ -210,6 +213,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_cipher_block(h)
     if h.category == "scalar":
         return _proptest_scalar_block(h)
+    if h.category == "scalar_mutator":
+        return _proptest_scalar_mutator_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -270,6 +275,22 @@ def _proptest_inplace_block(h: AlgorithmHarness) -> str:
                 let rust_out = {h.rust_call};
                 let c_out = {h.c_call};
                 prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_scalar_mutator_block(h: AlgorithmHarness) -> str:
+    """Differential for a scalar-state mutator: fuzz the initial state, compare (ret, post)."""
+    strategy = h.input_strategy or "any::<u64>()"
+    bind = h.mutator_bind or "input"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference({bind} in {strategy}) {{
+                prop_assert_eq!({h.rust_call}, {h.c_call});
             }}
         }}
     """).rstrip()

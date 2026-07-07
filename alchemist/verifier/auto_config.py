@@ -35,6 +35,8 @@ from alchemist.verifier.auto_ffi import CSignature, TypedefMap, parse_header
 from alchemist.verifier.differential_tester import DifferentialConfig
 from alchemist.verifier.proptest_gen import AlgorithmHarness
 
+from alchemist.verifier import struct_lift  # noqa: E402
+
 _INT_C_TYPES = re.compile(
     r"^(unsigned|unsigned int|unsigned long|unsigned short|int|long|"
     r"uint8_t|uint16_t|uint32_t|uint64_t|size_t|uInt|uLong|z_size_t)$"
@@ -502,6 +504,100 @@ def normalize_byte_buffer_types(c_source_dir, specs) -> int:
     return changed
 
 
+_STRUCT_PTR_RE = re.compile(r"^(?:struct\s+)?([A-Za-z_]\w*)\s*\*$")
+
+
+def classify_scalar_mutator_shape(sig, structs):
+    """fn(SingleScalarStruct*, [int extra args...]) -> int|void : a scalar-state mutator.
+    The struct is a single scalar field, so state is carried as a bare `&mut <int>`.
+    Returns (struct_name, state_param_name, scalar_rust, extra) where extra is a list of
+    (arg_name, rust_int_type) for the trailing scalar args, or None if it doesn't fit."""
+    from alchemist.verifier import struct_lift as _sl
+    params = sig.params or []
+    if not params:
+        return None
+    m = _STRUCT_PTR_RE.match((params[0][1] or "").strip())
+    if not m:
+        return None
+    struct_name = m.group(1)
+    scalar_rust = _sl.single_scalar_field(structs.get(struct_name))
+    if scalar_rust is None:
+        return None
+    extra = []
+    for pn, pt in params[1:]:
+        pr = _sl.c_scalar_to_rust((pt or "").strip())
+        if pr is None or pr in ("f32", "f64"):
+            return None
+        extra.append((pn, pr))
+    ret = (sig.return_type or "").strip()
+    if ret != "void" and not _INT_C_TYPES.match(ret):
+        return None
+    return (struct_name, params[0][0], scalar_rust, extra)
+
+
+def fuzz_scalar_mutator_vectors(dll, alg, sig, info, *, count: int = 40):
+    """Drive the C mutator on fuzzed initial state (+ fuzzed extra scalar args), capture
+    (return, post-state)."""
+    import ctypes
+    from alchemist.verifier.struct_lift import c_scalar_to_rust
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    _CT = {
+        "u8": ctypes.c_uint8, "i8": ctypes.c_int8, "u16": ctypes.c_uint16,
+        "i16": ctypes.c_int16, "u32": ctypes.c_uint32, "i32": ctypes.c_int32,
+        "u64": ctypes.c_uint64, "i64": ctypes.c_int64,
+        "usize": ctypes.c_size_t, "isize": ctypes.c_ssize_t,
+    }
+    struct_name, state_param, scalar_rust, extra = info
+    state_ct = _CT.get(scalar_rust)
+    if state_ct is None:
+        return []
+    extra_cts = [(nm, rt, _CT.get(rt)) for nm, rt in extra]
+    if any(ct is None for _, _, ct in extra_cts):
+        return []
+    ret_rust = None if (sig.return_type or "").strip() == "void" else c_scalar_to_rust(sig.return_type)
+    ret_ct = _CT.get(ret_rust) if ret_rust else None
+    try:
+        fn = getattr(dll, sig.name)
+    except AttributeError:
+        return []
+    fn.argtypes = (ctypes.POINTER(state_ct),) + tuple(ct for _, _, ct in extra_cts)
+    fn.restype = ret_ct
+
+    def _bits(rt):
+        return int(rt[1:]) if rt[1:].isdigit() else 64
+    smax = (1 << _bits(scalar_rust)) - 1
+    rng = _rng(_FUZZ_SEED)
+    base = [0, 1, 2, 3, smax, smax - 1, smax // 2, 0x1234567, 0xDEADBEEF, 0xCAFEBABE]
+    while len(base) < count:
+        base.append(rng.randrange(0, smax + 1))
+    extra_spec = ",".join(f"{nm}:{rt}" for nm, rt in extra)
+    vectors = []
+    for sv in base[:count]:
+        cs = state_ct(sv & smax)
+        row = {state_param: str(sv & smax)}
+        c_args = []
+        for nm, rt, ct in extra_cts:
+            emax = (1 << _bits(rt)) - 1
+            ev = rng.randrange(0, emax + 1)
+            row[nm] = str(ev)
+            c_args.append(ct(ev))
+        try:
+            r = fn(ctypes.byref(cs), *c_args)
+        except Exception:  # noqa: BLE001
+            continue
+        new_s = cs.value & smax
+        ret_val = (int(r) & smax) if ret_ct is not None else 0
+        vectors.append(SpecTestVector(
+            description=f"mutator_{sv}",
+            source=f"C reference (state mutator): {sig.name}",
+            inputs=row,
+            expected_output=f"{ret_val}|{new_s}",
+            tolerance=f"scalar_mutator|{state_param}|{scalar_rust}|{ret_rust or 'unit'}|{extra_spec}",
+        ))
+    return vectors
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -522,6 +618,8 @@ def build_diff_config(
 
     harnesses: list[AlgorithmHarness] = []
     used_signatures: list[CSignature] = []
+    _structs = struct_lift.structs_in_dir(c_source_dir)
+    _typedef_overrides: dict[str, str] = {}
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             # The C signature shape is the real gate — a scalar-returning
@@ -533,6 +631,31 @@ def build_diff_config(
                 continue
             sig = by_name.get(alg.name)
             if sig is None:
+                continue
+            _mut = classify_scalar_mutator_shape(sig, _structs)
+            if _mut is not None:
+                _sname, _sparam, _srust, _extra = _mut
+                _anames = ["a_state"] + [f"a_{_i}" for _i in range(len(_extra))]
+                _atypes = [_srust] + [rt for _, rt in _extra]
+                if _extra:
+                    _strat = "(" + ", ".join(f"any::<{t}>()" for t in _atypes) + ")"
+                    _bind = "(" + ", ".join(_anames) + ")"
+                else:
+                    _strat = f"any::<{_srust}>()"
+                    _bind = "a_state"
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="scalar_mutator",
+                    rust_call="rust_" + alg.name + "(" + ", ".join(_anames) + ")",
+                    c_call="c_" + alg.name + "(" + ", ".join(_anames) + ")",
+                    cases=4000,
+                    input_strategy=_strat,
+                    state_rust=_srust,
+                    mutator_bind=_bind,
+                    mutator_arg_types=[rt for _, rt in _extra],
+                ))
+                _typedef_overrides[_sname] = _srust
+                used_signatures.append(sig)
                 continue
             if classify_inplace_shape(sig) is not None:
                 harnesses.append(AlgorithmHarness(
@@ -603,7 +726,7 @@ def build_diff_config(
         c_sources=c_sources,
         c_include_dirs=[c_source_dir],
         c_public_signatures=used_signatures,
-        c_typedefs=TypedefMap(),
+        c_typedefs=TypedefMap(entries=dict(_typedef_overrides)),
         c_opaque_types=set(),
         harnesses=harnesses,
         ffi_crate_name=f"c_{re.sub(r'[^a-z0-9_]', '_', subject)}_ref",
@@ -667,6 +790,7 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
     if not signatures:
         return 0
     by_name = {s.name: s for s in signatures}
+    _structs = struct_lift.structs_in_dir(cdir)
     c_files = sorted(cdir.glob("*.c"))
     if not c_files:
         return 0
@@ -696,6 +820,8 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 vecs = fuzz_scalar_vectors(dll, alg, sig)
             elif classify_inplace_shape(sig) is not None:
                 vecs = fuzz_inplace_vectors(dll, alg, sig)
+            elif (_mi := classify_scalar_mutator_shape(sig, _structs)) is not None:
+                vecs = fuzz_scalar_mutator_vectors(dll, alg, sig, _mi)
             else:
                 vecs = []
             if vecs:

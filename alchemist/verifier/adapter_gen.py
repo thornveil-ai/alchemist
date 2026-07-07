@@ -541,6 +541,53 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (in-place)",
                 ))
+            elif h.category == "scalar_mutator":
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of scalar-mutator '{h.algorithm}': not found"
+                    )
+                st = h.state_rust or "u64"
+                ret = fn.ret
+                extra_types = h.mutator_arg_types or []
+                sig_params = [("a_state", st)] + [(f"a_{i}", t) for i, t in enumerate(extra_types)]
+                param_sig = ", ".join(f"{n}: {t}" for n, t in sig_params)
+                extra_r = "".join(f", {n}" for n, _ in sig_params[1:])
+                extra_c = "".join(f", {n} as _" for n, _ in sig_params[1:])
+                is_void = ret in ("()", "", None)
+                if is_void:
+                    rust_wrapper = (
+                        f"pub fn rust_{h.algorithm}({param_sig}) -> {st} {{\n"
+                        f"    let mut s = a_state;\n"
+                        f"    {fn.crate_ident}::{fn.name}(&mut s{extra_r});\n"
+                        f"    s\n}}\n"
+                    )
+                    c_wrapper = (
+                        f"pub fn c_{h.algorithm}({param_sig}) -> {st} {{\n"
+                        f"    let mut s = a_state;\n"
+                        f"    unsafe {{ {ffi_ident}::{h.algorithm}(&mut s as *mut {st}{extra_c}); }}\n"
+                        f"    s\n}}\n"
+                    )
+                else:
+                    rust_wrapper = (
+                        f"pub fn rust_{h.algorithm}({param_sig}) -> ({ret}, {st}) {{\n"
+                        f"    let mut s = a_state;\n"
+                        f"    let r = {fn.crate_ident}::{fn.name}(&mut s{extra_r});\n"
+                        f"    (r, s)\n}}\n"
+                    )
+                    c_wrapper = (
+                        f"pub fn c_{h.algorithm}({param_sig}) -> ({ret}, {st}) {{\n"
+                        f"    let mut s = a_state;\n"
+                        f"    let r = unsafe {{ {ffi_ident}::{h.algorithm}(&mut s as *mut {st}{extra_c}) }} as {ret};\n"
+                        f"    (r, s)\n}}\n"
+                    )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (state mutator)",
+                ))
             elif h.category == "scalar":
                 fn = _pick_unambiguous(h.algorithm, api)
                 if fn is None:

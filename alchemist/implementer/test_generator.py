@@ -397,6 +397,30 @@ def _emit_state_mutator_test(fn_name: str, vec: SpecTestVector, idx: int) -> str
     return "".join(lines)
 
 
+def _emit_scalar_mutator_test(fn_name: str, vec, idx: int) -> str:
+    """Drive the mutator on a seed state (+ extra args); assert (return, post-state)."""
+    parts = (vec.tolerance or "").split("|")
+    state_param = parts[1] if len(parts) > 1 else "state"
+    state_rust = parts[2] if len(parts) > 2 else "u64"
+    ret_rust = parts[3] if len(parts) > 3 else "unit"
+    extra_spec = parts[4] if len(parts) > 4 else ""
+    ret_s, _, new_s = (vec.expected_output or "0|0").partition("|")
+    init_val = vec.inputs.get(state_param, "0")
+    extra_names = [tok.split(":")[0] for tok in extra_spec.split(",") if tok]
+    call_args = [f"&mut {state_param}"] + [vec.inputs.get(nm, "0") for nm in extra_names]
+    argstr = ", ".join(call_args)
+    lines = [f"    #[test]\n    fn test_{fn_name}_mut_{idx}() {{\n"]
+    lines.append(f"        let mut {state_param}: {state_rust} = {init_val};\n")
+    if ret_rust == "unit":
+        lines.append(f"        super::{fn_name}({argstr});\n")
+    else:
+        lines.append(f"        let got = super::{fn_name}({argstr});\n")
+        lines.append(f"        assert_eq!(got, {ret_s}, \"{vec.description} ret\");\n")
+    lines.append(f"        assert_eq!({state_param}, {new_s}, \"{vec.description} state\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_byte_transform_test(
     fn_name: str, vec: SpecTestVector, idx: int,
 ) -> str:
@@ -528,6 +552,8 @@ def _emit_spec_test(
         return _emit_state_observer_test(fn_name, vec, idx)
     # Byte-buffer transform vectors (zmem* family) carry a pipe-encoded
     # tolerance field starting with "byte_transform".
+    if (vec.tolerance or "").startswith("scalar_mutator"):
+        return _emit_scalar_mutator_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("byte_transform"):
         return _emit_byte_transform_test(fn_name, vec, idx)
     test_name = f"test_{fn_name}_spec_{idx}"
