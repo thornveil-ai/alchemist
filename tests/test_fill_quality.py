@@ -38,6 +38,16 @@ def test_retrieval_context_and_empty_on_no_overlap():
     assert s.retrieve("plain_call(a, b, c)") == []   # no shared idioms -> nothing
 
 
+def test_retrieval_rejects_weak_similarity():
+    # the SHA-256-misleads-SHA-1 fix: only majority-shared idioms are offered
+    s = VerifiedExampleStore()
+    s.add("p = malloc(n); for(i=0;i<n;i++) p[i]=0; free(p);", "let v = vec![0u8; n];")
+    # query shares only 'for'+'[' with the stored malloc idiom -> below 0.5 Jaccard
+    assert s.retrieve("for(i=0;i<n;i++) acc ^= s[i];", min_sim=0.5) == []
+    # a near-identical malloc idiom clears the threshold
+    assert s.retrieve("q = malloc(m); for(i=0;i<m;i++) q[i]=0; free(q);", min_sim=0.5)
+
+
 def test_persistent_store_survives_reload(tmp_path):
     p = tmp_path / "examples.json"
     s = PersistentExampleStore(p)

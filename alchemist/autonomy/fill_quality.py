@@ -52,12 +52,22 @@ class VerifiedExampleStore:
     def add(self, c_snippet: str, rust: str) -> None:
         self.examples.append((_tags(c_snippet), c_snippet.strip(), rust.strip()))
 
-    def retrieve(self, c_snippet: str, k: int = 2) -> list[tuple[str, str]]:
+    def retrieve(self, c_snippet: str, k: int = 2, min_sim: float = 0.5) -> list[tuple[str, str]]:
+        """Closest verified examples by Jaccard idiom-similarity, above `min_sim`.
+
+        The threshold matters: SHA-1 and SHA-256 share loose tags (for, ^=, <<) but
+        are NOT the same idiom -- injecting a SHA-256 example into a SHA-1 fill misled
+        the model. Requiring majority-shared tags means only genuinely-similar code is
+        offered, so retrieval helps instead of hurts."""
         q = _tags(c_snippet)
         if not q:
             return []
-        scored = sorted(self.examples, key=lambda e: len(q & e[0]), reverse=True)
-        return [(c, r) for tags, c, r in scored[:k] if q & tags]
+
+        def sim(tags):
+            union = q | tags
+            return len(q & tags) / len(union) if union else 0.0
+        scored = sorted(self.examples, key=lambda e: sim(e[0]), reverse=True)
+        return [(c, r) for tags, c, r in scored[:k] if sim(tags) >= min_sim]
 
     def as_context(self, c_snippet: str, k: int = 2) -> str:
         ex = self.retrieve(c_snippet, k)
