@@ -76,6 +76,9 @@ class VerificationReport:
     semantic: GateResult
     test: GateResult
     differential: GateResult
+    # Optional UB-freedom proof under Miri. Defaults to a not-run PASS so it never
+    # blocks a system without nightly+miri and never breaks existing constructions.
+    miri: GateResult = field(default_factory=lambda: GateResult("miri", True, "not run"))
 
     @property
     def passed(self) -> bool:
@@ -86,12 +89,13 @@ class VerificationReport:
             and self.semantic.passed
             and self.test.passed
             and self.differential.passed
+            and self.miri.passed
         )
 
     @property
     def first_failure(self) -> GateResult | None:
         for g in (self.compile, self.anti_stub, self.no_unsafe, self.semantic,
-                  self.test, self.differential):
+                  self.test, self.differential, self.miri):
             if not g.passed:
                 return g
         return None
@@ -106,6 +110,7 @@ class VerificationReport:
             f"[semantic   {mark(self.semantic)}] {self.semantic.summary}\n"
             f"[test       {mark(self.test)}] {self.test.summary}\n"
             f"[diff       {mark(self.differential)}] {self.differential.summary}\n"
+            f"[miri       {mark(self.miri)}] {self.miri.summary}\n"
             f"OVERALL: {'PASS' if self.passed else 'FAIL'}"
         )
 
@@ -148,6 +153,7 @@ class DifferentialTester:
         timeout_compile: int = 300,
         timeout_test: int = 600,
         timeout_diff: int = 900,
+        enable_miri: bool = False,
     ):
         self.rust_workspace = Path(rust_workspace)
         self.diff_config = diff_config
@@ -162,6 +168,7 @@ class DifferentialTester:
         self.timeout_compile = timeout_compile
         self.timeout_test = timeout_test
         self.timeout_diff = timeout_diff
+        self.enable_miri = enable_miri
         # Populated by _build_and_run_differential; consumed by the receipt.
         self._diff_evidence: dict | None = None
 
@@ -397,6 +404,29 @@ class DifferentialTester:
 
     # --- Orchestration ---
 
+    def gate_miri(self) -> GateResult:
+        """Optional: prove the safe Rust is free of undefined behaviour under Miri.
+        Opt-in (`enable_miri`); PASSES as not-run when disabled or when nightly+miri
+        is unavailable, so it never blocks a system without the toolchain."""
+        if not self.enable_miri:
+            return GateResult("miri", True, "not run (disabled)")
+        console.print("[cyan]gate 6/6: cargo +nightly miri test[/cyan]")
+        try:
+            r = subprocess.run(
+                ["cargo", "+nightly", "miri", "test", *self._package_args()],
+                cwd=str(self.rust_workspace), capture_output=True, text=True,
+                timeout=self.timeout_test,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            return GateResult("miri", True, f"not run (miri unavailable: {e})")
+        out = r.stdout + r.stderr
+        if "no such subcommand" in out or "not installed" in out.lower():
+            return GateResult("miri", True, "not run (miri not installed)")
+        ok = "test result: ok" in out
+        return GateResult("miri", ok,
+                          "UB-free under Miri" if ok else "Miri found undefined behaviour",
+                          stdout=r.stdout, stderr=r.stderr)
+
     def run_all(self) -> VerificationReport:
         compile_r = self.gate_compile()
         # Run all informational gates regardless of compile outcome so the
@@ -425,6 +455,8 @@ class DifferentialTester:
             name="differential", passed=False,
             summary="skipped — test gate failed",
         )
+        miri_r = self.gate_miri() if test_r.passed else GateResult(
+            "miri", True, "skipped — test gate failed")
         return VerificationReport(
             compile=compile_r,
             anti_stub=anti_r,
@@ -432,6 +464,7 @@ class DifferentialTester:
             semantic=semantic_r,
             test=test_r,
             differential=diff_r,
+            miri=miri_r,
         )
 
     # --- Differential harness build / run ---
@@ -650,6 +683,7 @@ def verify_workspace(
     specs: list | None = None,
     specs_error: str | None = None,
     refuse_without_diff: bool = True,
+    enable_miri: bool = False,
 ) -> VerificationReport:
     """Public API — run all gates and return report.
 
@@ -669,7 +703,7 @@ def verify_workspace(
     """
     tester = DifferentialTester(
         rust_workspace, diff_config=diff_config, specs=specs,
-        specs_error=specs_error,
+        specs_error=specs_error, enable_miri=enable_miri,
     )
     report = tester.run_all()
     if diff_config is not None:

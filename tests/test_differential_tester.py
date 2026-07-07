@@ -238,3 +238,24 @@ def test_anti_stub_gate_flags_real_zlib_stubs():
     assert not result.passed, "Expected stubs in current zlib output"
     assert result.anti_stub_report is not None
     assert len(result.anti_stub_report.violations) >= 18
+
+
+# --- promoted from autonomy: optional Miri gate (see docs/GROUNDING.md) ---
+def test_miri_gate_not_run_when_disabled(tmp_path):
+    from alchemist.verifier.differential_tester import DifferentialTester
+    g = DifferentialTester(tmp_path, enable_miri=False).gate_miri()
+    assert g.passed and "not run" in g.summary          # never blocks by default
+
+
+def test_report_defaults_miri_to_not_run_pass():
+    from alchemist.verifier.differential_tester import VerificationReport, GateResult
+    ok = GateResult("x", True, "ok")
+    r = VerificationReport(ok, ok, ok, ok, ok, ok)       # no miri arg -> default
+    assert r.passed and "miri" in r.summary()
+
+
+def test_failing_miri_fails_the_report():
+    from alchemist.verifier.differential_tester import VerificationReport, GateResult
+    ok = GateResult("x", True, "ok")
+    r = VerificationReport(ok, ok, ok, ok, ok, ok, miri=GateResult("miri", False, "UB"))
+    assert not r.passed and r.first_failure.name == "miri"

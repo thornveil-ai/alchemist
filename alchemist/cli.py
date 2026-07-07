@@ -160,6 +160,11 @@ def verify(
              "(repeatable). Differential harnesses are filtered to algorithms "
              "those packages implement.",
     ),
+    miri: bool = typer.Option(
+        False, "--miri",
+        help="Also run the optional Miri gate (prove the safe Rust is UB-free). "
+             "Needs nightly+miri; skips cleanly if unavailable.",
+    ),
 ):
     """Stage 5: run every verification gate — compile, anti-stub, no-unsafe,
     semantic lints, cargo test, and the differential oracle against the
@@ -209,7 +214,7 @@ def verify(
             )
 
     report = verify_workspace(out, diff_config=diff_config, specs=specs,
-                              specs_error=specs_error)
+                              specs_error=specs_error, enable_miri=miri)
     console.print(report.summary())
     if not report.passed:
         raise typer.Exit(code=1)
