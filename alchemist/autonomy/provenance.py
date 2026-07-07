@@ -77,6 +77,7 @@ class VerificationReceipt:
     cwes_eliminated: list
     model: str
     tool: str = "alchemist"
+    perf_ratio: float | None = None   # rust ns / c ns (1.0 = parity); None if not benched
 
     def canonical(self) -> str:
         return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
