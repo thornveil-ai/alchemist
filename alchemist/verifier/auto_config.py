@@ -626,6 +626,12 @@ def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
     if not slice_params:
         return []
     data_param = slice_params[0].name
+    # If the Rust fn keeps an explicit length param (not folded into the slice),
+    # the fill-test call needs it = the buffer length; otherwise the test would
+    # call the fn with a wrong/default length and never match the C oracle.
+    len_params = [pp for pp in (alg.inputs or [])
+                  if pp.name != data_param and "usize" in (pp.rust_type or "")]
+    len_param = len_params[0].name if len_params else None
     rng = _rng(_FUZZ_SEED)
     vectors = []
     for data in _gen_byte_inputs(rng, count):
@@ -633,10 +639,13 @@ def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
             out = binding.adapter(fn, bytes(data))
         except Exception:  # noqa: BLE001
             continue
+        _row = {data_param: _bytes_to_rust_literal(bytes(data))}
+        if len_param:
+            _row[len_param] = f"{len(data)}usize"
         vectors.append(SpecTestVector(
             description=f"fuzz_input_len_{len(data)}",
             source=f"C reference (scalar): {sig.name}",
-            inputs={data_param: _bytes_to_rust_literal(bytes(data))},
+            inputs=_row,
             expected_output=str(int(out)),
             tolerance="exact",
         ))
