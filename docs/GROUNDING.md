@@ -106,6 +106,16 @@ were the RETIRED autonomy track's *automation debt* — the count of human-suppl
 artifacts (oracle shims, build configs, review confirmations) the push-button engine
 wanted to auto-synthesize. They are NOT unsolved zlib bugs. zlib is translated
 byte-exact today (deflate+inflate round-trip, 21/21 — see zlib_case_study.md). With
-the autonomy track retired, that automation-debt ledger is retired with it. The real
-shipping frontier is: finish the zlib tails (gzip wrapper, inflate_fast — both
-correctness-neutral), and broaden proven coverage beyond the current subjects.
+the autonomy track retired, that automation-debt ledger is retired with it.
+
+**zlib surface completed 2026-07-07:** the zlib workspace on the RigRun box now has
+**zero `unimplemented!()`, 454 tests green, byte-exact vs C at levels 0–9.** All 18
+previously-stubbed functions were resolved: 16 implemented + differentially verified
+(notably `deflate_stored`/level-0 byte-exact across block boundaries, and all 7
+compress/uncompress wrappers), and 2 documented safe-port omissions (`inflate_fast` =
+unsafe-pointer optimization with no safe equivalent; `inflate_back` = broken-placeholder
+signature, zero callers). A test-gen bug was also found+fixed (20 `compress_bound` KATs
+disagreed with real C). Durable snapshot:
+`subjects/zlib/.alchemist/zlib_complete_verified_2026-07-07.tar.gz` on the box.
+The remaining real frontier: gzip wrapper (`wbits +16`), incremental multi-call
+streaming, and broadening proven coverage beyond the current subjects.

@@ -67,14 +67,27 @@ This is a real result, stated honestly:
 - **A few per-case modeling decisions remain** (e.g. `deflate_stored`'s reach-backward into already-consumed input is a coherent-model choice, deferred).
 - **Scale is unproven** beyond zlib's few-thousand lines. "Millions of lines, fully automatic" is the roadmap, not today's reality.
 
-### Remaining, honestly (nice-to-haves, not blockers)
+### Surface completion (2026-07-07 — the public API is now filled)
 
-The compressor and decompressor round-trip byte-exact today. These finish the surface:
+The compressor and decompressor round-trip byte-exact, and the remaining public API
+surface has since been completed and differentially verified:
 
-- **`deflate_stored` (level 0).** No-compression stored blocks. The one function that reaches backward into already-consumed input — a coherent-model decision (retain the input as an offset buffer vs. reconstruct from output) rather than a bug. Rarely used.
-- **gzip wrapper** (`wbits +16`). The raw and zlib formats are byte-exact; gzip needs the header-field states (FLAGS/TIME/OS/…) and a crc32 trailer.
-- **`inflate_fast`.** A pure performance optimization — the slow decode path it replaces is already byte-exact, so output is unaffected.
-- **Multi-call streaming.** Verified for whole-buffer calls; incremental `avail_in`/`avail_out` chunking across many calls is the next robustness pass.
+- **`deflate_stored` (level 0)** — DONE, byte-exact vs C zlib across all block
+  boundaries (empty, 65534/65535/65536, and multi-block 131070–200000-byte inputs).
+- **`compress`/`uncompress` wrappers** (all 7 `_z`/non-`_z` variants) — DONE, compress↔
+  uncompress round-trip proven.
+- **`compress_bound`, `zlib_compile_flags`, the `_`-init variants, `inflate_prime`,
+  `deflate_get_dictionary`** — DONE (note: 20 `compress_bound` KAT tests were found to
+  disagree with real C and were regenerated from the C reference — a test-gen bug fixed).
+- **`inflate_fast`, `inflate_back`** — intentionally OMITTED in this *safe* port.
+  `inflate_fast` is zlib's unchecked-pointer decode optimization (no safe-Rust
+  equivalent, and the safe slow path is already byte-exact); `inflate_back`'s port
+  signature is a non-functional placeholder with zero callers. Both are documented,
+  non-panicking omissions rather than `unsafe` reimplementations.
+
+Result: **zero `unimplemented!()` in the workspace, 454 tests green, byte-exact vs C at
+levels 0–9.** Still open: gzip wrapper (`wbits +16`) and incremental multi-call
+`avail_in`/`avail_out` streaming (whole-buffer calls are verified).
 
 ## The takeaway
 
