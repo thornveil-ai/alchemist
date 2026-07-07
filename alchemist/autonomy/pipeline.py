@@ -13,6 +13,7 @@ signed, buildable deliverable — not a pile of files.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -71,42 +72,89 @@ def _verify_crate(res, cfile, llm, ctx, model, env, miri=False):
     return ok, miri_ok, lib
 
 
-def translate_project(source, work, llm, env, gcc="g++", miri=False, max_fns=None):
-    """Run the full pipeline over a project; return a signed ProjectManifest."""
+def _outcomes_for(fn_names, verdict, res, cfile, sa, cwes, miri_ok):
+    """One receipt per translated group -> a FunctionOutcome for each fn in it."""
+    rec = VerificationReceipt(",".join(sorted(fn_names)), verdict, res.num_vectors, 1.0,
+                              sa, miri_ok, cwes, "gemma-4-31b")
+    dig = rec.digest()
+    return [FunctionOutcome(n, verdict, dig, sa.memory_safe, miri_ok, [c for c, _ in cwes])
+            for n in fn_names]
+
+
+def _translate_file(cfile, work, llm, env, gcc, miri):
+    """Route a .c file by its dominant translatable shape, translate+verify once, and
+    return {fn_name: FunctionOutcome} for the functions the chosen builder covers."""
+    from alchemist.autonomy.stateful import (detect_stateful_api, resolve_typedefs,
+                                             build_stateful_crate)
+    from alchemist.autonomy.c_struct import resolve_c_defines
+    from alchemist.autonomy.ownership import detect_heap_api
+    from alchemist.autonomy.auto_translate import build_crate_from_sources
+    from alchemist.autonomy.onboard import gen_fuzz_lengths
+    txt = cfile.read_text(errors="replace")
+    funcs = discover_functions(txt)
+    stem = re.sub(r"\W", "_", cfile.stem)
+
+    api = detect_stateful_api(funcs, resolve_c_defines(txt), resolve_typedefs(txt))
+    if api:
+        grp = [n for n in (api.init, api.update, api.final, *api.helpers) if n]
+        res = build_stateful_crate([cfile], work / ("s_" + stem), "s_" + stem,
+                                   gen_fuzz_lengths(24), gcc=gcc)
+        ok, miri_ok, lib = _verify_crate(res, cfile, llm,
+            "Stateful init/update/final over a ctx struct; preserve exact arithmetic.",
+            "gemma-4-31b", env, miri)
+        sa = safety_audit(Path(lib).read_text())
+        return {o.function: o for o in _outcomes_for(res.fill_order or grp,
+                "verified" if ok else "partial", res, cfile, sa, cwe_findings(txt), miri_ok)}, res.crate_dir if ok else None
+
+    if detect_heap_api(funcs):
+        res = build_ownership_crate([cfile], work / ("h_" + stem), "h_" + stem, gcc=gcc)
+        ok, miri_ok, lib = _verify_crate(res, cfile, llm,
+            "malloc'd buffer returned -> owned Vec<u8>; free fn takes Vec by value; no unsafe.",
+            "gemma-4-31b", env, miri)
+        sa = safety_audit(Path(lib).read_text())
+        return {o.function: o for o in _outcomes_for(res.fill_order,
+                "verified" if ok else "partial", res, cfile, sa, cwe_findings(txt), miri_ok)}, res.crate_dir if ok else None
+
+    # scalar/buffer file: differential over each pure function build_crate_from_sources finds
+    res = build_crate_from_sources([cfile], work / ("p_" + stem), "p_" + stem,
+                                   [bytes(range(i)) for i in (0, 1, 8, 32, 64)], search_roots=[cfile.parent])
+    ok, miri_ok, lib = _verify_crate(res, cfile, llm,
+        "Pure function: buffer+len -> &[u8]; preserve arithmetic exactly.", "gemma-4-31b", env, miri)
+    sa = safety_audit(Path(lib).read_text())
+    return {o.function: o for o in _outcomes_for(res.fill_order,
+            "verified" if ok else "partial", res, cfile, sa, cwe_findings(txt), miri_ok)}, res.crate_dir if ok else None
+
+
+def translate_project(source, work, llm, env, gcc="g++", miri=False, max_files=None):
+    """Run the full pipeline over a project (file-and-shape centric), returning a
+    signed ProjectManifest. Each file is routed to the builder for its dominant
+    shape; every function is triaged so out-of-scope/complex ones are refused with a
+    reason. Crash-proof per file."""
     work = Path(work)
     proj = ingest_project(str(source), work)
-    funcs, gnames = {}, set()
-    for c in proj.c_files:
-        txt = c.read_text(errors="replace")
-        funcs.update(discover_functions(txt)); gnames |= {g.name for g in detect_globals(txt)}
-    scopes = scope_triage(funcs, gnames)
     manifest = ProjectManifest(Path(str(source)).name)
     crate_dirs = []
-    for i, fs in enumerate(scopes):
-        if max_fns and i >= max_fns:
+    covered: set[str] = set()
+    for i, cfile in enumerate(proj.c_files):
+        if max_files and i >= max_files:
             break
-        builder = route(fs.scope)
-        if builder is None:
-            manifest.add(FunctionOutcome(fs.name, "refused", reason="%s: %s" % (fs.scope, fs.reason)))
-            continue
-        if builder == "build_ownership_crate":
-            def do(fs=fs):
-                cfile = next(c for c in proj.c_files if fs.name in c.read_text(errors="replace"))
-                res = build_ownership_crate([cfile.parent], work / ("out_" + fs.name), "c_" + fs.name, gcc=gcc)
-                ctx = ("malloc'd buffer returned -> owned Vec<u8>; free fn takes Vec by value and drops; "
-                       "NO unsafe/raw pointers.")
-                ok, miri_ok, lib = _verify_crate(res, cfile, llm, ctx, "gemma-4-31b", env, miri)
-                sa = safety_audit(Path(lib).read_text())
-                cwes = cwe_findings(cfile.read_text())
-                rec = VerificationReceipt(fs.name, "verified" if ok else "partial", res.num_vectors,
-                                          1.0, sa, miri_ok, cwes, "gemma-4-31b")
-                crate_dirs.append(res.crate_dir)
-                return FunctionOutcome(fs.name, "verified" if ok else "partial", rec.digest(),
-                                       sa.memory_safe, miri_ok, [c for c, _ in cwes])
-            manifest.add(translate_safely(fs.name, do))
-        else:
-            manifest.add(FunctionOutcome(fs.name, "partial",
-                                         reason="routable via %s (not run in this driver)" % builder))
+        result = translate_safely("file:" + cfile.name,
+                                  lambda cfile=cfile: _translate_file(cfile, work, llm, env, gcc, miri))
+        if isinstance(result, tuple):
+            outcomes, crate = result
+            for o in outcomes.values():
+                manifest.add(o); covered.add(o.function)
+            if crate:
+                crate_dirs.append(crate)
+        elif isinstance(result, FunctionOutcome):        # the whole file crashed -> one refused note
+            manifest.add(result)
+    # anything the builders didn't cover -> triage-honest refusal
+    for cfile in proj.c_files:
+        txt = cfile.read_text(errors="replace")
+        gnames = {g.name for g in detect_globals(txt)}
+        for fs in scope_triage(discover_functions(txt), gnames):
+            if fs.name not in covered and not any(f.function == fs.name for f in manifest.functions):
+                manifest.add(FunctionOutcome(fs.name, "refused", reason="%s: %s" % (fs.scope, fs.reason)))
     if crate_dirs:
         emit_workspace(work / "workspace", crate_dirs)
     return manifest

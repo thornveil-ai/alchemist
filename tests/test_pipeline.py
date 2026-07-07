@@ -12,7 +12,7 @@ def test_translate_project_refuses_oos_without_model(tmp_path):
     (tmp_path / "lib.c").write_text(
         "#include <stdio.h>\nvoid logit(const char *m) { printf(\"%s\", m); }\n")
     # oos functions never reach the model -> llm=None is fine
-    manifest = translate_project(str(tmp_path), tmp_path / "work", llm=None, env={}, max_fns=5)
+    manifest = translate_project(str(tmp_path), tmp_path / "work", llm=None, env={}, max_files=5)
     outcomes = {f.function: f for f in manifest.functions}
     assert outcomes["logit"].verdict == "refused"
     assert "oos" in outcomes["logit"].reason
