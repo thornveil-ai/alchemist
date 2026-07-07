@@ -44,7 +44,9 @@ class Diagnosis:
     rounds: int
 
 
-def _diag_prompt(c_body: str, rust: str, failure: str) -> str:
+def _diag_prompt(c_body: str, rust: str, failure: str, context: str = "") -> str:
+    ctx_block = ("## In scope — call these with EXACTLY these signatures (do not "
+                 "invent names or change arg counts)\n%s\n\n" % context) if context else ""
     return (
         "A Rust function was translated from C but its behavior DIVERGES from the "
         "reference. Diagnose the ROOT CAUSE as a coherent-model mismatch — how a "
@@ -53,13 +55,14 @@ def _diag_prompt(c_body: str, rust: str, failure: str) -> str:
         "Consider idioms that commonly mistranslate: pointer->index, buffer+length, "
         "loop-cursor increment placement, a manually-advanced output index vs the "
         "buffer, borrow-checker splits, fixed-array vs Vec sizing, C macro constants, "
-        "signed/unsigned width and masking.\n\n"
+        "signed/unsigned width and masking, wrong argument counts, invented locals.\n\n"
+        "%s"
         "## C reference (authoritative)\n```c\n%s\n```\n\n"
         "## Current Rust (diverges)\n```rust\n%s\n```\n\n"
         "## Differential failure (compile error / panic / expected-vs-got)\n%s\n\n"
         "Return root_cause, general_rule (ONE reusable sentence), and fixed_function "
         "(the COMPLETE corrected `pub fn`, body included)."
-        % (c_body, rust, failure.strip()[:2000])
+        % (ctx_block, c_body, rust, failure.strip()[:2000])
     )
 
 
@@ -72,6 +75,7 @@ def diagnose_and_fix(
     run_test: Callable[[], tuple[bool, str]],
     max_rounds: int = 3,
     temperature: float = 0.0,
+    context: str = "",
 ) -> Diagnosis:
     """Loop: diagnose -> apply fix -> test -> (on failure) re-diagnose with the new
     error. `apply_fixed(code)` splices the corrected function; `run_test()` returns
@@ -81,7 +85,7 @@ def diagnose_and_fix(
 
     root_cause = general_rule = ""
     for r in range(max_rounds):
-        prompt = _diag_prompt(c_body, current_rust, failure_text)
+        prompt = _diag_prompt(c_body, current_rust, failure_text, context)
         resp = llm.call_structured(
             messages=[{"role": "user", "content": prompt}],
             tool_name="diagnose",
