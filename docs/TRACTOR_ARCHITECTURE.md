@@ -8,44 +8,50 @@ fill — Gemma today, a frontier model tomorrow — the output is provably equiv
 The model is a swappable fill oracle in the middle; everything around it is the
 durable moat.
 
-Each pillar below is landed as a **proven, tested foundation** (end-to-end on the
-box with gcc/rustc, plus unit tests).
+Each pillar is landed at **top tier** — a proven foundation AND an automated,
+usable subsystem (end-to-end on the box with gcc/rustc + the local model, plus unit
+tests). 53 tests green.
 
-## Pillar 1 — Effect-footprint oracle  ✅ foundation proven
-Generalizes the differential from pure `input→output` to the **full observable
-footprint**: captured returns ++ final bytes of every global/static. C's implicit
-file-scope state maps to an explicit Rust `GlobalState` (threaded `&mut`).
-*Proof:* global-state PRNG — correct Rust footprint byte-exact vs C; a one-off-by-
-one constant diverges and is caught. → verified-or-refused now reaches effectful C.
-*(Next increment: syscall/libc trace via LD_PRELOAD shim.)*
+## Pillar 1 — Effect-footprint oracle  ✅ top tier
+Differential over the **full observable footprint** (captured returns ++ final bytes
+of every global/static), not just the return. C's implicit file-static state maps to
+an explicit Rust `GlobalState` (`&mut`-threaded).
+- *foundation:* PRNG footprint byte-exact vs C; off-by-one constant caught.
+- *top tier:* `build_effectful_crate` makes effectful C a **first-class onboarding
+  shape** — onboard → footprint oracle (compiled as one TU so statics are visible) →
+  fill → verify. **PROVEN: a global-state PRNG onboards, fills, and verifies byte-
+  exact across 40 footprint vectors, fully autonomous.** The moat is usable.
 
-## Pillar 2 — Whole-program type model + bottom-up order  ✅ foundation proven
-One `ProgramTypeModel` the whole program shares: every typedef/struct/pointer
-resolved to ONE coherent Rust type, so a ctx produced by one fn and consumed by
-another get the identical type (`SHA256_CTX*`→`&mut Sha256Ctx`, `const`→`&`).
-`topo_order` gives leaves-first (recursion-tolerant) translation. → per-function
-wins become codebase throughput.
+## Pillar 2 — Whole-program type model + bottom-up translation  ✅ top tier
+- *foundation:* one `ProgramTypeModel` resolving every type to ONE coherent Rust
+  form consistently (`SHA256_CTX*`→`&mut Sha256Ctx`); `topo_order` leaves-first.
+- *top tier:* `translate_program` ingests a multi-function C program, derives each
+  signature from the shared model, translates **bottom-up** (main stays C), and
+  verifies the WHOLE program via the migration harness. **PROVEN: a 2-function hash
+  lib (hash_str→hash_byte) translates bottom-up and verifies byte-identical vs all-C
+  across 5 inputs.** (Composes P2+P3.)
 
-## Pillar 3 — Incremental verified FFI migration  ✅ foundation proven
-For a verified safe-Rust fn, emit a thin `#[no_mangle] extern "C"` wrapper: raw C
-ABI (ptr+len) outside, safe core inside (raw pointers appear ONLY in the wrapper).
-*Proof:* module-generated wrapper compiles as a staticlib, links into the C program
-in place of the C original, whole-program output byte-identical to all-C. → migrate
-one leaf at a time, prove the program is unchanged, commit, repeat. Procurement-grade.
+## Pillar 3 — Incremental verified FFI migration  ✅ top tier
+- *foundation:* `emit_c_abi_export` — safe core inside, C ABI outside; hot-swap
+  proven byte-identical.
+- *top tier:* `migrate_function` **automates the whole-program verified swap** —
+  `strip_c_function` removes the C def, links the Rust shim in its place, runs BOTH
+  on every input, returns verified/rejected. **PROVEN: correct Rust swap verified
+  across 4 inputs; wrong Rust (*37) rejected at first mismatch.**
 
-## Pillar 4 — Coverage-driven differential  ✅ foundation proven
-`measure_branch_coverage` (gcov) reports how much of the C's branch structure an
-input set exercises; `boundary_inputs` probes the comparison edges C branches on.
-*Proof:* branchy classifier — naive ASCII inputs 20% branch coverage, boundary-aware
-100%. → "verified on N vectors" becomes "verified on coverage-complete inputs," and
-the coverage number rides in the receipt.
+## Pillar 4 — Coverage-driven differential  ✅ top tier
+- *foundation:* `measure_branch_coverage` (gcov) + `boundary_inputs`; naive 20% vs
+  boundary-aware 100% on a branchy classifier.
+- *top tier:* `coverage_guided_inputs` — a real **greybox loop** (mutate, keep what
+  raises cumulative coverage). **PROVEN: from a single trivial seed `b"A"` it
+  discovers all six branches of a UTF-8 classifier to 100% coverage in 32 rounds.**
 
-## Pillar 5 — Verified-preserving idiomaticity  ✅ foundation proven
-`verified_refactor` raises idiomaticity (iterators over raw indexing, `Result` over
-sentinels) but gates EVERY candidate on the differential — byte-exact or reverted.
-*Proof:* idiomatic iterator-fold refactor kept (byte-exact), `*37` breaking refactor
-reverted, baseline stays correct AND idiomatic. → matches TRACTOR's idiomatic bar
-without giving up equivalence.
+## Pillar 5 — Verified-preserving idiomaticity  ✅ top tier
+- *foundation:* `verified_refactor` — byte-exact or reverted.
+- *top tier:* `idiomaticity_score` ranks candidates; `model_idiomatic_candidate`
+  asks the model for an idiomatic rewrite, **gated** by the differential. **PROVEN:
+  mechanical checksum (score −10) → model iterator-fold rewrite → gated byte-exact →
+  KEPT, score +3. Idiomaticity improved automatically, guarantee preserved.**
 
 ## The pitch
 Not "our model is better" — **"our harness makes any model trustworthy at codebase
