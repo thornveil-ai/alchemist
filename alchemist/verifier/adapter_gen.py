@@ -512,6 +512,35 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name}",
                 ))
+            elif h.category == "inplace":
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of in-place '{h.algorithm}': not found"
+                    )
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(input: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut s = input;\n"
+                    f"    let n = s.len();\n"
+                    f"    {fn.crate_ident}::{fn.name}(&mut s, n);\n"
+                    f"    s\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(input: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut s = input;\n"
+                    f"    let n = s.len();\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(s.as_mut_ptr() as *mut _, n as _); }}\n"
+                    f"    s\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (in-place)",
+                ))
             elif h.category == "scalar":
                 fn = _pick_unambiguous(h.algorithm, api)
                 if fn is None:

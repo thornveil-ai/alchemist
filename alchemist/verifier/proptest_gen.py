@@ -34,7 +34,7 @@ from alchemist.standards import TestVector, lookup_test_vectors
 VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
-    "protocol", "scheduler", "utility", "other", "scalar"}
+    "protocol", "scheduler", "utility", "other", "scalar", "inplace"}
 
 
 @dataclass
@@ -210,6 +210,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_cipher_block(h)
     if h.category == "scalar":
         return _proptest_scalar_block(h)
+    if h.category == "inplace":
+        return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
         return _proptest_compression_block(h)
     if h.category in ("filter", "controller"):
@@ -251,6 +253,23 @@ def _boundary_block(h: AlgorithmHarness) -> str:
                 let c_out = {h.c_call};
                 assert_eq!(rust_out, c_out,
                     "{h.algorithm} diverged from C reference at boundary length {{}}", len);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_inplace_block(h: AlgorithmHarness) -> str:
+    """Differential for an in-place byte transform: fuzz a buffer, compare Rust vs C."""
+    strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..256)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+                let rust_out = {h.rust_call};
+                let c_out = {h.c_call};
+                prop_assert_eq!(rust_out, c_out);
             }}
         }}
     """).rstrip()

@@ -419,6 +419,61 @@ def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
     return vectors
 
 
+_MUT_BYTE_PTR_LOOSE = re.compile(r"^(char|unsigned char|uint8_t|u_char|Bytef)\s*\*$")
+
+
+def classify_inplace_shape(sig) -> str | None:
+    """void fn(mutable byte-buffer, len) -> in-place byte transform (str_reverse)."""
+    if (sig.return_type or "").strip() not in ("void", ""):
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if (len(params) == 2 and _MUT_BYTE_PTR_LOOSE.match(params[0])
+            and _INT_C_TYPES.match(params[1])):
+        return "inplace"
+    return None
+
+
+def fuzz_inplace_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint fill-loop vectors for an in-place byte transform: run the C on a buffer,
+    capture the buffer AFTER mutation. Emits byte_transform vectors the test-generator
+    already understands (buffer_postcondition)."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import (
+        _bytes_to_rust_literal, _gen_byte_inputs, _rng, _FUZZ_SEED,
+    )
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if classify_inplace_shape(sig) is None:
+        return []
+    inputs_specs = alg.inputs or []
+    buf_param = next((p for p in inputs_specs if "[u8]" in (p.rust_type or "")), None)
+    len_param = next((p for p in inputs_specs
+                      if p is not buf_param and "usize" in (p.rust_type or "")), None)
+    if buf_param is None or len_param is None:
+        return []
+    fn = getattr(dll, sig.name)
+    fn.restype = None
+    fn.argtypes = (ctypes.POINTER(ctypes.c_ubyte), _ctype(sig.params[1][1]) or ctypes.c_int)
+    rng = _rng(_FUZZ_SEED)
+    vectors = []
+    for data in _gen_byte_inputs(rng, count):
+        data = bytes(data)
+        buf = (ctypes.c_ubyte * len(data))(*data) if data else (ctypes.c_ubyte * 0)()
+        try:
+            fn(buf, len(data))
+        except Exception:  # noqa: BLE001
+            continue
+        after = bytes(buf[i] for i in range(len(data)))
+        vec_lit = "__VEC__" + ",".join(str(b) for b in data)
+        vectors.append(SpecTestVector(
+            description=f"inplace_len_{len(data)}",
+            source=f"C reference (in-place): {sig.name}",
+            inputs={buf_param.name: vec_lit, len_param.name: f"{len(data)}usize"},
+            expected_output=_bytes_to_rust_literal(after),
+            tolerance=f"byte_transform|buffer_postcondition|{buf_param.name}|{len_param.name}",
+        ))
+    return vectors
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -450,6 +505,17 @@ def build_diff_config(
                 continue
             sig = by_name.get(alg.name)
             if sig is None:
+                continue
+            if classify_inplace_shape(sig) is not None:
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="inplace",
+                    rust_call=f"rust_{alg.name}(input.clone())",
+                    c_call=f"c_{alg.name}(input)",
+                    cases=2000,
+                    input_strategy="prop::collection::vec(any::<u8>(), 0..256)",
+                ))
+                used_signatures.append(sig)
                 continue
             if classify_scalar_shape(sig) is not None and len(alg.inputs or []) == 1:
                 harnesses.append(AlgorithmHarness(
@@ -591,6 +657,8 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 vecs = fuzz_digest_vectors(dll, alg, sig)
             elif classify_scalar_shape(sig) is not None:
                 vecs = fuzz_scalar_vectors(dll, alg, sig)
+            elif classify_inplace_shape(sig) is not None:
+                vecs = fuzz_inplace_vectors(dll, alg, sig)
             else:
                 vecs = []
             if vecs:

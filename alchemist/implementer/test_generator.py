@@ -418,7 +418,10 @@ def _emit_byte_transform_test(
     lines = [f"    #[test]\n    fn {test_name}() {{\n"]
     for pname, pvalue in vec.inputs.items():
         v = pvalue.strip()
-        if v.startswith("__VECZERO__"):
+        if v.startswith("__VEC__"):
+            body = v[len("__VEC__"):]
+            lines.append(f"        let mut {pname}: alloc::vec::Vec<u8> = alloc::vec![{body}];\n")
+        elif v.startswith("__VECZERO__"):
             n_literal = v[len("__VECZERO__"):]
             lines.append(f"        let mut {pname}: alloc::vec::Vec<u8> = alloc::vec![0u8; {n_literal}];\n")
         elif v.startswith("__VECFILL_FF__"):
