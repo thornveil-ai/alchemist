@@ -70,6 +70,40 @@ def detect_heap_api(funcs: dict) -> HeapAPI | None:
     return HeapAPI(alloc, free_fn)
 
 
+def classify_pointer_param(fn_body: str, param: str, is_const: bool = False) -> str:
+    """Ownership role of a pointer parameter:
+      'owned'  — freed or returned (the fn takes ownership)  -> Vec<T> by value
+      'borrow' — `const`-qualified, or only read (a view)    -> &[T]
+      'out'    — written, non-const (an output buffer)       -> Vec<T> return
+    `const` is the reliable signal; the free/return check overrides it."""
+    if re.search(r"\bfree\s*\(\s*&?" + re.escape(param) + r"\b", fn_body) \
+            or re.search(r"\breturn\s+" + re.escape(param) + r"\b", fn_body):
+        return "owned"
+    if is_const:
+        return "borrow"
+    if re.search(re.escape(param) + r"\s*\[[^\]]*\]\s*=", fn_body) \
+            or re.search(r"\*\s*" + re.escape(param) + r"\s*=", fn_body):
+        return "out"
+    return "borrow"
+
+
+def infer_param_ownership(fn, elem_rust: str = "u8") -> list[tuple[str, str, str]]:
+    """(param_name, role, rust_type) per param — coherent ownership typing: read-only
+    view -> &[T], written output -> owned Vec<T>, freed/returned -> owned Vec<T> by
+    value. Non-pointer scalars pass through."""
+    body = getattr(fn, "body", "")
+    out = []
+    for p in [x.strip() for x in fn.params.split(",") if x.strip() and x.strip() != "void"]:
+        nm = p.split()[-1].lstrip("*")
+        if "*" in p or "[" in p:
+            role = classify_pointer_param(body, nm, is_const="const" in p)
+            rty = ("&[%s]" % elem_rust) if role == "borrow" else ("Vec<%s>" % elem_rust)
+            out.append((nm, role, rty))
+        else:
+            out.append((nm, "scalar", c_to_rust_scalar(" ".join(p.split()[:-1]))))
+    return out
+
+
 def owned_signatures(api: HeapAPI) -> dict[str, str]:
     """Coherent ownership-typed Rust signatures. The allocator RETURNS an owned
     Vec (ownership out); the free fn TAKES an owned Vec by value (ownership in ->

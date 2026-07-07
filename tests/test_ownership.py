@@ -34,3 +34,21 @@ def test_ownership_typed_signatures():
 
 def test_no_heap_api_for_pure_function():
     assert detect_heap_api(discover_functions("int add(int a, int b) { return a + b; }")) is None
+
+
+def test_classify_pointer_borrow_out_owned():
+    from alchemist.autonomy.ownership import classify_pointer_param
+    assert classify_pointer_param("h ^= in[i];", "in", is_const=True) == "borrow"   # const view
+    assert classify_pointer_param("out[i] = x;", "out") == "out"                    # written buffer
+    assert classify_pointer_param("free(p);", "p") == "owned"                       # freed -> owned
+
+
+def test_infer_param_ownership_mixed_signature():
+    from alchemist.autonomy.ownership import infer_param_ownership
+    src = ("void proc(const unsigned char *in, unsigned long n, unsigned char *out) {\n"
+           "    for (unsigned long i = 0; i < n; i++) out[i] = in[i] ^ 0xff;\n}\n")
+    fn = discover_functions(src)["proc"]
+    roles = {nm: (role, rty) for nm, role, rty in infer_param_ownership(fn)}
+    assert roles["in"] == ("borrow", "&[u8]")     # const input -> borrowed view
+    assert roles["out"] == ("out", "Vec<u8>")     # written output -> owned Vec
+    assert roles["n"][0] == "scalar"
