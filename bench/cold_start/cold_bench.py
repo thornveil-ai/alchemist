@@ -102,6 +102,34 @@ int bump_alloc_n(bump_alloc *a, int n) {
     { int p = a->off; a->off += n; return p; }
 }
 """),
+ # Clean (UB-free) versions of the sqrt / parser classes. The original `isqrt`
+ # and `parse_int` above have genuine integer-overflow UB (isqrt: x+1 wraps to 0
+ # at UINT_MAX -> n/0; parse_int: v*10 overflows) which the differential CORRECTLY
+ # refuses. These are the well-formed equivalents, differentially verifiable.
+ ("bitsqrt", "math-scalar-clean", """
+unsigned bitsqrt(unsigned n) {
+    unsigned res = 0;
+    unsigned bit = 1u << 30;
+    while (bit > n) bit >>= 2;
+    while (bit != 0) {
+        if (n >= res + bit) { n -= res + bit; res = (res >> 1) + bit; }
+        else { res >>= 1; }
+        bit >>= 2;
+    }
+    return res;
+}
+"""),
+ ("atoib", "parser-buffer-clean", """
+long atoib(const unsigned char *s, int len) {
+    long v = 0; int i = 0, neg = 0;
+    if (i < len && s[i] == 45) { neg = 1; i++; }
+    for (; i < len && i < 18; i++) {
+        if (s[i] < 48 || s[i] > 57) break;
+        v = v * 10 + (long)(s[i] - 48);
+    }
+    return neg ? -v : v;
+}
+"""),
 ]
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[mK]")
