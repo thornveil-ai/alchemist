@@ -37,7 +37,7 @@ Each function is a **never-seen** self-contained C function, run through the pip
 | function | class | triage | implement | verify | overall |
 |---|---|---|---|---|---|
 | `isqrt` | math-scalar | ATTEMPT | PASS | FAIL | **FAIL** (model fill overflows u32 — verifier caught it) |
-| `popcount` | bits-scalar | ATTEMPT | PASS | FAIL | **FAIL** (unsigned-long FFI width edge) |
+| `popcount` | bits-scalar | ATTEMPT | PASS | PASS | **PASS** ✅ 2nd cold success (scalar shape, after brace fix) |
 | `fletcher16` | checksum-buffer | ATTEMPT | PASS | PASS | **PASS** ✅ first cold autonomous translation |
 | `str_reverse` | string-inplace | ATTEMPT | PASS | FAIL | **FAIL** (in-place shape) |
 | `parse_int` | parser-buffer | ATTEMPT | PASS | FAIL | **FAIL** (char*→&str lift) |
@@ -45,7 +45,10 @@ Each function is a **never-seen** self-contained C function, run through the pip
 | `rc4` | stateful-cipher | ATTEMPT | (implement FAIL) | - | **FAIL** (struct not carried) |
 | `bump_alloc` | stateful-allocator | SKIP | - | - | **FAIL** (still triaged glue) |
 
-- **Triaged in: 12% → 88%** · **Passed implement: 12% → 75%** · **Passed verify: 0% → 12%** · **OVERALL: 0% → 12%**
+- **Triaged in: 12% → 88%** · **Passed implement: 12% → 75%** · **Passed verify: 0% → 25%** · **OVERALL: 0% → 25%**
+  (fletcher16 + popcount both cold-green; scalar shape proven end-to-end. isqrt = same scalar
+  shape but the model's fill overflows u32 — a real bug the verifier catches, awaiting the
+  differential-fed repair loop. str_reverse/parse_int/stateful = shapes not yet built.)
 - The pipeline went from *translating nothing unseen* to **filling arbitrary cold code (6/8 compile + pass TDD)**, with the differential correctly gating correctness: only `fletcher16` is byte-exact; the other fills are subtly wrong and the verifier catches them (no fake greens).
 - **The remaining verify gap is fill quality / repair-loop convergence**, not plumbing — every function now reaches a real differential.
 
