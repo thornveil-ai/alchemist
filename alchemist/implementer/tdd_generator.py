@@ -999,6 +999,29 @@ class TDDGenerator:
             current_body=current_body,
             previous_failure=prev_failure_section,
         )
+        # Feed the ORIGINAL C source so the model TRANSLATES it faithfully (preserving
+        # exact integer width/overflow/wraparound, sign handling, loop bounds, edge cases)
+        # instead of re-inventing the algorithm from the spec. This is the single biggest
+        # fill-quality lever for cold functions that compile-but-diverge.
+        try:
+            _src_root = getattr(self, "_source_root", None)
+            if _src_root:
+                from alchemist.implementer.reference_probe import extract_c_function_body
+                from pathlib import Path as _P
+                for _cf in sorted(_P(_src_root).glob("*.c")):
+                    _cbody = extract_c_function_body(_cf, alg.name)
+                    if _cbody:
+                        prompt = (
+                            f"## Original C source for `{alg.name}` — translate this "
+                            f"FAITHFULLY into safe Rust. Preserve the EXACT arithmetic, "
+                            f"integer widths and overflow/wraparound behaviour, sign "
+                            f"handling, loop bounds and edge cases. Do NOT invent a "
+                            f"different algorithm; match this C exactly.\n```c\n"
+                            f"{_cbody}\n```\n\n" + prompt
+                        )
+                        break
+        except Exception:  # noqa: BLE001
+            pass
         resp = self.llm.call_structured(
             messages=[{"role": "user", "content": prompt}],
             tool_name="impl",
