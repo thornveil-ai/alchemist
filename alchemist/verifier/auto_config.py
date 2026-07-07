@@ -333,6 +333,92 @@ def fuzz_digest_vectors(dll, alg, sig, *, count: int = 20):
     return vectors
 
 
+def classify_scalar_shape(sig) -> str | None:
+    """All-scalar signature: every param is an int type and the return is an int.
+    e.g. isqrt(unsigned)->unsigned, popcount(unsigned long)->int. -> 'scalar' | None."""
+    if not _ctype(sig.return_type or ""):
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if not params:
+        return None
+    if all(_INT_C_TYPES.match(p) for p in params):
+        return "scalar"
+    return None
+
+
+def _scalar_binding(sig):
+    argtypes = tuple(_ctype(t) or ctypes.c_long for _, t in sig.params)
+    restype = _ctype(sig.return_type) or ctypes.c_long
+
+    def adapter(fn, values):
+        return int(fn(*values))
+
+    return CFunctionBinding(c_name=sig.name, restype=restype, argtypes=argtypes, adapter=adapter)
+
+
+def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
+    """Mint fill-loop vectors for an all-scalar function from the compiled C oracle.
+    Values are kept in [0, 2**31) so they compile as positive literals for any int
+    width; the proptest differential (verify) fuzzes the full type range."""
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if classify_scalar_shape(sig) is None:
+        return []
+    inputs_specs = alg.inputs or []
+    if len(inputs_specs) != len(sig.params):
+        return []
+    binding = _scalar_binding(sig)
+    fn = binding.load(dll)
+
+    def _range(rust_type):
+        rt = (rust_type or "u64").strip()
+        signed = rt.startswith("i")
+        w = 64
+        mm = re.search(r"(8|16|32|64|128)", rt)
+        if mm and mm.group(1) != "128":
+            w = int(mm.group(1))
+        if signed:
+            return -(1 << (w - 1)), (1 << (w - 1)) - 1, w
+        return 0, (1 << w) - 1, w
+
+    # per-param value pools: boundaries + spread across the FULL width so the fill
+    # loop catches edge bugs (overflow, high bits) rather than letting them reach verify.
+    pools = []
+    for p_spec in inputs_specs:
+        lo, hi, _w = _range(p_spec.rust_type)
+        pool = [0, 1, 2, 3, hi, hi - 1, hi // 2, hi // 3]
+        if lo < 0:
+            pool += [lo, lo + 1, -1, -2]
+        pool = [v for v in dict.fromkeys(pool) if lo <= v <= hi]
+        st = 0xD1B54A32D192ED03 ^ (hash(p_spec.name) & 0xFFFF)
+        while len(pool) < count:
+            st = (st * 6364136223846793005 + 1442695040888963407) & ((1 << 64) - 1)
+            pool.append(lo + ((st >> 3) % (hi - lo + 1)))
+        pools.append(pool[:count])
+
+    vectors, seen = [], set()
+    for i in range(count):
+        vals = tuple(pool[i] for pool in pools) if pools else ()
+        if vals in seen:
+            continue
+        seen.add(vals)
+        try:
+            out = binding.adapter(fn, vals)
+        except Exception:  # noqa: BLE001
+            continue
+        row = {}
+        for p_spec, v in zip(inputs_specs, vals):
+            rt = (p_spec.rust_type or "u64").strip()
+            row[p_spec.name] = f"{v}{rt}"
+        vectors.append(SpecTestVector(
+            description=f"scalar_{i}",
+            source=f"C reference (scalar): {sig.name}",
+            inputs=row,
+            expected_output=str(int(out)),
+            tolerance="exact",
+        ))
+    return vectors
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -364,6 +450,17 @@ def build_diff_config(
                 continue
             sig = by_name.get(alg.name)
             if sig is None:
+                continue
+            if classify_scalar_shape(sig) is not None and len(alg.inputs or []) == 1:
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="scalar",
+                    rust_call=f"rust_{alg.name}(input)",
+                    c_call=f"c_{alg.name}(input)",
+                    cases=4000,
+                    input_strategy="any::<u64>()",
+                ))
+                used_signatures.append(sig)
                 continue
             shape = classify_checksum_shape(sig)
             if shape is not None:
@@ -492,6 +589,8 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 vecs = fuzz_checksum_vectors(dll, alg, sig)
             elif classify_digest_shape(sig) is not None:
                 vecs = fuzz_digest_vectors(dll, alg, sig)
+            elif classify_scalar_shape(sig) is not None:
+                vecs = fuzz_scalar_vectors(dll, alg, sig)
             else:
                 vecs = []
             if vecs:

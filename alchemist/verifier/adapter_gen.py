@@ -512,6 +512,30 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name}",
                 ))
+            elif h.category == "scalar":
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of scalar '{h.algorithm}': not found"
+                    )
+                ret = fn.ret
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(input: u64) -> {ret} {{\n"
+                    f"    {fn.crate_ident}::{fn.name}(input as _)\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(input: u64) -> {ret} {{\n"
+                    f"    unsafe {{{{ {ffi_ident}::{h.algorithm}(input as _) as {ret} }}}}\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (scalar)",
+                ))
             elif h.category in ("compression", "decompression"):
                 rust_c_name = _call_ident(h.rust_call, "rust_call")
                 rust_d_name = _call_ident(h.rust_decompress_call or "",
