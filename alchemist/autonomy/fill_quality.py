@@ -68,6 +68,23 @@ class VerifiedExampleStore:
         return "## Worked examples (already verified byte-exact)\n" + "\n\n".join(blocks)
 
 
+def harvest_to_store(store: "VerifiedExampleStore", cfile, lib_rs_path, fn_names) -> int:
+    """Extract verified (C body -> Rust) pairs from a verified crate into the store.
+    Run over every green crate to bootstrap the corpus, so a fresh library starts warm
+    with hundreds of worked examples instead of translating from scratch."""
+    from alchemist.implementer.reference_probe import extract_c_function_body
+    from alchemist.autonomy.live_repair import extract_rust_fn
+    rust_src = Path(lib_rs_path).read_text(errors="replace")
+    added = 0
+    for fn in fn_names:
+        cbody = extract_c_function_body(Path(cfile), fn) or ""
+        rust = extract_rust_fn(rust_src, fn) or ""
+        if cbody.strip() and rust.strip():
+            store.add(cbody, rust)
+            added += 1
+    return added
+
+
 class PersistentExampleStore(VerifiedExampleStore):
     """A VerifiedExampleStore backed by a JSON file, so what the tool learns on one
     library carries into the next run. Every green fill feeds it; every new fill

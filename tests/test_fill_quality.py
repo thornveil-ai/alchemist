@@ -1,7 +1,7 @@
 """Fill quality — best-of-N gating + verified-example retrieval."""
 
 from alchemist.autonomy.fill_quality import (
-    best_of_n, VerifiedExampleStore, PersistentExampleStore,
+    best_of_n, VerifiedExampleStore, PersistentExampleStore, harvest_to_store,
 )
 
 
@@ -46,3 +46,18 @@ def test_persistent_store_survives_reload(tmp_path):
     reloaded = PersistentExampleStore(p)
     got = reloaded.retrieve("q = malloc(sz); free(q);", k=1)
     assert got and "malloc" in got[0][0]           # learned idiom retrieved across runs
+
+
+def test_harvest_to_store_bootstraps_corpus(tmp_path):
+    c = tmp_path / "lib.c"
+    c.write_text("unsigned add1(const unsigned char *d, unsigned long n) {\n"
+                 "    unsigned s = 0;\n    for (unsigned long i = 0; i < n; i++) s += d[i];\n"
+                 "    return s;\n}\n")
+    r = tmp_path / "lib.rs"
+    r.write_text("pub fn add1(s: &[u8]) -> u32 {\n    s.iter().map(|&b| b as u32).sum()\n}\n")
+    store = PersistentExampleStore(tmp_path / "store.json")
+    assert harvest_to_store(store, c, r, ["add1"]) == 1     # one verified pair harvested
+    # reloads warm; a similar looping-sum C fn retrieves the worked example
+    warm = PersistentExampleStore(tmp_path / "store.json")
+    assert warm.retrieve("unsigned f(const unsigned char *p, unsigned long m) "
+                         "{ unsigned t = 0; for (unsigned long i = 0; i < m; i++) t += p[i]; return t; }")
