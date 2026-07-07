@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "run": "2026-07-07",
+    "model": "gemma-4-31B-it",
+    "pipeline": "alchemist.cli translate (shipping)",
+    "conditions": "cold, no per-subject config, zero human touches",
+    "n": 8
+  },
+  "isqrt":       { "class": "math-scalar",         "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 39.6 },
+  "popcount":    { "class": "bits-scalar",         "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 41.0 },
+  "fletcher16":  { "class": "checksum-buffer",     "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 31.0 },
+  "str_reverse": { "class": "string-inplace",      "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 48.2 },
+  "parse_int":   { "class": "parser-buffer",       "triaged_in": true,  "llm_calls": 1, "analyze": true, "extract": true, "architect": true,  "implement": true, "verify": false, "overall": false, "seconds": 57.8 },
+  "xorshift":    { "class": "stateful-prng",       "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 54.6 },
+  "rc4":         { "class": "stateful-cipher",     "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 45.3 },
+  "bump_alloc":  { "class": "stateful-allocator",  "triaged_in": false, "llm_calls": 0, "analyze": true, "extract": true, "architect": false, "implement": null, "verify": null,  "overall": false, "seconds": 57.2 }
+}

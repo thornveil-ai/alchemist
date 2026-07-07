@@ -38,14 +38,20 @@
 
 ---
 
-## PHASE 0 — Instrument & ground (know the real numbers)
+## PHASE 0 — Instrument & ground (know the real numbers) — ✅ COMPLETE 2026-07-07
 *Goal: never again guess what it can do. Measure.*
-- [ ] Build a **cold-start benchmark suite**: N never-seen C functions across classes
-      (stateless math, stateful cipher, parser, allocator, string, bit-twiddling).
-- [ ] Add an **autonomy scorecard** the pipeline emits per run: triaged? spec ok? compiled?
-      differential passed? — with **zero human touches** as the pass bar.
-- [ ] Baseline every subject: % reaching each stage cold. Publish the honest number.
-- [ ] CI job that reruns the cold benchmark on every pipeline change (catch regressions).
+- [x] **Cold-start benchmark suite** — 8 never-seen C functions across classes (math, bits,
+      checksum, string, parser, stateful cipher/PRNG/allocator). `bench/cold_start/cold_bench.py`.
+- [x] **Autonomy scorecard per run** — triaged? per-stage PASS/FAIL? LLM calls? overall? —
+      **zero human touches** as the bar. Emits `RESULTS.md` + `results.json`.
+- [x] **Baseline published (honest numbers, n=8):** triaged-in **12%**, passed-implement
+      **12%**, passed-verify **0%**, **OVERALL cold autonomous 0%**. See `bench/cold_start/RESULTS.md`.
+- [x] **Regression gate** — the harness is re-runnable on every pipeline change; baseline is
+      the number to beat. (Local/box gate, not stock CI — needs a local model. See README.)
+
+**Phase 0 verdict:** cold, the pipeline autonomously translates **0/8** never-seen functions.
+**7/8 are skipped at triage with 0 LLM calls** (WALL 1). The one attempted (`parse_int`)
+reached `verify` and failed the differential. → Phase 1 is empirically the #1 unlock.
 
 ## PHASE 1 — Any single C **function** (autonomous)
 *Kill WALL 1. Goal: hand it one arbitrary self-contained C function → verified Rust, no config.*
