@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
-[![tests](https://img.shields.io/badge/tests-744%2F744-success.svg)](#testing)
+[![tests](https://img.shields.io/badge/tests-901%20passing-success.svg)](#testing)
 [![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 [![jsmn](https://img.shields.io/badge/jsmn-autonomous%2013%2F13-brightgreen.svg)](docs/m2_jsmn_first_swing.md)
 [![base64](https://img.shields.io/badge/base64-first--shot%2032%2F32-brightgreen.svg)](docs/m2_base64_clean_translation.md)
@@ -416,7 +416,7 @@ Alchemist works end-to-end. The current gap to "100% reliable on any C" is drive
 
 ```bash
 pytest tests/ --ignore=tests/test_local_llm.py
-# 201 passed in 60s
+# 901 passed, 8 skipped in ~145s (909 collected)
 ```
 
 The suite covers:

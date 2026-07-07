@@ -60,7 +60,7 @@ The baseline. These are facts on the ground, including the honest gaps.
 - **Methodology proven.** Algorithm-first translation produces 9.2× LOC compression with 0 unsafe blocks. zlib translated from 23,139 lines C → 2,512 lines Rust, all 7 generated crates compile.
 - **Adler-32 bit-exact match** against C zlib across 30,000+ random byte arrays (after fixing the wrong-constant bug — proves the verification step works).
 - **11-module pipeline architecture** (analyzer, extractor, architect, implementer, verifier, reporter, plus llm, plugins, references, standards, verifier/templates). Six stages with named gates.
-- **21,181 LOC source, 6,944 LOC tests.** 47 test files, 436 test functions. README claims 543/543 tests passing (test count has grown since file enumeration).
+- **~31,000 LOC source across 12 packages, ~7k LOC tests.** 96 test files, **909 tests collected, 901 passing / 8 skipped** (verified 2026-07-06 via `pytest -q`). Prior docs cited 744/201/543 — all stale; 901 is the true number. NOTE: ~6.3k LOC of source is `alchemist/autonomy/`, an orphaned parallel track the CLI does not use — see docs/GROUNDING.md.
 - **3 translation subjects** in `subjects/`: tinychk (small), zlib (full, with bugs documented), zlib-dll (DLL variant scaffolded).
 - **Reference binaries** in `verify/`: libz.dll.a + zlib1.dll for differential testing on Windows.
 - **6 docs files**: api_reference, architecture, phase_d_playbook (the verification playbook), plugins, troubleshooting, tutorial.
