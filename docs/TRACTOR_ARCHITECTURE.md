@@ -8,6 +8,31 @@ fill — Gemma today, a frontier model tomorrow — the output is provably equiv
 The model is a swappable fill oracle in the middle; everything around it is the
 durable moat.
 
+**The product is the verification, not the translation.** The thing that generates
+Rust — a model, or c2rust, or a future frontier model — is a swappable, commodity
+front-end. What no one else does, and what Alchemist *is*, is the layer that makes a
+translation **provably safe and equivalent, whoever produced it**. Translation is the
+interchangeable input; verification + safety + provenance is the durable moat.
+
+## The verification spectrum (byte-exact is the floor, not the ceiling)
+
+Correctness isn't one thing. Alchemist verifies at the right level for the goal, and
+records which guarantee each function got:
+
+| Level | What it proves | For |
+|---|---|---|
+| **Byte-exact differential** | behaves identically to *this C* on sampled inputs | **migration** — drop-in replacement, behavior preserved, quirks & all; the only guarantee producible with ZERO human spec |
+| **Coverage-complete differential** | equivalent across every *branch* of the C | raising evidence toward proof |
+| **KAT / spec conformance** | matches the STANDARD (FIPS/RFC), independent of the C | **catching C bugs** — a C that deviates from spec is caught, not copied |
+| **Property / invariant** | roundtrip / idempotence / order hold *beyond* samples | semantic correctness, not sample-matching |
+| **Divergence analysis** | when Rust≠C, decides *which* is wrong (C UB → c-buggy) | **modernization** — freedom to fix the C, not just copy it |
+| **Sanitizer-diff + Miri** | the C's latent UB surfaced; the Rust proven UB-free | memory-safety, the security thesis |
+
+Byte-exact is right for *migration* (and it's the only fully-autonomous guarantee —
+the C is the spec). The KAT/property/divergence layer is right for *modernization* —
+it gives correctness and the latitude to improve on the C. The tool tells you which
+guarantee each function earned.
+
 Each pillar is landed at **top tier** — a proven foundation AND an automated,
 usable subsystem (end-to-end on the box with gcc/rustc + the local model, plus unit
 tests). 53 tests green.
