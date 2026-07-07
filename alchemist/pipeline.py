@@ -563,6 +563,17 @@ def run_implement_stage(
             f"[cyan]field scanner: {len(field_schemas)} type schemas pre-scanned[/cyan]"
         )
 
+    # Auto-oracle (Phase 1): synthesize test vectors from the compiled C reference for any
+    # differentiable function lacking standards KATs, so the fill loop can verify arbitrary
+    # cold code -- the C itself is the oracle, not a hardcoded catalog.
+    try:
+        from alchemist.verifier.auto_config import synthesize_c_vectors
+        _nv = synthesize_c_vectors(source, specs)
+        if _nv:
+            console.print(f"[cyan]auto-oracle: synthesized C-reference vectors for {_nv} function(s)[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]auto-oracle skipped: {_e}[/yellow]")
+
     if tdd:
         from alchemist.implementer.tdd_generator import TDDGenerator
         gen = TDDGenerator(config=config)

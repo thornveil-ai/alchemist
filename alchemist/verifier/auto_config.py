@@ -39,7 +39,7 @@ _INT_C_TYPES = re.compile(
     r"^(unsigned|unsigned int|unsigned long|unsigned short|int|long|"
     r"uint8_t|uint16_t|uint32_t|uint64_t|size_t|uInt|uLong|z_size_t)$"
 )
-_BYTE_PTR = re.compile(r"^(const\s+)?(unsigned char|uint8_t|Bytef|u_char)\s*\*$")
+_BYTE_PTR = re.compile(r"^(const\s+)?(unsigned char|uint8_t|Bytef|u_char|char)\s*\*$")
 # A read-only byte/opaque input pointer (hash APIs often take `const void *`).
 _CONST_IN_PTR = re.compile(
     r"^const\s+(unsigned char|uint8_t|Bytef|u_char|void)\s*\*$")
@@ -210,12 +210,48 @@ _GENERIC_BOUNDARIES = [0, 1, 2, 255, 256, 257, 4096, 65536]
 _ADLER_BOUNDARIES = [0, 1, 2, 5551, 5552, 5553, 11103, 11104, 11105, 65536]
 
 
+# Top-level C function definition: `<ret> <name>(<params>) {` starting at column 0.
+# Anchoring at line start skips indented body statements (return/if/for...), which is
+# what a header prototype parser cannot do on a .c file.
+_C_DEF_RE = re.compile(
+    r"^(?P<ret>(?:[A-Za-z_]\w*[\s\*]+)+?)(?P<name>[A-Za-z_]\w*)\s*"
+    r"\((?P<params>[^;{}]*)\)\s*\{",
+    re.MULTILINE,
+)
+_C_KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof", "do", "else"}
+
+
+def _parse_c_definitions(c_text: str):
+    from alchemist.verifier.auto_ffi import _strip_comments, _parse_params
+    text = _strip_comments(c_text)
+    out = []
+    for m in _C_DEF_RE.finditer(text):
+        name = m.group("name")
+        if name in _C_KEYWORDS:
+            continue
+        ret = m.group("ret").strip()
+        for kw in ("static", "inline", "extern", "ZEXTERN", "ZEXPORT"):
+            ret = re.sub(rf"\b{kw}\b", "", ret).strip()
+        if not ret or name.startswith("_"):
+            pass
+        params = _parse_params(m.group("params").strip())
+        out.append(CSignature(name=name, return_type=ret, params=params))
+    return out
+
+
 def collect_subject_signatures(c_source_dir: Path) -> list[CSignature]:
     sigs: list[CSignature] = []
     seen: set[str] = set()
-    for header in sorted(Path(c_source_dir).glob("*.h")):
-        for sig in parse_header(header.read_text(encoding="utf-8",
-                                                 errors="replace")):
+    src = Path(c_source_dir)
+    for header in sorted(src.glob("*.h")):
+        for sig in parse_header(header.read_text(encoding="utf-8", errors="replace")):
+            if sig.name not in seen:
+                seen.add(sig.name)
+                sigs.append(sig)
+    # Headerless single-file subjects (arbitrary cold C): parse top-level function
+    # DEFINITIONS from .c files directly (skipping body statements).
+    for cfile in sorted(src.glob("*.c")):
+        for sig in _parse_c_definitions(cfile.read_text(encoding="utf-8", errors="replace")):
             if sig.name not in seen:
                 seen.add(sig.name)
                 sigs.append(sig)
@@ -232,7 +268,7 @@ def make_checksum_bindings(
     by_name = {s.name: s for s in signatures}
     out: dict[str, CFunctionBinding] = {}
     for alg in algs:
-        if (alg.category or "") not in ("checksum", "hash"):
+        if (alg.category or "") in ("cipher", "compression", "decompression"):
             continue
         sig = by_name.get(alg.name)
         if sig is None:
@@ -324,7 +360,7 @@ def build_diff_config(
             # extractor labelled it checksum or hash (FNV, CRC-16, ...). A
             # true digest-returning hash fails classify_checksum_shape (its
             # return type isn't a scalar int), so it's excluded here.
-            if (alg.category or "") not in ("checksum", "hash"):
+            if (alg.category or "") in ("cipher", "compression", "decompression"):
                 continue
             sig = by_name.get(alg.name)
             if sig is None:
@@ -381,3 +417,84 @@ def build_diff_config(
         harnesses=harnesses,
         ffi_crate_name=f"c_{re.sub(r'[^a-z0-9_]', '_', subject)}_ref",
     )
+
+
+def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint fill-loop vectors for a scalar-returning byte function (checksum / scalar
+    parser / bytewise reducer): {data} -> scalar. Uses the compiled C as the oracle."""
+    from alchemist.extractor.fuzz_vectors import (
+        _bytes_to_rust_literal, _gen_byte_inputs, _rng, _FUZZ_SEED,
+    )
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    shape = classify_checksum_shape(sig)
+    if shape is None:
+        return []
+    binding = _binding_for(sig, shape, default_seed(alg.name))
+    fn = binding.load(dll)
+    slice_params = [p for p in (alg.inputs or []) if "[u8]" in (p.rust_type or "")]
+    if not slice_params:
+        return []
+    data_param = slice_params[0].name
+    rng = _rng(_FUZZ_SEED)
+    vectors = []
+    for data in _gen_byte_inputs(rng, count):
+        try:
+            out = binding.adapter(fn, bytes(data))
+        except Exception:  # noqa: BLE001
+            continue
+        vectors.append(SpecTestVector(
+            description=f"fuzz_input_len_{len(data)}",
+            source=f"C reference (scalar): {sig.name}",
+            inputs={data_param: _bytes_to_rust_literal(bytes(data))},
+            expected_output=str(int(out)),
+            tolerance="exact",
+        ))
+    return vectors
+
+
+def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
+    """Auto-oracle: for every algorithm with a differentiable shape but NO test vectors,
+    mint vectors by running the compiled C reference, and attach them to alg.test_vectors.
+    Returns how many algorithms were augmented. This is what lets the fill loop verify
+    arbitrary cold C that has no standards KATs -- the C itself is the oracle."""
+    import os as _os, ctypes
+    from alchemist.verifier.auto_ffi import build_c_dll
+    cdir = Path(c_source_dir)
+    try:
+        signatures = collect_subject_signatures(cdir)
+    except Exception:  # noqa: BLE001
+        return 0
+    if not signatures:
+        return 0
+    by_name = {s.name: s for s in signatures}
+    c_files = sorted(cdir.glob("*.c"))
+    if not c_files:
+        return 0
+    work = cdir / ".alchemist" / "cvec"
+    work.mkdir(parents=True, exist_ok=True)
+    dll_path = work / ("cref.dll" if _os.name == "nt" else "libcref.so")
+    build = build_c_dll(c_files, dll_path, compiler=compiler)
+    if not build.success:
+        return 0
+    try:
+        dll = ctypes.CDLL(str(dll_path))
+    except OSError:
+        return 0
+    augmented = 0
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            if getattr(alg, "test_vectors", None):
+                continue
+            sig = by_name.get(alg.name)
+            if sig is None:
+                continue
+            if classify_checksum_shape(sig) is not None:
+                vecs = fuzz_checksum_vectors(dll, alg, sig)
+            elif classify_digest_shape(sig) is not None:
+                vecs = fuzz_digest_vectors(dll, alg, sig)
+            else:
+                vecs = []
+            if vecs:
+                alg.test_vectors = vecs
+                augmented += 1
+    return augmented
