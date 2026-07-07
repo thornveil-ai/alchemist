@@ -90,7 +90,7 @@ def test_mode_cipher_element_aware_signature():
     sig = multibuffer_signature(funcs["aes_encrypt_cbc"])
     assert "in_: &[u8]" in sig and "iv: &[u8]" in sig          # byte buffers -> &[u8]
     assert "key: &[u32]" in sig                                # WORD key -> &[u32] (element-aware)
-    assert "-> Vec<u8>" in sig                                 # output buffer returned
+    assert "-> Result<Vec<u8>, ()>" in sig                     # int-return + output -> fallible Result
 
 
 def test_detect_mode_cipher_rejects_plain_hash():

@@ -117,6 +117,10 @@ def classify_pointer_param(fn_body: str, param: str, is_const: bool = False) -> 
         return "borrow"
     if re.search(re.escape(param) + r"\s*\[[^\]]*\]\s*=", fn_body) \
             or re.search(r"\*\s*" + re.escape(param) + r"\s*=", fn_body):
+        return "out"                                        # written directly
+    # written INDIRECTLY: a non-const buffer handed to a helper that fills it
+    # (AES-CBC: `out` is written by the aes_encrypt() call, never indexed here)
+    if re.search(r"\b\w+\s*\([^;{}]*\b" + re.escape(param) + r"\b[^;{}]*\)", fn_body):
         return "out"
     return "borrow"
 
@@ -189,7 +193,9 @@ def multibuffer_signature(fn, elem_rust: str = "u8") -> str:
             args.append("%s: %s" % (_esc(nm), rty))
     ret_c = getattr(fn, "ret", "").strip()
     if rets:
-        ret = rets[0] if len(rets) == 1 else "(%s)" % ", ".join(rets)
+        payload = rets[0] if len(rets) == 1 else "(%s)" % ", ".join(rets)
+        # an int-returning fn with an output buffer is a fallible op -> Result
+        ret = "Result<%s, ()>" % payload if ret_c in ("int", "unsigned", "unsigned int") else payload
     else:
         ret = c_to_rust_scalar(ret_c) if ret_c not in ("void", "") else "()"
     return "pub fn %s(%s) -> %s" % (fn.name, ", ".join(args), ret)
