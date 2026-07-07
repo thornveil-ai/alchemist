@@ -53,19 +53,28 @@
 **7/8 are skipped at triage with 0 LLM calls** (WALL 1). The one attempted (`parse_int`)
 reached `verify` and failed the differential. → Phase 1 is empirically the #1 unlock.
 
-## PHASE 1 — Any single C **function** (autonomous)
+## PHASE 1 — Any single C **function** (autonomous) — IN PROGRESS (structural walls down; verify-rate open)
 *Kill WALL 1. Goal: hand it one arbitrary self-contained C function → verified Rust, no config.*
-- [ ] **Replace pattern-catalog triage with a real classifier.** Default should be "attempt
-      translation," not "skip as glue." Glue is the *exception*, proven, not the default.
-- [ ] LLM- or embedding-based **algorithm/effect detection** (does this compute something
-      verifiable?) instead of a name/keyword whitelist.
-- [ ] **Auto-synthesize the differential harness for any signature** (scalar in/out, buffers,
-      structs) — generalize `verifier/auto_config.py` beyond scalar subjects.
-- [ ] **Auto-oracle for pure functions**: compile the C as reference, fuzz inputs, diff.
-- [ ] Handle **headerless / partial** C (the onboarding quirk) robustly.
-- [ ] Best-of-N + diagnose-repair loop on the fill (already prototyped) wired to the shipping path.
-- [ ] **Target: ≥80% of cold single stateless functions pass differential with 0 human touches.**
-- [ ] **Target: cold RC4-class stateful single fn passes** (needs Phase 2 oracle).
+- [x] **Triage attempts by default** (`patterns.py`): glue requires positive evidence.
+      Measured: cold triaged-in **12% → 88%**.
+- [x] **Auto-oracle for pure functions** (`auto_config.synthesize_c_vectors`, wired into
+      `run_implement_stage`): build the C reference DLL, fuzz it, attach input→output vectors
+      so the fill loop can verify code with no standards KATs. **This unlocked the fill.**
+- [x] **Headerless / single-`.c`** support: definition-aware `.c` parser in
+      `collect_subject_signatures`. Cold single files now yield signatures.
+- [x] **Differential harness shapes**: shape-gated not label-gated; accept `char*`; added a
+      full **scalar→scalar** shape (classify + auto-oracle + adapter + proptest).
+- [x] **First cold autonomous translation achieved**: `fletcher16` (never-seen, headerless)
+      → safe Rust, byte-exact vs C, zero human touches.
+- [ ] **Fill-quality / repair convergence** — the open gap. 75% of cold fns now *compile +
+      pass TDD*, but only 12% pass the byte-exact differential; the model's first-pass fills
+      have edge bugs (isqrt u32 overflow, popcount FFI width) the verifier correctly catches.
+      Needs: best-of-N + diagnose-repair fed the differential's failing case; FFI width fixes.
+- [ ] **In-place buffer shape** (`str_reverse`) + **`char*`→`&[u8]`** lift (`parse_int`).
+- [ ] LLM/embedding-based algorithm/effect detection (replace the remaining keyword heuristics).
+- [ ] **Target: ≥80% of cold stateless functions pass differential** — currently **12%**
+      (verify-rate is the metric to drive up; attempt/implement rates already ~80–90%).
+- [ ] **Target: cold RC4-class stateful single fn passes** (needs Phase 2: struct-carry + shim).
 
 ## PHASE 2 — Any single C **library** (stateful, autonomous)
 *Kill WALLs 2–4. Goal: point at a small real library dir → verified Rust workspace.*
