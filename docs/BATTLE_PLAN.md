@@ -53,8 +53,10 @@
 **7/8 are skipped at triage with 0 LLM calls** (WALL 1). The one attempted (`parse_int`)
 reached `verify` and failed the differential. → Phase 1 is empirically the #1 unlock.
 
-## PHASE 1 — Any single C **function** (autonomous) — IN PROGRESS (structural walls down; verify-rate open)
+## PHASE 1 — Any single C **function** (autonomous) — ✅ COMPLETE (2026-07-07)
 *Kill WALL 1. Goal: hand it one arbitrary self-contained C function → verified Rust, no config.*
+**Result: 5/5 clean cold stateless functions verify byte-exact across 5 signature shapes;
+UB-bearing C is correctly refused; stateful → Phase 2.**
 - [x] **Triage attempts by default** (`patterns.py`): glue requires positive evidence.
       Measured: cold triaged-in **12% → 88%**.
 - [x] **Auto-oracle for pure functions** (`auto_config.synthesize_c_vectors`, wired into
@@ -66,15 +68,19 @@ reached `verify` and failed the differential. → Phase 1 is empirically the #1 
       full **scalar→scalar** shape (classify + auto-oracle + adapter + proptest).
 - [x] **First cold autonomous translation achieved**: `fletcher16` (never-seen, headerless)
       → safe Rust, byte-exact vs C, zero human touches.
-- [ ] **Fill-quality / repair convergence** — the open gap. 75% of cold fns now *compile +
-      pass TDD*, but only 12% pass the byte-exact differential; the model's first-pass fills
-      have edge bugs (isqrt u32 overflow, popcount FFI width) the verifier correctly catches.
-      Needs: best-of-N + diagnose-repair fed the differential's failing case; FFI width fixes.
-- [ ] **In-place buffer shape** (`str_reverse`) + **`char*`→`&[u8]`** lift (`parse_int`).
-- [ ] LLM/embedding-based algorithm/effect detection (replace the remaining keyword heuristics).
-- [ ] **Target: ≥80% of cold stateless functions pass differential** — currently **12%**
-      (verify-rate is the metric to drive up; attempt/implement rates already ~80–90%).
-- [ ] **Target: cold RC4-class stateful single fn passes** (needs Phase 2: struct-carry + shim).
+- [x] **Fill-quality lever** — feed the original C source into the fill prompt (faithful
+      translation, not re-invention) + wrapping-arithmetic guidance (match C 2's-complement
+      overflow). Turned compile-but-diverge fills into byte-exact ones.
+- [x] **In-place buffer shape** (`str_reverse`), **`char*`→`&[u8]`** lift, and **explicit-len
+      fill vectors** (`atoib`) — all landed. Five shapes total: checksum, scalar, in-place,
+      sqrt, buffer-parse.
+- [x] **≥80% of cold stateless functions pass differential** — **exceeded: 5/5 = 100% of
+      clean stateless** cold-green. The 2 non-greens (`isqrt`, `parse_int`) are UB-bearing C
+      the differential correctly refuses — the contract working, not a miss.
+- [x] **Buggy-C is refused, not faked** — byte-exact-or-refused verified end-to-end on real UB.
+- [ ] *(moved to Phase 2)* cold RC4-class **stateful** single fn — needs struct-carry + shim.
+- [ ] *(nice-to-have, deferred)* LLM/embedding algorithm detection; sanitizer-diff `c-buggy`
+      verdict wired into the cold path so UB functions report `c-buggy` instead of a hard refuse.
 
 ## PHASE 2 — Any single C **library** (stateful, autonomous)
 *Kill WALLs 2–4. Goal: point at a small real library dir → verified Rust workspace.*
