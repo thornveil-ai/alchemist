@@ -27,23 +27,18 @@ from alchemist.autonomy.packaging import (
 )
 
 
-def _verify_crate(res, cfile, llm, ctx, model, env, miri=False, store=None):
+def _verify_crate(res, cfile, llm, ctx, model, env, miri=False, store=None, n_tries=3):
     """Fill -> verify -> (outcome, crate_dir). Shared tail for the wired builders.
-    If `store` is given, retrieve worked examples into each fill and feed it on green
-    (retrieval-augmented fill that compounds across the run)."""
+    Best-of-N: up to `n_tries` sampled fills (temp climbs each retry), each gated on
+    the oracle -- a borderline function the model gets right 50% of the time becomes
+    ~88% at N=3. If `store` is given, retrieve worked examples into each fill and feed
+    it on green (retrieval-augmented fill that compounds across the run)."""
     from alchemist.autonomy.live_repair import make_refill, extract_rust_fn, _module_context
     from alchemist.autonomy.mechanical import mechanical_repair
     from alchemist.autonomy.diagnose import diagnose_and_fix
     from alchemist.implementer.reference_probe import extract_c_function_body
     lib = Path(res.crate_dir) / "src" / "lib.rs"
-    r = make_refill(lib, cfile, llm, struct_context=ctx, temperature=0.0, on_event=lambda m: None)
-    for fn in res.fill_order:
-        instr = "Translate from the C source exactly."
-        if store is not None:
-            ex = store.as_context(extract_c_function_body(cfile, fn) or "")
-            if ex:
-                instr = ex + "\n\n" + instr
-        r(fn, instr)
+    stub_src = lib.read_text()          # the unimplemented!() skeleton, restored between attempts
 
     def berr():
         return subprocess.run(["cargo", "build"], cwd=str(res.crate_dir), capture_output=True,
@@ -55,22 +50,38 @@ def _verify_crate(res, cfile, llm, ctx, model, env, miri=False, store=None):
         out = o.stdout + o.stderr
         f = "\n".join(l for l in out.splitlines() if "error[" in l or "panic" in l)[:1200]
         return ("test result: ok" in out), f
-    mechanical_repair(lib, berr)
-    ok, ft = test()
-    if not ok:
-        for fn in reversed(res.fill_order):
-            cur = extract_rust_fn(lib.read_text(), fn) or ""
-            if cur:
-                def ap(code, _fn=fn):
-                    s = lib.read_text(); c = extract_rust_fn(s, _fn)
-                    if c:
-                        lib.write_text(s.replace(c, code))
-                diagnose_and_fix(extract_c_function_body(cfile, fn) or "", cur, ft, llm, ap, test,
-                                 max_rounds=2, context=_module_context(lib.read_text(), fn))
-                mechanical_repair(lib, berr)
-                ok, ft = test()
-                if ok:
-                    break
+
+    ok, ft = False, ""
+    for attempt in range(n_tries):      # best-of-N: sample fills, gate EACH on the oracle
+        if attempt:
+            lib.write_text(stub_src)    # reset to stubs, resample
+        temp = 0.0 if attempt == 0 else 0.3 + 0.2 * attempt
+        r = make_refill(lib, cfile, llm, struct_context=ctx, temperature=temp, on_event=lambda m: None)
+        for fn in res.fill_order:
+            instr = "Translate from the C source exactly."
+            if store is not None:
+                ex = store.as_context(extract_c_function_body(cfile, fn) or "")
+                if ex:
+                    instr = ex + "\n\n" + instr
+            r(fn, instr)
+        mechanical_repair(lib, berr)
+        ok, ft = test()
+        if not ok:
+            for fn in reversed(res.fill_order):
+                cur = extract_rust_fn(lib.read_text(), fn) or ""
+                if cur:
+                    def ap(code, _fn=fn):
+                        s = lib.read_text(); c = extract_rust_fn(s, _fn)
+                        if c:
+                            lib.write_text(s.replace(c, code))
+                    diagnose_and_fix(extract_c_function_body(cfile, fn) or "", cur, ft, llm, ap, test,
+                                     max_rounds=2, context=_module_context(lib.read_text(), fn))
+                    mechanical_repair(lib, berr)
+                    ok, ft = test()
+                    if ok:
+                        break
+        if ok:
+            break
     if ok and store is not None:                     # feed the store: every green fill teaches the next
         for fn in res.fill_order:
             cbody = extract_c_function_body(cfile, fn) or ""
