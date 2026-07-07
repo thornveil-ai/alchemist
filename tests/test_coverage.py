@@ -21,3 +21,17 @@ def test_boundary_inputs_include_empty_for_zero_length_branch():
 
 def test_boundary_inputs_deterministic():
     assert boundary_inputs() == boundary_inputs()   # no RNG -> reproducible receipts
+
+
+def test_greybox_mutation_is_seed_deterministic():
+    import random
+    from alchemist.autonomy.coverage import _mutate
+    # same RNG seed -> same mutation (reproducible corpora / receipts)
+    assert _mutate(b"abc", random.Random(7)) == _mutate(b"abc", random.Random(7))
+
+
+def test_greybox_mutation_can_shrink_to_empty():
+    import random
+    from alchemist.autonomy.coverage import _mutate
+    # a 1-byte input must be reachable to empty so n==0 branches get covered
+    assert any(_mutate(b"x", random.Random(i)) == b"" for i in range(64))
