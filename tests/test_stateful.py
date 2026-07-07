@@ -104,6 +104,27 @@ def test_array_cipher_needs_init_and_generate():
     assert detect_array_cipher(discover_functions(src)) is None
 
 
+def test_detect_block_cipher_and_2d_schedule():
+    from alchemist.autonomy.stateful import detect_block_cipher, _parse_struct_fields_2d
+    src = ("typedef struct { unsigned int p[18]; unsigned int s[4][256]; } BLOWFISH_KEY;\n"
+           "void blowfish_key_setup(const BYTE user_key[], BLOWFISH_KEY *keystruct, size_t len) { }\n"
+           "void blowfish_encrypt(const BYTE in[], BYTE out[], const BLOWFISH_KEY *keystruct) { out[7]=in[7]; }")
+    bc = detect_block_cipher(discover_functions(src), {})
+    assert bc is not None
+    assert bc.key_setup == "blowfish_key_setup" and bc.encrypt == "blowfish_encrypt"
+    assert bc.sched_c == "BLOWFISH_KEY" and bc.block_size == 8
+    # 2D array schedule field
+    by = {f.name: f.rust_type for f in _parse_struct_fields_2d(src, "BLOWFISH_KEY", {}, {})}
+    assert by["p"] == "[u32; 18]" and by["s"] == "[[u32; 256]; 4]"
+
+
+def test_block_cipher_needs_setup_and_encrypt():
+    from alchemist.autonomy.stateful import detect_block_cipher
+    # a hash (no encrypt) is not a block cipher
+    src = "void sha_transform(struct Ctx *c, const BYTE d[]) { }"
+    assert detect_block_cipher(discover_functions(src), {}) is None
+
+
 def test_macro_helpers_expression_vs_statement():
     from alchemist.autonomy.stateful import emit_macro_helpers
     src = (

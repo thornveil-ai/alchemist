@@ -280,6 +280,67 @@ def emit_macro_helpers(src: str) -> tuple[str, list[str]]:
 
 
 @dataclass
+class BlockCipher:
+    """A block cipher with a STRUCT key schedule: key_setup(key, &sched, len) then
+    encrypt(in_block, out_block, &sched). Blowfish is the canonical shape."""
+    key_setup: str
+    encrypt: str
+    sched_c: str
+    sched_rust: str
+    block_size: int
+
+
+def _parse_struct_fields_2d(src: str, struct_name: str, typedefs: dict, defines: dict):
+    """Struct fields with up to 2D arrays (key schedules like `WORD s[4][256]`)."""
+    body = _find_struct_body(src, struct_name)
+    if not body:
+        return []
+
+    def dv(d):
+        return int(d) if d and d.isdigit() else defines.get(d, 0)
+    out = []
+    for stmt in body.split(";"):
+        stmt = re.sub(r"//.*", "", stmt).strip()
+        if not stmt:
+            continue
+        m = re.match(r"(.+?)\s+\*?(\w+)\s*(?:\[\s*(\w+)\s*\])?\s*(?:\[\s*(\w+)\s*\])?$", stmt)
+        if not m:
+            continue
+        rty = _rust_scalar(m.group(1), typedefs)
+        name, d1, d2 = m.group(2), m.group(3), m.group(4)
+        if d1 and d2:
+            out.append(CtxField(name, "[[%s; %d]; %d]" % (rty, dv(d2), dv(d1)),
+                                "[[%s; %d]; %d]" % ("0", dv(d2), dv(d1))))
+        elif d1:
+            out.append(CtxField(name, "[%s; %d]" % (rty, dv(d1)), "[0; %d]" % dv(d1)))
+        else:
+            out.append(CtxField(name, rty, "0"))
+    return out
+
+
+def detect_block_cipher(funcs: dict, typedefs: dict) -> BlockCipher | None:
+    """A struct schedule threaded through a key-setup + an encrypt function."""
+    setup = next((n for n in funcs if re.search(r"key.?setup|key.?schedule|set.?key", n.lower())), None)
+    enc = next((n for n in funcs if re.search(r"encrypt|_crypt$|_enc$", n.lower())), None)
+    if not (setup and enc):
+        return None
+    # the schedule is the struct-pointer param shared by both (not a byte buffer)
+    setup_ptrs = set(_ptr_types(funcs[setup].params)) - _NON_CTX_TYPES
+    enc_ptrs = set(_ptr_types(funcs[enc].params)) - _NON_CTX_TYPES
+    shared = setup_ptrs & enc_ptrs
+    if not shared:
+        return None
+    sched_c = sorted(shared)[0]
+    # block size from the encrypt body's max in/out index, else 8 (or 16)
+    bs = 8
+    idxs = [int(i) for i in re.findall(r"(?:in|out)\s*\[\s*(\d+)\s*\]", funcs[enc].body)]
+    if idxs:
+        bs = max(idxs) + 1
+        bs = 16 if bs > 8 else 8
+    return BlockCipher(setup, enc, sched_c, rust_struct_name(sched_c), bs)
+
+
+@dataclass
 class ArrayCipher:
     """A stream cipher whose state is a byte ARRAY (not a struct): key-setup(state,
     key, len) then generate(state, out, len). RC4/arcfour is the canonical shape."""
@@ -317,6 +378,116 @@ class StatefulResult:
     num_vectors: int
     stubbed: list[str] = field(default_factory=list)
     macro_names: list[str] = field(default_factory=list)
+
+
+def _block_call(fn, funcs, sched_c, buf_expr, out_expr, key_len_expr="l"):
+    """C call for a block-cipher fn, filled by role: sched ptr -> &sched, const
+    byte buffer -> buf_expr, mutable byte buffer -> out_expr, length -> key_len."""
+    args = []
+    for p in [x.strip() for x in funcs[fn].params.split(",") if x.strip()]:
+        pn = re.sub(r"([A-Za-z_]\w*)\s*\[\s*\w*\s*\]", r"* \1", p)
+        ctype = pn[:re.search(r"\w+\s*$", pn).start()] if re.search(r"\w+\s*$", pn) else pn
+        if sched_c in pn and "*" in pn:
+            args.append("&sched")
+        elif "*" in pn and re.search(r"\b(char|BYTE|uint8_t|unsigned char)\b", ctype) and "const" in ctype:
+            args.append("(const unsigned char *)" + buf_expr)
+        elif "*" in pn and re.search(r"\b(char|BYTE|uint8_t|unsigned char)\b", ctype):
+            args.append("(unsigned char *)" + out_expr)
+        elif "*" not in pn:
+            args.append(key_len_expr if re.search(r"len|size", p.lower()) else "0")
+        else:
+            args.append("0")
+    return "%s(%s)" % (fn, ", ".join(args))
+
+
+def build_block_cipher_crate(paths: list[Path], out_dir: Path, crate_name: str,
+                             key_lengths: list[int], gcc: str = "g++") -> StatefulResult:
+    """Onboard a block cipher with a STRUCT key schedule (Blowfish-like): the fuzz
+    input is the KEY, a fixed plaintext block is encrypted, ciphertext compared."""
+    from alchemist.autonomy.onboard import fill_order, extract_char_defines
+    out_dir = Path(out_dir).resolve()
+    sources = [s for p in [Path(x) for x in paths]
+               for s in (([p] if p.is_file() else sorted(p.rglob("*.c")) + sorted(p.rglob("*.cpp"))))
+               if out_dir not in s.resolve().parents and s.name not in ("_seq.cpp", "_oracle.cpp")]
+    headers = sorted({h for s in sources for h in s.parent.glob("*.h")})
+    src_all = "\n".join(s.read_text(errors="replace") for s in sources + headers)
+    funcs, tables, typedefs, defines = {}, {}, {}, {}
+    for s in sources + headers:
+        txt = s.read_text(errors="replace")
+        funcs.update(discover_functions(txt)); tables.update(extract_tables(txt))
+        typedefs.update(resolve_typedefs(txt)); defines.update(resolve_c_defines(txt))
+    for f in funcs.values():
+        f.calls = {c for c in re.findall(r"\b(\w+)\s*\(", f.body) if c in funcs and c != f.name}
+    bc = detect_block_cipher(funcs, typedefs)
+    if not bc:
+        raise ValueError("no-oracle: no struct-schedule block cipher detected")
+    BS = bc.block_size
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plan = discover_build(sources, list({s.parent for s in sources}), out_dir, gcc=gcc)
+    incs = "".join('#include "%s"\n' % h.name for h in headers)
+    block_init = ", ".join(str(i) for i in range(BS))
+    harness = (
+        "#include <cstdio>\n#include <cstring>\n#include <cstdint>\n%s"
+        "int main(){ static unsigned char in[65536]; int l=(int)fread(in,1,sizeof(in),stdin);\n"
+        "  %s sched; unsigned char block[%d]={%s}; unsigned char out[%d];\n"
+        "  %s; %s;\n  fwrite(out,1,%d,stdout); return 0; }\n"
+        % (incs, bc.sched_c, BS, block_init, BS,
+           _block_call(bc.key_setup, funcs, bc.sched_c, "in", "in"),
+           _block_call(bc.encrypt, funcs, bc.sched_c, "block", "out"), BS))
+    (out_dir / "_seq.cpp").write_text(harness)
+    oracle = out_dir / "_seq"
+    subprocess.run(plan.compile_cmd([out_dir / "_seq.cpp"], oracle), check=True)
+
+    def gen_key(length, seed):
+        b, x = bytearray(), (seed * 2654435761 + 1) & 0xFFFFFFFF
+        for _ in range(length):
+            x = (1103515245 * x + 12345) & 0xFFFFFFFF
+            b.append((x >> 16) & 0xFF)
+        return bytes(b)
+    vectors = [(gen_key(max(1, L), i), subprocess.run([str(oracle)], input=gen_key(max(1, L), i),
+               capture_output=True).stdout) for i, L in enumerate(key_lengths)]
+    if not any(v for _, v in vectors):
+        raise ValueError("no-oracle: block-cipher harness produced empty output")
+
+    crate = out_dir / crate_name
+    (crate / "src").mkdir(parents=True, exist_ok=True)
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname="%s"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="src/lib.rs"\n'
+        '[profile.dev]\noverflow-checks = false\n[profile.test]\noverflow-checks = false\n' % crate_name)
+    macro_rs, _ = emit_macro_helpers(src_all)
+    tables_rs = "\n".join(t.rust_const() for t in tables.values())
+    struct_rs = emit_ctx_struct(bc.sched_rust, _parse_struct_fields_2d(src_all, bc.sched_c, typedefs, defines))
+    aliases = "#[allow(non_camel_case_types)] pub type %s = %s;" % (bc.sched_c, bc.sched_rust)
+    sig = {bc.key_setup: "pub fn %s(sched: &mut %s, key: &[u8])" % (bc.key_setup, bc.sched_rust),
+           bc.encrypt: "pub fn %s(sched: &%s, block: &[u8]) -> Vec<u8>" % (bc.encrypt, bc.sched_rust)}
+    fill_seq = [n for n in fill_order(funcs) if n in {bc.key_setup, bc.encrypt}
+                or n in _closure_of({bc.key_setup, bc.encrypt}, funcs)]
+    stubs = "\n".join((sig.get(n) or "pub fn %s()" % n) + " { unimplemented!() }" for n in fill_seq)
+    block_lit = "&[" + ", ".join(str(i) for i in range(BS)) + "]"
+    vec_lits = ",\n        ".join("(&[%s], &[%s])" % (", ".join(map(str, k)), ", ".join(map(str, ct)))
+                                  for k, ct in vectors)
+    test = ("#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn fuzz_%s() {\n"
+            "        let vectors: &[(&[u8], &[u8])] = &[\n        %s];\n"
+            "        for (key, expected) in vectors {\n"
+            "            let mut sched = %s::default();\n"
+            "            %s(&mut sched, key);\n"
+            "            assert_eq!(%s(&sched, %s).as_slice(), *expected, \"keylen {}\", key.len());\n"
+            "        }\n    }\n}\n"
+            % (crate_name, vec_lits, bc.sched_rust, bc.key_setup, bc.encrypt, block_lit))
+    (crate / "src" / "lib.rs").write_text(
+        "#![allow(dead_code, non_snake_case, clippy::needless_range_loop, unused_variables)]\n"
+        + aliases + "\n" + tables_rs + "\n\n" + macro_rs + "\n\n" + struct_rs + "\n" + stubs + "\n\n" + test)
+    return StatefulResult(crate, fill_seq, None, len(vectors), plan.stubbed, [])
+
+
+def _closure_of(seed, funcs):
+    need = set(seed); stack = list(seed)
+    while stack:
+        for c in funcs[stack.pop()].calls:
+            if c in funcs and c not in need:
+                need.add(c); stack.append(c)
+    return need
 
 
 def build_array_cipher_crate(paths: list[Path], out_dir: Path, crate_name: str,
