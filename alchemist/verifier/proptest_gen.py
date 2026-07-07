@@ -260,16 +260,16 @@ def _proptest_scalar_block(h: AlgorithmHarness) -> str:
     """Differential for an all-scalar function: fuzz the input, compare Rust vs C."""
     strategy = h.input_strategy or "any::<u64>()"
     return dedent(f"""\
-        proptest! {{{{
+        proptest! {{
             #![proptest_config(ProptestConfig::with_cases({h.cases}))]
 
             #[test]
-            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{{{
+            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
                 let rust_out = {h.rust_call};
                 let c_out = {h.c_call};
                 prop_assert_eq!(rust_out, c_out);
-            }}}}
-        }}}}
+            }}
+        }}
     """).rstrip()
 
 

@@ -526,7 +526,7 @@ def plan_adapters(
                 )
                 c_wrapper = (
                     f"pub fn c_{h.algorithm}(input: u64) -> {ret} {{\n"
-                    f"    unsafe {{{{ {ffi_ident}::{h.algorithm}(input as _) as {ret} }}}}\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(input as _) as {ret} }}\n"
                     f"}}\n"
                 )
                 plan.resolved.append(ResolvedAdapter(
