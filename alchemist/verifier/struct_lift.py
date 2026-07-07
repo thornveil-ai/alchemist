@@ -156,3 +156,86 @@ def emit_ffi_struct(rust_name: str, fields) -> str | None:
         lines.append(f"    pub {f.name}: {t},")
     lines.append("}")
     return "\n".join(lines) + "\n"
+
+
+def rust_struct_name(c_name: str) -> str:
+    """rc4_state -> Rc4State, xorshift_state -> XorshiftState (the extractor's convention)."""
+    return "".join(p[:1].upper() + p[1:].lower() for p in c_name.split("_") if p)
+
+
+def _default_expr(f: "Field") -> str | None:
+    base = c_scalar_to_rust(f.ctype)
+    if base is None:
+        return None
+    zero = "0.0" if base in ("f32", "f64") else "0"
+    if f.arr is not None:
+        return f"[{zero}; {f.arr}]"
+    return zero
+
+
+def emit_safe_struct(rust_name: str, fields) -> str | None:
+    """Emit a SAFE (non-repr-C) struct + Default. Returns None if any field is a raw
+    pointer (not representable in safe Rust) or has an unmappable type — the caller then
+    falls back to leaving the type to the model / a different shape."""
+    body, defaults = [], []
+    for f in fields:
+        if f.is_ptr:
+            return None
+        base = c_scalar_to_rust(f.ctype)
+        if base is None:
+            return None
+        t = f"[{base}; {f.arr}]" if f.arr is not None else base
+        body.append(f"    pub {f.name}: {t},")
+        dv = _default_expr(f)
+        if dv is None:
+            return None
+        defaults.append(f"{f.name}: {dv}")
+    struct = "#[derive(Clone)]\npub struct " + rust_name + " {\n" + "\n".join(body) + "\n}\n"
+    fields_init = ", ".join(defaults)
+    dflt = (
+        f"impl Default for {rust_name} {{\n"
+        f"    fn default() -> Self {{ Self {{ {fields_init} }} }}\n"
+        f"}}\n"
+    )
+    return struct + dflt
+
+
+def inject_state_shared_types(c_source_dir, specs) -> int:
+    """For each module, emit a SharedType for any struct referenced by a function param
+    (as `&mut RustName`, `&RustName`, `RustName`) that isn't already defined, using the C
+    struct as the source of truth. Mutates ``module.shared_types``; returns count added.
+
+    This is the struct-carry that lets the skeleton compile stateful code cold (kills the
+    "cannot find type Rc4State" wall)."""
+    from alchemist.extractor.schemas import SharedType
+    structs = structs_in_dir(c_source_dir)
+    by_rust = {rust_struct_name(cn): (cn, f) for cn, f in structs.items()}
+    if not by_rust:
+        return 0
+    added = 0
+    for module in specs:
+        present = {t.name for t in (getattr(module, "shared_types", None) or [])}
+        referenced: set[str] = set()
+        for alg in getattr(module, "algorithms", None) or []:
+            for inp in (alg.inputs or []):
+                for tok in re.findall(r"[A-Za-z_]\w*", inp.rust_type or ""):
+                    if tok in by_rust:
+                        referenced.add(tok)
+        for rn in sorted(referenced):
+            if rn in present:
+                continue
+            cn, fields = by_rust[rn]
+            definition = emit_safe_struct(rn, fields)
+            if definition is None:
+                continue
+            module.shared_types = list(getattr(module, "shared_types", None) or []) + [
+                SharedType(
+                    name=rn,
+                    rust_definition=definition,
+                    description=f"State struct for C `{cn}` (lifted from source).",
+                    fields=[],
+                )
+            ]
+            present.add(rn)
+            added += 1
+    return added

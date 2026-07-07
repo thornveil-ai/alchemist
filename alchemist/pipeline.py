@@ -573,6 +573,15 @@ def run_implement_stage(
             console.print(f"[cyan]type-lift: {_nb} char*+len param(s) -> &[u8] (byte buffer, not &str)[/cyan]")
     except Exception as _e:  # noqa: BLE001
         console.print(f"[yellow]byte-buffer type-lift skipped: {_e}[/yellow]")
+    # Struct-carry (Phase 2): emit the safe state struct into the crate so stateful code
+    # compiles cold (kills "cannot find type Rc4State"); C struct is the source of truth.
+    try:
+        from alchemist.verifier.struct_lift import inject_state_shared_types
+        _ns = inject_state_shared_types(source, specs)
+        if _ns:
+            console.print(f"[cyan]struct-carry: emitted {_ns} state struct(s) into the crate[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]struct-carry skipped: {_e}[/yellow]")
     try:
         from alchemist.verifier.auto_config import synthesize_c_vectors
         _nv = synthesize_c_vectors(source, specs)
