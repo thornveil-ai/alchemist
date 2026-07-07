@@ -55,3 +55,21 @@ def test_route_maps_scope_to_builder():
     assert route("stateful") == "build_stateful_crate"
     assert route("effectful") == "build_effectful_crate"
     assert route("oos") is None and route("complex") is None   # not auto-translatable
+
+
+def test_cpp_free_function_c_subset_is_in_scope():
+    # a C-like free function (in a .cpp) is translatable -- the C subset of C++
+    src = ("unsigned add(const unsigned char *d, unsigned long n) {\n"
+           "    unsigned s = 0;\n    for (unsigned long i = 0; i < n; i++) s = s * 31u + d[i];\n"
+           "    return s;\n}\n")
+    s = {x.name: x for x in scope_triage(discover_functions(src))}["add"]
+    assert s.scope in ("scalar", "buffer")           # not flagged C++
+
+
+def test_cpp_stl_and_new_are_out_of_scope():
+    stl = "int f(int n) {\n    std::vector<int> v;\n    return (int)v.size() + n;\n}\n"
+    s = {x.name: x for x in scope_triage(discover_functions(stl))}["f"]
+    assert s.scope == "oos" and "C++" in s.reason
+    heap = "int g(int n) {\n    int *p = new int[n];\n    int r = p[0];\n    delete[] p;\n    return r;\n}\n"
+    s2 = {x.name: x for x in scope_triage(discover_functions(heap))}["g"]
+    assert s2.scope == "oos" and "C++" in s2.reason

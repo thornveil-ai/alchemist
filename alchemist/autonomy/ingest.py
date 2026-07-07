@@ -48,8 +48,8 @@ def ingest_project(source: str, work: Path) -> Project:
             t.extractall(root)
     else:
         root = Path(src)
-    c_files = sorted(root.rglob("*.c"))
-    headers = sorted(root.rglob("*.h"))
+    c_files = sorted(set().union(*(set(root.rglob("*." + e)) for e in ("c", "cpp", "cc", "cxx"))))
+    headers = sorted(set().union(*(set(root.rglob("*." + e)) for e in ("h", "hpp", "hh", "hxx"))))
     include_dirs = sorted({h.parent for h in headers} | {c.parent for c in c_files})
     return Project(root, c_files, headers, include_dirs)
 
@@ -72,15 +72,27 @@ _OOS = re.compile(
     r"__asm__|__asm|asm\s*\()\b")
 
 
+# C++ constructs beyond the translatable C-subset (the C-like subset of C++ -- free
+# functions, POD structs, extern "C" -- IS in scope; these are not, for now)
+# NOTE: no bare << / >> here -- those are C bit-shifts (everywhere in crypto), not
+# necessarily C++ stream operators.
+_OOS_CPP = re.compile(r"\btemplate\s*<|\bvirtual\b|\bthrow\b|\btry\b|\bcatch\b|"
+                      r"\bnew\s+[A-Za-z_]|\bdelete\b|\boperator\b|::|\bnamespace\b|"
+                      r"\bclass\b|\bdynamic_cast\b|\bstatic_cast\b|\bstd\s*::")
+
+
 def scope_triage(funcs: dict, globals_names: set[str] | None = None) -> list[FnScope]:
-    """Classify each function by the shape we can translate, or mark oos with why."""
+    """Classify each function by the shape we can translate, or mark oos with why.
+    Handles both C and the C-like subset of C++ (templates/classes/exceptions -> oos)."""
     g = globals_names or set()
     out: list[FnScope] = []
     for n, f in funcs.items():
         body = getattr(f, "body", "")
         params = getattr(f, "params", "")
         ret = getattr(f, "ret", "")
-        if _OOS.search(body):
+        if _OOS_CPP.search(body) or _OOS_CPP.search(params) or _OOS_CPP.search(ret):
+            out.append(FnScope(n, "oos", "C++ construct (template/class/exception/STL)"))
+        elif _OOS.search(body):
             out.append(FnScope(n, "oos", "uses I/O / syscall / varargs / asm"))
         elif "(*" in params:
             out.append(FnScope(n, "oos", "function-pointer parameter (callback)"))
