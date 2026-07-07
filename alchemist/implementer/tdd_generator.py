@@ -1014,8 +1014,8 @@ class TDDGenerator:
                         prompt = (
                             f"## Original C source for `{alg.name}` — translate this "
                             f"FAITHFULLY into safe Rust. Preserve the EXACT arithmetic, "
-                            f"integer widths and overflow/wraparound behaviour, sign "
-                            f"handling, loop bounds and edge cases. Do NOT invent a "
+                            f"integer widths, sign "
+                            f"handling, loop bounds and edge cases. IMPORTANT: C integer arithmetic wraps on overflow (2s-complement); use Rust wrapping_add/wrapping_mul/wrapping_sub for any arithmetic that could overflow so the result matches C EXACTLY (plain +,*,- panic on overflow in Rust and would diverge from C). Do NOT invent a "
                             f"different algorithm; match this C exactly.\n```c\n"
                             f"{_cbody}\n```\n\n" + prompt
                         )
