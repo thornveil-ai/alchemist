@@ -291,8 +291,21 @@ def classify_function(
     # Normalize confidence to [0, 1]
     confidence = min(best_score, 1.0)
 
-    # If no pattern matched well, default to glue with low confidence
+    # No algorithm pattern matched strongly. ATTEMPT-BY-DEFAULT (Phase 1): unknown
+    # computational code should be translated + verified, not silently skipped as "glue".
+    # Only classify as glue with POSITIVE evidence: a glue-y name, or a body that calls
+    # nothing but I/O / process control and computes nothing.
     if best_score < 0.3:
-        return ("glue", None, 0.1)
+        glue_call_kw = {"printf", "fprintf", "fputs", "puts", "putchar", "getchar",
+                        "fopen", "fclose", "fread", "fwrite", "fscanf", "scanf", "sprintf",
+                        "perror", "exit", "abort", "longjmp", "setjmp"}
+        glue_name_kw = ("print", "_log", "log_", "debug", "trace", "usage",
+                        "die", "fatal", "read_file", "write_file", "dump")
+        name_is_glue = any(g in name_lower for g in glue_name_kw)
+        calls_only_glue = bool(calls_lower) and calls_lower.issubset(glue_call_kw)
+        has_compute = bool(params) or bool(vars_lower)
+        if name_is_glue or (calls_only_glue and not has_compute):
+            return ("glue", None, 0.1)
+        return ("algorithm", None, 0.25)
 
     return (best_category, best_pattern, confidence)
