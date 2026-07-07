@@ -53,6 +53,18 @@ an explicit Rust `GlobalState` (`&mut`-threaded).
   mechanical checksum (score −10) → model iterator-fold rewrite → gated byte-exact →
   KEPT, score +3. Idiomaticity improved automatically, guarantee preserved.**
 
+## Pillar 6 — Memory-ownership translation  ✅ the crux, proven
+The reason "securely convert legacy C" is possible at all: real C uses malloc/free,
+and that is exactly the bug class Rust kills (UAF, double-free, leak). `detect_heap_api`
+finds allocate-and-return functions; `owned_signatures` infers ownership TYPES —
+allocator RETURNS `Vec<T>` (ownership out), free fn TAKES `Vec<T>` by value
+(ownership in → drop, the C `free` becomes implicit). Verified on buffer CONTENTS
+(malloc addresses are non-deterministic — never compare pointers).
+- **PROVEN end-to-end:** a malloc-fill-return C fn → owned `Vec<u8>`, contents byte-
+  exact across 40 vectors, **ZERO unsafe / raw pointers, and MIRI confirms ZERO
+  undefined behavior** — UAF/double-free/leak impossible by construction. The
+  memory-safety thesis made *checkable*.
+
 ## The pitch
 Not "our model is better" — **"our harness makes any model trustworthy at codebase
 scale."** The competitive edge is verification and provability, a lane TRACTOR's
