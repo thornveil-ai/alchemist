@@ -54,6 +54,21 @@ def test_infer_param_ownership_mixed_signature():
     assert roles["n"][0] == "scalar"
 
 
+def test_detect_box_alloc_vs_buffer():
+    from alchemist.autonomy.ownership import detect_box_alloc
+    assert detect_box_alloc("struct Node *p = malloc(sizeof(struct Node));") == "Node"
+    assert detect_box_alloc("Item *it = malloc(sizeof(Item));") == "Item"
+    assert detect_box_alloc("char *buf = malloc(n);") is None      # buffer -> Vec, not Box
+
+
+def test_struct_field_ownership_types():
+    from alchemist.autonomy.ownership import struct_field_rust_type
+    assert struct_field_rust_type("char *") == "String"            # owned C string
+    assert struct_field_rust_type("unsigned char *") == "Vec<u8>"  # owned byte buffer
+    assert struct_field_rust_type("struct Node *") == "Box<Node>"  # owned sub-object
+    assert struct_field_rust_type("int") == "i32"                  # scalar unchanged
+
+
 def test_multibuffer_signature_cipher_shape():
     from alchemist.autonomy.ownership import multibuffer_signature
     src = ("void xcrypt(const unsigned char *in, unsigned long n, "

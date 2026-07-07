@@ -79,6 +79,31 @@ def detect_heap_api(funcs: dict) -> HeapAPI | None:
     return HeapAPI(alloc, free_fn)
 
 
+def detect_box_alloc(fn_body: str) -> str | None:
+    """A single-object heap allocation `malloc(sizeof(T))` -> the type T (maps to
+    Box<T> in Rust), as opposed to `malloc(n)` for a buffer (-> Vec<T>)."""
+    m = re.search(r"\b(?:malloc|calloc)\s*\(\s*sizeof\s*\(\s*(?:struct\s+)?(\w+)\s*\)", fn_body)
+    return m.group(1) if m else None
+
+
+def struct_field_rust_type(c_type: str, typedefs: dict | None = None) -> str:
+    """Owned Rust type for a STRUCT FIELD: a `char *` string field -> String; another
+    `T *` field -> Box<T> (owned) with Drop handling the free; scalar/array -> as-is.
+    This is the deep ownership frontier — a struct that owns heap becomes a Rust
+    struct whose Drop frees it, no manual free anywhere."""
+    from alchemist.autonomy.stateful import rust_struct_name
+    t = c_type.strip()
+    if re.search(r"\bchar\s*\*|\*\s*char\b", t) and "unsigned" not in t:
+        return "String"                                       # owned C string -> String
+    m = re.search(r"\b(\w+)\s*\*", t)
+    if m:
+        base = m.group(1)
+        if base in ("void",) or re.search(r"\b(?:unsigned\s+char|uint8_t|BYTE)\b", t):
+            return "Vec<u8>"                                  # owned byte buffer field
+        return "Box<%s>" % rust_struct_name(base)             # owned sub-object -> Box
+    return c_to_rust_scalar(t)
+
+
 def classify_pointer_param(fn_body: str, param: str, is_const: bool = False) -> str:
     """Ownership role of a pointer parameter:
       'owned'  — freed or returned (the fn takes ownership)  -> Vec<T> by value
