@@ -28,6 +28,14 @@ def test_reverts_refactor_that_diverges():
     assert f.read_text() == "original"           # guarantee preserved
 
 
+def test_idiomaticity_score_ranks_iterators_above_index_loops():
+    from alchemist.autonomy.idiomaticity import idiomaticity_score
+    mechanical = ("pub fn f(s: &[u8]) -> u32 { let mut acc: u32 = 0; let mut i = 0; "
+                  "while i < s.len() { acc = acc.wrapping_add(s[i] as u32); i += 1; } acc }")
+    idiomatic = "pub fn f(s: &[u8]) -> u32 { s.iter().fold(0u32, |a, &b| a.wrapping_add(b as u32)) }"
+    assert idiomaticity_score(idiomatic) > idiomaticity_score(mechanical)
+
+
 def test_idiomatic_pass_keeps_only_verified():
     f = _mod("v0")
     # accept refactors that contain "ok", reject others
