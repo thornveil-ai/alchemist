@@ -175,7 +175,7 @@ TYPO_FIXES = [
     (re.compile(r"\bp\s+trait\b"), "trait"),
     (re.compile(r"\bp\s+mod\b"), "mod"),
     (re.compile(r"\bp\s+use\b"), "use"),
-    # pppub, ppub → pub (observed in 122B output)
+    # pppub, ppub → pub (observed in Gemma-4-31B output)
     (re.compile(r"\bp{2,}ub\b"), "pub"),
     # ffn → fn
     (re.compile(r"\bf{2,}n\b"), "fn"),

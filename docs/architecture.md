@@ -50,7 +50,7 @@ source  ───►  │ 1. ANALYZE   │ ───► analysis.json (tree-sitt
 
 ## Gates (the "refuses success" rule)
 
-Five gates must pass before `TranslationReport.ok == True`:
+Six gates must pass before `TranslationReport.ok == True` (plus an optional seventh, Miri):
 
 1. **Spec validator** — declared constants vs standards catalog (catches BASE=255).
 2. **Architecture validator** — no dep cycles, no orphan-rule violations, every crate module resolves to a spec or an algorithm or an infrastructure name.
@@ -124,5 +124,5 @@ Key invariants:
 ## What does NOT belong in the core
 
 - Hand-tuned algorithm ports. If you've got a verified-correct Rust implementation, ship it as its own crate and skip Alchemist — that's what it's FOR producing.
-- Anything that calls cloud APIs. The "local 122B only" invariant is non-negotiable.
+- Anything that calls cloud APIs. The "local Gemma-4-31B only" invariant is non-negotiable.
 - Language-specific hacks (adding string-mode patches, special-casing function names). The system works because every stage is driven by schemas, not string-matching. Adding a "when the function name contains X" hack anywhere is a signal the schema is missing a field.

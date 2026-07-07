@@ -24,6 +24,12 @@ The differential oracle caught ~9 real integration bugs unit tests passed clean
 over — the correctness engine works.
 
 ### 2. An autonomy layer now exists — and retired 100 items on zlib
+
+> **Scope note (2026-07-06):** the `alchemist/autonomy/` track below is ORPHANED —
+> the shipping CLI does not use it, and most of it duplicates more-mature shipping
+> modules. Only four items are genuinely new (Miri gate — now promoted to the
+> verifier `--miri` gate; sanitizer-diff; perf parity; `shim_synth`). See
+> docs/GROUNDING.md.
 New workstreams (`alchemist/autonomy/`, `alchemist/catalog/`), all tested:
 - **WS4 diagnose-and-repair loop** — stub → model refill from C → differential
   gate → iterate on the exact discrepancy → verify-or-revert → refuse (never

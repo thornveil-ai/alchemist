@@ -1,3 +1,12 @@
+> **⚠️ HISTORICAL — orphaned research track.** This is the roadmap for the
+> `alchemist/autonomy/` engine, which the shipping `alchemist` CLI does NOT use
+> (see [GROUNDING.md](GROUNDING.md)). Three of its workstreams are already solved in
+> the shipping pipeline (WS1 parsing → `analyzer/`, WS2 type model →
+> `architect/type_unifier.py`, WS4 repair → `implementer/` TDD loop); only
+> `shim_synth`, the Miri gate, sanitizer-diff, and perf parity are genuinely new.
+> Internal counts below (523/382/320…) are stale autonomy-track metrics, not the
+> repo test suite (901 passing).
+
 # Path to autonomy: any C library, fully automatic
 
 > Sequel to [PATH_TO_FLAWLESS.md](PATH_TO_FLAWLESS.md). That doc was about making the *output* flawless. This one is about removing the *human* — going from "a person + Alchemist translated zlib byte-exact" to "`alchemist translate <c-lib>` produces verified safe Rust with no human in the loop, on libraries it has never seen."

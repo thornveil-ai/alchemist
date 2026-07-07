@@ -3,12 +3,10 @@
 > **Public OSS. Research-prototype.** Apache-2.0 algorithm-aware C-to-Rust translation that runs entirely on your own GPU. See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the honest maturity assessment.
 
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
+[![python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
 [![tests](https://img.shields.io/badge/tests-901%20passing-success.svg)](#testing)
 [![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
-[![jsmn](https://img.shields.io/badge/jsmn-autonomous%2013%2F13-brightgreen.svg)](docs/m2_jsmn_first_swing.md)
-[![base64](https://img.shields.io/badge/base64-first--shot%2032%2F32-brightgreen.svg)](docs/m2_base64_clean_translation.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
 
 ---
@@ -49,26 +47,16 @@ Why it counts: the differential oracle didn't just translate — it **caught ~9 
 
 ---
 
-## 🤖 Autonomy: from one library to a library it's never seen
+## Research track: `alchemist/autonomy/`
 
-zlib proved the *method*. The next question was whether the machine could drive itself — and generalize. It's built and measured:
-
-- **Diagnose-and-repair loop** — stub a function → the model refills it from the C → the differential oracle gates it → iterate on the *exact* discrepancy → verify-or-revert → **refuse rather than fake-green.** Proven live repairing an injected bug with no human.
-- **Auto oracle-shim + type-model synthesis** — the oracle glue and the coherent Rust type model are generated from a struct's own header (`window→Vec<u8>`, `strstart→usize`, back-refs flagged for review), library-agnostic.
-- **On zlib: 100 items autonomously retired** — 26 functions differential-proven + 74 oracle shims compile-validated — each with a proof in the ledger.
-
-**Then the real test — [jsmn](docs/m2_jsmn_first_swing.md), a JSON tokenizer the tool had never seen:**
-
-```
-struct-parse → type-infer → coherent signatures → C oracle → autonomous fill → repair
-   →  6 functions, 0 hand-written Rust, 13/13 byte-exact token streams vs C
-```
-
-The one hard function cracked not by brute force but by **diagnosis** — reading the model's output against the C surfaced a single coherent-model bug, fixed first-try once named and captured as a reusable idiom. **The "hard" functions are usually diagnosable mismatches, not model ceilings.**
-
-**And the compounding is measured — [base64](docs/m2_base64_clean_translation.md), a never-seen codec, translated C→safe Rust in *one fill*: 32/32 differential tests (encode + round-trip) byte-exact, zero repair.** The idioms discovered while cracking zlib and jsmn now land on the first try somewhere new. The trajectory: zlib (heavy) → jsmn (one diagnosis) → base64 (first-shot).
-
-**The charted path from here — any C library, fully automatic: [docs/PATH_TO_AUTONOMY.md](docs/PATH_TO_AUTONOMY.md).**
+A parallel, push-button auto-translation engine was prototyped under
+`alchemist/autonomy/`. **It is not wired into the `alchemist` CLI**, and most of it
+re-implements more-mature shipping modules — see
+[docs/GROUNDING.md](docs/GROUNDING.md) for the honest map. Four ideas from it are
+genuine additions being promoted into the shipping pipeline: a **Miri** UB-freedom
+gate (done — `alchemist verify --miri`), **sanitizer-diff** divergence analysis,
+**performance parity** reporting, and **auto-synthesis of the stateful differential
+shim** (`shim_synth`). Treat the autonomy track as research, not product capability.
 
 ---
 
@@ -122,7 +110,7 @@ The methodology was validated by hand on **Meridian**, a from-scratch Rust re-im
    │  *.c *.h │──► analyze ──► extract ──► architect ──► implement ──► verify ──► │  Rust    │
    └──────────┘     ▲             ▲             ▲           ▲            ▲        │  workspace│
                     │             │             │           │            │        └──────────┘
-                 tree-sitter   per-fn LLM    LLM+validator  TDD loop   4-gate     + proptest
+                 tree-sitter   per-fn LLM    LLM+validator  TDD loop   6-gate     + proptest
                  (determ.)     + spec-check  (gates)       + anti-    verifier    harness
                                                             stub                  (refuses
                                                                                    silent
@@ -163,10 +151,10 @@ alchemist doctor
 
 ### Requirements
 
-- **Python** 3.11+
+- **Python** 3.12+
 - **Rust** 1.75+ (with `cargo`, `rustc`, `clippy`)
 - **A C toolchain** (gcc / clang / MinGW) — needed to build the C reference DLL for differential testing
-- **A local LLM server** serving a strong code model. The reference config runs **Gemma 4 31B Dense** via vLLM on port 8090. Any OpenAI-compatible endpoint serving a ≥70B code model works — set `ALCHEMIST_ENDPOINT` to point at it.
+- **A local LLM server** serving a strong code model. The reference config runs **Gemma 4 31B Dense** via vLLM on port 8090. Any OpenAI-compatible endpoint serving a comparable (or stronger) local code model works — set `ALCHEMIST_ENDPOINT` to point at it.
 
 No API keys. No network calls outside your LAN.
 
@@ -229,7 +217,7 @@ alchemist translate ./src --no-tdd       # use the legacy per-file generator
 | 2 | **Extract** | One LLM call per significant function produces a `FunctionSpec`: mathematical description, inputs/outputs in idiomatic Rust types, invariants, preconditions, cited standards, test vectors. **Per-function, never bulk** — bulk extraction on 40 functions returns 128K garbled tokens; per-function crashes safely and checkpoints to `specs/_functions/<mod>/<fn>.json`. | Yes |
 | 3 | **Architect** | LLM designs the Cargo workspace: crate boundaries along ownership/cohesion lines, trait hierarchy (`Checksum`, `Compressor`, `Decoder`), error enums with `thiserror` conventions, `no_std` flags per crate. Validator rejects dep cycles, orphan-rule violations, and unassigned modules. | Yes |
 | 4 | **Implement** | TDD. Three sub-phases: (A) deterministic skeleton with types + `unimplemented!()` bodies that **must** compile; (B) catalog + spec test emission — tests compile but fail because the bodies are stubs; (C) per-function fill-in loop with `cargo test` as supervisor, anti-stub scrubber, holistic escalation. | Yes (per-fn) |
-| 5 | **Verify** | Four gates in order: `cargo check`, anti-stub scan, `cargo test`, differential proptest. Differential auto-generates FFI bindings, builds the C as a DLL, emits a proptest harness with 10K-case strategies per algorithm category (byte-exact for checksum/hash, roundtrip for compression/cipher, ULP tolerance for FP). **Refuses to claim success without this gate.** | No |
+| 5 | **Verify** | Six gates in order: `cargo check`, anti-stub scan, no-unsafe, semantic lints, `cargo test`, differential proptest (plus an optional Miri UB-freedom gate, `--miri`). Differential auto-generates FFI bindings, builds the C as a DLL, emits a proptest harness with 10K-case strategies per algorithm category (byte-exact for checksum/hash, roundtrip for compression/cipher, ULP tolerance for FP). **Refuses to claim success without this gate.** | No |
 | 6 | **Report** | Per-crate metrics: `unsafe` line count, clippy score, proptest pass/fail, head-to-head c2rust baseline comparison. Writes a JSON dashboard. | No |
 
 ---
@@ -286,7 +274,7 @@ docs/
 ├── phase_d_playbook.md           how to declare a translation "verified correct"
 └── troubleshooting.md            every failure mode we've seen
 
-tests/                            201 tests pass — unit + live cargo + live gcc
+tests/                            901 passing / 8 skipped (909 collected)
 .github/workflows/                CI across Ubuntu + Windows, py3.11 + 3.12
 ```
 
@@ -446,7 +434,7 @@ Pull requests welcome. Before submitting:
 
 1. `alchemist doctor` must print OK across the board.
 2. `pytest tests/ --ignore=tests/test_local_llm.py` must pass.
-3. New features need a test. The 201-test suite is the floor.
+3. New features need a test. The 901-test suite is the floor.
 4. The scrubber has 30 rules, each with a regression fixture in `tests/test_scrubber.py`. New scrubber rules follow the same pattern.
 5. Domain plugins live in `alchemist/plugins/` with sibling tests in `tests/test_plugins.py`.
 

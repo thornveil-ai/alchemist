@@ -3,7 +3,7 @@
 **Status:** Research prototype with proven methodology. NOT production-ready (per [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md)).
 **Visibility:** Public. Apache-2.0.
 **Owner:** Thornveil LLC.
-**Last reviewed:** 2026-05-22
+**Last reviewed:** 2026-07-06
 
 This roadmap is the source-of-truth narrative for where Alchemist is, and what
 gets it to "contract-ready" status. Live tracking lives on the
@@ -51,7 +51,7 @@ runs entirely locally on operator-controlled hardware.
 
 ---
 
-## Now — what's actually shipped (as of 2026-05-22)
+## Now — what's actually shipped (as of 2026-07-06)
 
 The baseline. These are facts on the ground, including the honest gaps.
 
@@ -83,6 +83,14 @@ priority ordering.
 ---
 
 ## Next 90 days (target: 2026-08-20)
+
+> **⚠️ RE-BASELINE (2026-07-06):** M03–M07 below read as upcoming, but Tier 1 has
+> **already shipped** — TDD Stage 4 (`implementer/tdd_generator.py`), anti-stub
+> (`implementer/anti_stub.py`), API-completeness (`api_completeness.py`), the
+> mandatory differential gate (`verifier/differential_tester.py`), and spec test
+> vectors (`standards/` + verifier) are all live. The real remaining debt is the 127
+> open zlib items, the stateful-lib pass rate, WS3 goto/state-machine structuring,
+> and WS5 build detection (see docs/GROUNDING.md).
 
 Tier 1 hardening per PRODUCTION_READINESS.md — the work that converts
 "compiles but broken" to "fails loudly when wrong."

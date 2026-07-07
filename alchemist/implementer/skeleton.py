@@ -100,7 +100,7 @@ def _type_is_owning(rust_type: str) -> bool:
 def _sanitize_rust_type(rust_type: str) -> str:
     """Fix common invalid Rust types from LLM extraction.
 
-    The 122B model regularly hallucinates types that look plausible but
+    The model regularly hallucinates types that look plausible but
     aren't valid Rust. This sanitizer catches the most common patterns
     and replaces them with safe fallbacks. Each rule is additive —
     add new patterns here as new failure classes surface.

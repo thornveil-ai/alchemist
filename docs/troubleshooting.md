@@ -32,7 +32,7 @@ python -c "from alchemist.plugins import load_all; load_all()"
 
 Module detection filters by size and call graph connectivity. Possible causes:
 
-- **All C files are under `test/` or `contrib/`** — Alchemist skips those by default. Move source to the top level or use `--source` to point at the real source dir.
+- **All C files are under `test/` or `contrib/`** — Alchemist skips those by default. Move source to the top level or pass the real source dir as the positional argument.
 - **All functions are tiny (<5 lines)** — the detector treats them as glue.
 - **C source uses unusual preprocessor tricks** — run `alchemist inspect <src>` to see what the parser found.
 

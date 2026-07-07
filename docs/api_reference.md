@@ -36,8 +36,8 @@ Stage 5 gate. Without `diff_config`, `refuse_without_diff=True` forces failure.
 ### `DifferentialConfig`
 Carries: C sources, includes, public signatures, typedefs, opaque types, and per-algorithm `AlgorithmHarness` list.
 
-### `verify_workspace(rust_workspace, diff_config=None, refuse_without_diff=True) -> VerificationReport`
-Four gates run in order: compile → anti-stub → test → differential. `report.passed` is `True` only if all four pass.
+### `verify_workspace(rust_workspace, diff_config=None, *, specs=None, specs_error=None, refuse_without_diff=True, enable_miri=False) -> VerificationReport`
+Six gates run in order: compile → anti-stub → no-unsafe → semantic → test → differential (plus an optional Miri gate). `report.passed` is `True` only if all six mandatory gates pass.
 
 ### `AutoFfiRequest` / `generate_ffi_crate(request) -> AutoFfiResult`
 Builds a Rust FFI crate that links to a compiled C shared library. Used internally by `verify_workspace` but safe to call directly.

@@ -1,3 +1,9 @@
+> **⚠️ MIXED / partly historical.** This guide references both shipping engines and
+> orphaned `alchemist/autonomy/` modules. For real onboarding, route through the CLI:
+> `alchemist analyze → extract → architect → implement → verify`. The
+> `alchemist.autonomy.*` module runners it mentions are the superseded research track
+> (see [GROUNDING.md](GROUNDING.md)); of those, only `shim_synth` is on the salvage list.
+
 # Onboarding a new C library — the repeatable playbook
 
 The goal of this doc: make library **N+1** fast. zlib was the bring-up (slow,
