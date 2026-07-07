@@ -88,9 +88,11 @@ priority ordering.
 > **already shipped** — TDD Stage 4 (`implementer/tdd_generator.py`), anti-stub
 > (`implementer/anti_stub.py`), API-completeness (`api_completeness.py`), the
 > mandatory differential gate (`verifier/differential_tester.py`), and spec test
-> vectors (`standards/` + verifier) are all live. The real remaining debt is the 127
-> open zlib items, the stateful-lib pass rate, WS3 goto/state-machine structuring,
-> and WS5 build detection (see docs/GROUNDING.md).
+> vectors (`standards/` + verifier) are all live. NOTE: the "127 zlib items / WS3 / WS5"
+> figures were the RETIRED autonomy track's *automation debt* (human-supplied artifacts
+> for push-button translation), NOT unsolved bugs — zlib is byte-exact today
+> (see docs/zlib_case_study.md). The honest shipping frontier is finishing the zlib
+> tails (gzip wrapper, inflate_fast) and broadening proven coverage. See docs/GROUNDING.md.
 
 Tier 1 hardening per PRODUCTION_READINESS.md — the work that converts
 "compiles but broken" to "fails loudly when wrong."

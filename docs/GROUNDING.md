@@ -99,5 +99,13 @@ doesn't capture globals.
 The product is `cli.py`'s 6-stage spec-first differential pipeline. The orphaned
 `autonomy/` track has been **retired**; its four genuine additions (Miri, sanitizer-diff,
 perf, shim_synth) were **promoted** into shipping. The repo is now single-pipeline and
-clean. Next: the shipping pipeline's real debt (127 zlib items, stateful-lib rate, WS3
-goto/state-machine structuring, WS5 build detection).
+clean.
+
+**Note on "debt":** the "127 zlib items / WS3 / WS5" numbers that appear in older docs
+were the RETIRED autonomy track's *automation debt* — the count of human-supplied
+artifacts (oracle shims, build configs, review confirmations) the push-button engine
+wanted to auto-synthesize. They are NOT unsolved zlib bugs. zlib is translated
+byte-exact today (deflate+inflate round-trip, 21/21 — see zlib_case_study.md). With
+the autonomy track retired, that automation-debt ledger is retired with it. The real
+shipping frontier is: finish the zlib tails (gzip wrapper, inflate_fast — both
+correctness-neutral), and broaden proven coverage beyond the current subjects.
