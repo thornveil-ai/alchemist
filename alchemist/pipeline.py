@@ -567,6 +567,13 @@ def run_implement_stage(
     # differentiable function lacking standards KATs, so the fill loop can verify arbitrary
     # cold code -- the C itself is the oracle, not a hardcoded catalog.
     try:
+        from alchemist.verifier.auto_config import normalize_byte_buffer_types
+        _nb = normalize_byte_buffer_types(source, specs)
+        if _nb:
+            console.print(f"[cyan]type-lift: {_nb} char*+len param(s) -> &[u8] (byte buffer, not &str)[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]byte-buffer type-lift skipped: {_e}[/yellow]")
+    try:
         from alchemist.verifier.auto_config import synthesize_c_vectors
         _nv = synthesize_c_vectors(source, specs)
         if _nv:

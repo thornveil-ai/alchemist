@@ -474,6 +474,34 @@ def fuzz_inplace_vectors(dll, alg, sig, *, count: int = 24):
     return vectors
 
 
+def normalize_byte_buffer_types(c_source_dir, specs) -> int:
+    """Force `&[u8]` for any spec input whose C type is a char*/byte pointer that comes
+    with a length parameter. Such params are byte BUFFERS, not C strings; lifting them to
+    `&str` makes them un-verifiable with arbitrary bytes (non-UTF-8 fails from_utf8).
+    Mutates alg.inputs[*].rust_type. Returns the number of params changed."""
+    try:
+        sigs = {s.name: s for s in collect_subject_signatures(Path(c_source_dir))}
+    except Exception:  # noqa: BLE001
+        return 0
+    changed = 0
+    char_ptr = re.compile(r"^(const\s+)?char\s*\*$")
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = sigs.get(alg.name)
+            if sig is None:
+                continue
+            c_by_name = {n: (t or "").strip() for n, t in sig.params}
+            has_len = any(_INT_C_TYPES.match((t or "").strip()) for _, t in sig.params)
+            if not has_len:
+                continue
+            for inp in alg.inputs or []:
+                ct = c_by_name.get(inp.name, "")
+                if char_ptr.match(ct) and inp.rust_type != "&[u8]":
+                    inp.rust_type = "&[u8]"
+                    changed += 1
+    return changed
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
