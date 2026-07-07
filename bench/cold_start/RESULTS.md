@@ -47,9 +47,23 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `atoib` | parser-buffer (clean) | buffer→scalar | ATTEMPT | PASS | PASS | **PASS** ✅ |
 | `isqrt` | math-scalar | scalar | ATTEMPT | — | REFUSE | **REFUSE** — C has divide-by-zero UB at `UINT_MAX` |
 | `parse_int` | parser-buffer | buffer→scalar | ATTEMPT | — | REFUSE | **REFUSE** — C has integer-overflow UB |
-| `xorshift` | stateful-prng | struct-carry | ATTEMPT | — | — | **Phase 2** |
-| `rc4` | stateful-cipher | struct-carry | ATTEMPT | — | — | **Phase 2** |
-| `bump_alloc` | stateful-allocator | struct-carry | ATTEMPT | — | — | **Phase 2** |
+| `xorshift` | stateful-prng | scalar-state mutator | ATTEMPT | PASS | PASS | **PASS** ✅ first stateful cold-green (Phase 2) |
+| `rc4` | stateful-cipher | array-struct carry | ATTEMPT | — | — | **Phase 2 (in progress)** |
+| `bump_alloc` | stateful-allocator | pointer-struct carry | ATTEMPT | — | — | **Phase 2 (in progress)** |
+
+### Phase 2 progress (2026-07-07)
+- **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
+  (`fn(&mut u64) -> u64`) differentially verified over 4000 fuzzed initial states vs the
+  compiled C. New machinery: `struct_lift.py` (tracked C-struct parser + Rust/FFI field
+  mapping) + a scalar-state **mutator differential shape** (classify → oracle drives C on
+  fuzzed state+args, captures `(return, post-state)` → adapter tuple wrappers → proptest).
+  The single-scalar struct is carried as a bare `&mut <int>`; the C struct pointer is bridged
+  via a `c_typedefs` override, so no FFI struct is needed.
+  *(Honest note: the trivial `xorshift_seed` one-line setter is dropped by the extractor as
+  glue; the PRNG core `next` is what's verified.)*
+- **Next (scoped):** `rc4` (256-byte array field) + `bump_alloc` (raw-pointer field) need the
+  multi-field struct **emitted into the crate** (`struct_lift` → `types.rs`) + a `#[repr(C)]`
+  FFI mirror struct + a **sequence differential** (init → op×N → compare output stream).
 
 ### Phase 1 scorecard
 - **Clean single-function stateless: 5/5 = 100% cold-green** across 5 signature shapes

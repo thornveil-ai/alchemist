@@ -82,8 +82,17 @@ UB-bearing C is correctly refused; stateful → Phase 2.**
 - [ ] *(nice-to-have, deferred)* LLM/embedding algorithm detection; sanitizer-diff `c-buggy`
       verdict wired into the cold path so UB functions report `c-buggy` instead of a hard refuse.
 
-## PHASE 2 — Any single C **library** (stateful, autonomous)
+## PHASE 2 — Any single C **library** (stateful, autonomous) — IN PROGRESS
 *Kill WALLs 2–4. Goal: point at a small real library dir → verified Rust workspace.*
+- [x] **First stateful function verified cold** — `xorshift_next` (scalar-state mutator,
+      `fn(&mut u64) -> u64`), differential over 4000 fuzzed states vs compiled C. Built the
+      tracked `struct_lift.py` (C-struct → Rust/FFI field map) + a **scalar-state mutator
+      shape** (classify → oracle captures `(return, post-state)` → tuple adapter → proptest),
+      with the single-scalar struct carried as `&mut <int>` via a `c_typedefs` override.
+- [ ] **Multi-field struct carry** (`rc4` array field, `bump_alloc` pointer field): emit the
+      safe struct into the crate (`struct_lift` → `types.rs`) + a `#[repr(C)]` FFI mirror.
+- [ ] **Sequence differential** (init → op×N → compare output stream) for cipher/PRNG/alloc
+      APIs — generalizes the single-step mutator to driven state across calls.
 - [ ] **Wire `shim_synth` into the pipeline** — auto-generate the stateful poke/read shim
       from struct fields (kills the hand-written-shim requirement).
 - [ ] **State-mutator differential oracle**: snapshot struct state across calls, diff vs C.
