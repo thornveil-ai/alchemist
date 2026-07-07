@@ -1,6 +1,8 @@
 """Fill quality — best-of-N gating + verified-example retrieval."""
 
-from alchemist.autonomy.fill_quality import best_of_n, VerifiedExampleStore
+from alchemist.autonomy.fill_quality import (
+    best_of_n, VerifiedExampleStore, PersistentExampleStore,
+)
 
 
 def test_best_of_n_returns_first_that_verifies():
@@ -34,3 +36,13 @@ def test_retrieval_context_and_empty_on_no_overlap():
     ctx = s.as_context("y <<= 1;", k=1)
     assert "verified" in ctx and "<<=" in ctx        # shift query -> shift example in context
     assert s.retrieve("plain_call(a, b, c)") == []   # no shared idioms -> nothing
+
+
+def test_persistent_store_survives_reload(tmp_path):
+    p = tmp_path / "examples.json"
+    s = PersistentExampleStore(p)
+    s.add("p = malloc(n); free(p);", "let v = vec![0u8; n];")
+    # a fresh run reloads what the last run learned
+    reloaded = PersistentExampleStore(p)
+    got = reloaded.retrieve("q = malloc(sz); free(q);", k=1)
+    assert got and "malloc" in got[0][0]           # learned idiom retrieved across runs

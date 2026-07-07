@@ -17,8 +17,10 @@ Two model-agnostic multipliers:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 
@@ -64,3 +66,21 @@ class VerifiedExampleStore:
         blocks = ["// verified translation of a similar C idiom:\n// C:\n%s\n// Rust:\n%s" % (c, r)
                   for c, r in ex]
         return "## Worked examples (already verified byte-exact)\n" + "\n\n".join(blocks)
+
+
+class PersistentExampleStore(VerifiedExampleStore):
+    """A VerifiedExampleStore backed by a JSON file, so what the tool learns on one
+    library carries into the next run. Every green fill feeds it; every new fill
+    retrieves from it. The pass rate compounds as the corpus grows."""
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = Path(path)
+        if self.path.exists():
+            for c, r in json.loads(self.path.read_text() or "[]"):
+                super().add(c, r)
+
+    def add(self, c_snippet: str, rust: str) -> None:
+        super().add(c_snippet, rust)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps([[c, r] for _, c, r in self.examples]))
