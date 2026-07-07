@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
-[![tests](https://img.shields.io/badge/tests-901%20passing-success.svg)](#testing)
+[![tests](https://img.shields.io/badge/tests-693%20passing-success.svg)](#testing)
 [![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
 
@@ -49,14 +49,13 @@ Why it counts: the differential oracle didn't just translate — it **caught ~9 
 
 ## Research track: `alchemist/autonomy/`
 
-A parallel, push-button auto-translation engine was prototyped under
-`alchemist/autonomy/`. **It is not wired into the `alchemist` CLI**, and most of it
-re-implements more-mature shipping modules — see
-[docs/GROUNDING.md](docs/GROUNDING.md) for the honest map. Four ideas from it are
-genuine additions being promoted into the shipping pipeline: a **Miri** UB-freedom
-gate (done — `alchemist verify --miri`), **sanitizer-diff** divergence analysis,
-**performance parity** reporting, and **auto-synthesis of the stateful differential
-shim** (`shim_synth`). Treat the autonomy track as research, not product capability.
+A parallel, push-button auto-translation engine (`alchemist/autonomy/`) was
+prototyped, then **retired** (2026-07-06) after a full-repo audit found it mostly
+duplicated more-mature shipping modules. Its four genuine additions were **promoted
+into the shipping pipeline**: a **Miri** UB-freedom gate (`alchemist verify --miri`),
+**sanitizer-diff** divergence analysis (`verifier/sanitizer_diff.py`), **performance
+parity** (`reporter/perf.py`), and **auto-synthesis of the stateful differential
+shim** (`extractor/shim_synth.py`). See [docs/GROUNDING.md](docs/GROUNDING.md).
 
 ---
 
@@ -274,7 +273,7 @@ docs/
 ├── phase_d_playbook.md           how to declare a translation "verified correct"
 └── troubleshooting.md            every failure mode we've seen
 
-tests/                            901 passing / 8 skipped (909 collected)
+tests/                            693 passing / 7 skipped
 .github/workflows/                CI across Ubuntu + Windows, py3.11 + 3.12
 ```
 
@@ -434,7 +433,7 @@ Pull requests welcome. Before submitting:
 
 1. `alchemist doctor` must print OK across the board.
 2. `pytest tests/ --ignore=tests/test_local_llm.py` must pass.
-3. New features need a test. The 901-test suite is the floor.
+3. New features need a test. The 693-test suite is the floor.
 4. The scrubber has 30 rules, each with a regression fixture in `tests/test_scrubber.py`. New scrubber rules follow the same pattern.
 5. Domain plugins live in `alchemist/plugins/` with sibling tests in `tests/test_plugins.py`.
 

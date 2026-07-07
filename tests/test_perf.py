@@ -1,12 +1,11 @@
-"""Performance parity — verdict logic + receipt field.
+"""Performance parity — verdict logic.
 
-The real cross-language benchmark (checksum: Rust 0.98x C, parity) is proven on the
-box with gcc+rustc; here we lock the ratio->verdict classification and the receipt
-carrying the perf ratio.
+The real cross-language benchmark (checksum: Rust 0.98x C, parity) runs live with
+gcc+rustc; here we lock the ratio->verdict classification. (Recording the ratio in
+the shipping verifier receipt is a follow-up wiring — see docs/GROUNDING.md.)
 """
 
-from alchemist.autonomy.perf import _classify, PerfResult
-from alchemist.autonomy.provenance import VerificationReceipt, SafetyReport
+from alchemist.reporter.perf import _classify, PerfResult
 
 
 def test_classify_ratio_verdicts():
@@ -19,13 +18,3 @@ def test_classify_ratio_verdicts():
 def test_perf_result_shape():
     r = PerfResult(c_ns=100.0, rust_ns=98.0, ratio=0.98, verdict="parity")
     assert r.ratio == 0.98 and r.verdict == "parity"
-
-
-def test_receipt_carries_perf_ratio():
-    r = VerificationReceipt("f", "verified", 40, 1.0, SafetyReport(0, 0, 0, True),
-                            True, [], "gemma-4-31b", perf_ratio=0.98)
-    assert r.perf_ratio == 0.98
-    assert "perf_ratio" in r.canonical()    # part of the signed content
-    # default None keeps older receipts valid
-    r2 = VerificationReceipt("g", "verified", 1, 1.0, SafetyReport(0, 0, 0, True), None, [], "m")
-    assert r2.perf_ratio is None

@@ -5,7 +5,7 @@ when its hand-written body is a pure field access / call-through, and the
 regenerated body is equivalent.
 """
 
-from alchemist.autonomy.shim_synth import (
+from alchemist.extractor.shim_synth import (
     synthesize,
     parse_accessors,
     generate_accessor,

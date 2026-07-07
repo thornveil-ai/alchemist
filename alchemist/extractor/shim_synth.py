@@ -1,4 +1,4 @@
-"""WS1 (partial): auto-synthesize the mechanical oracle-shim accessors.
+"""Auto-synthesize the mechanical oracle-shim accessors for the differential gate.
 
 The differential oracle for stateful functions needs C glue to poke and read the
 state struct: `shim_set_<field>` / `shim_get_<field>`. On zlib ~70+ of the 123
@@ -22,7 +22,7 @@ so they are fully derivable from the struct field list. This module:
 The remaining `shim_run_*` runners (per-function marshalling) are the harder
 WS1 tail and are NOT claimed here.
 
-See docs/PATH_TO_AUTONOMY.md (WS1).
+Promoted from the research track; retires the hand-written mechanical shim accessors.
 """
 
 from __future__ import annotations
@@ -283,6 +283,30 @@ def synthesize(source: str, struct_types: dict | None = None) -> dict:
 
 def field_types_from_header(header_source: str, struct_name: str) -> dict[str, str]:
     """Derive {field: c_type} for the shim generator from ANY library header.
-    Library-agnostic: no hardcoded field table needed for a new subject."""
-    from alchemist.autonomy.c_struct import parse_struct_fields
-    return parse_struct_fields(header_source, struct_name)
+    Library-agnostic, self-contained: parse the struct body and return each field's
+    declared base type (pointer `*` and array `[...]` stripped)."""
+    src = re.sub(r"/\*.*?\*/|//[^\n]*", " ", header_source, flags=re.S)  # strip comments
+    esc = re.escape(struct_name)
+    m = (re.search(r"\bstruct\s+" + esc + r"\s*\{(.*?)\}", src, re.S)
+         or re.search(r"\{(.*?)\}\s*(?:FAR\s+)?" + esc + r"\s*;", src, re.S))
+    if not m:
+        return {}
+    body = re.sub(r"\{[^{}]*\}", " ", m.group(1))  # drop nested unions/structs
+    fields: dict[str, str] = {}
+    for stmt in body.split(";"):
+        stmt = stmt.strip()
+        if not stmt or stmt.startswith("#"):
+            continue
+        cleaned = re.sub(r"\[[^\]]*\]", "", stmt)  # drop array subscripts
+        parts = [p.strip() for p in cleaned.split(",") if p.strip()]
+        first = parts[0].replace("*", " * ").split()
+        if len(first) < 2:
+            continue
+        base = " ".join(t for t in first[:-1] if t != "*").strip()
+        if base and re.fullmatch(r"[A-Za-z_]\w*", first[-1]):
+            fields[first[-1]] = base
+        for extra in parts[1:]:
+            toks = extra.replace("*", " ").split()
+            if toks and re.fullmatch(r"[A-Za-z_]\w*", toks[-1]):
+                fields.setdefault(toks[-1], base)
+    return fields

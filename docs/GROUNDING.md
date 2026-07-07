@@ -73,18 +73,31 @@ Small maybes (evaluate, low priority): pthread→`thread::spawn` mapping in `con
 beyond what `architect/global_state` covers; global-state footprint if `adapter_gen`
 doesn't capture globals.
 
-## Reconciliation plan
+## Reconciliation — ✅ COMPLETE (2026-07-06)
 
-1. **Promote the 4 salvage items** into the shipping pipeline (additive, safe).
-2. **Retire the duplicates** — move `autonomy/` duplicative modules to `attic/` (or
-   delete) once their unique bits are salvaged. Keep only salvage code, re-homed.
-3. **Fix doc credibility**: true test count is **909 collected** (docs say 744 / 201 /
-   543 — all stale). `README.md` badge + line 419 + `ROADMAP.md:63` need one true number.
-   PyPI `thornveil-alchemist` is a 404 (not published) — docs imply otherwise.
-4. **Then** point all effort at the shipping pipeline's real debt (127 zlib items,
-   stateful-lib rate, WS3 goto/state-machine structuring, WS5 build detection).
+1. **Promoted the 4 salvage items** into the shipping pipeline:
+   - **Miri gate** → `verifier/differential_tester.py` (optional 7th gate, `verify --miri`).
+   - **sanitizer-diff + divergence** → `verifier/sanitizer_diff.py` (`sanitizer_check`,
+     `divergence_verdict` → "match C, or prove C is buggy").
+   - **perf parity** → `reporter/perf.py` (`bench_scalar`, ratio → parity/faster/regressed).
+   - **shim_synth** → `extractor/shim_synth.py` (auto-synthesize the mechanical stateful
+     shim accessors; self-contained struct parser inlined).
+2. **Retired `alchemist/autonomy/` entirely** — the whole package (~6.3k LOC) + its
+   ~30 duplicate test files deleted. Confirmed **zero** shipping code imported it, so
+   deletion was safe. Test suite: **693 passing / 7 skipped** (was 901 with the
+   autonomy tests). The 11 orphaned-track docs live in `docs/archive/`.
+3. **Doc credibility fixed** — true count corrected everywhere; PyPI-404 and the
+   orphaned-track overstatement corrected in README/ROADMAP/PRODUCTION_READINESS.
+
+### Follow-up wiring (small, optional)
+- Record `perf_ratio` in the shipping `verifier/receipt.py` (perf module is promoted;
+  it isn't yet threaded into the receipt).
+- Wire `shim_synth` into `extractor/c_shim_fuzz.py` so auto-generated accessors replace
+  hand-written ones per subject (module promoted; not yet called by the pipeline).
 
 ## One-line summary
-The product is `cli.py`'s 6-stage spec-first differential pipeline. `autonomy/` is a
-parallel weaker re-implementation with **four genuine additions** (Miri, sanitizer-diff,
-perf, auto-stateful-shim). Salvage those four, retire the rest, harden the shipping path.
+The product is `cli.py`'s 6-stage spec-first differential pipeline. The orphaned
+`autonomy/` track has been **retired**; its four genuine additions (Miri, sanitizer-diff,
+perf, shim_synth) were **promoted** into shipping. The repo is now single-pipeline and
+clean. Next: the shipping pipeline's real debt (127 zlib items, stateful-lib rate, WS3
+goto/state-machine structuring, WS5 build detection).

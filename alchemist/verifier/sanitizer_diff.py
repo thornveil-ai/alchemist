@@ -45,3 +45,15 @@ def sanitizer_check(c_source: str, driver_main: str, inputs: list[bytes], work: 
             if m:
                 findings.add((m.group(1) or m.group(2)).strip())
     return sorted(findings)
+
+
+def divergence_verdict(c_source: str, driver_main: str, diverging_inputs: list[bytes],
+                       work: Path, gcc: str = "gcc") -> str:
+    """When the Rust output differs from the C reference, decide WHICH is wrong: if the
+    C exhibits undefined behaviour on the diverging input, the verdict is 'c-buggy'
+    (the Rust is allowed to differ / is the correct one); otherwise 'inconclusive'
+    (treat the Rust as the regression). This is what lets the differential gate report
+    'match C, or prove C is buggy' instead of blindly copying a buggy C reference."""
+    findings = sanitizer_check(c_source, driver_main, diverging_inputs, work, gcc)
+    real = [f for f in findings if not f.startswith("<")]
+    return "c-buggy" if real else "inconclusive"
