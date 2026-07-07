@@ -31,6 +31,20 @@ The remaining tail is now dominated by:
 These need model-fill *quality* (reasoning effort / better prompts) or new shapes,
 NOT more mechanical fixers. That's the honest boundary of the deterministic arsenal.
 
+## New shape unlocked: block ciphers (struct key schedule) — shape ✅, fill at ceiling
+`detect_block_cipher` + `build_block_cipher_crate`: Blowfish-like `key_setup(key,
+&sched,len)` + `encrypt(in,out,&sched)`, struct schedule (2D arrays: `s[4][256]` ->
+`[[u32;256];4]`), key-fuzzed, a fixed plaintext block encrypted, ciphertext compared.
+- **Blowfish → onboards ✅** (5 ciphertext vectors, skeleton compiles) — was `no-oracle`.
+- **Blowfish fill → partial:** the model INVENTED `blowfish_f`/`S_PERM` instead of
+  inlining the mutating `F` statement-macro + using `sched.s`. Genuine model-fill
+  ceiling (invented-symbols class) on cryptography's hardest key schedule — NOT a
+  harness gap. The *shape* is the win; this particular fill is Gemma-4-31B's limit.
+
+Also this round — **#1 fill-quality:** the diagnoser now gets sibling signatures in
+its prompt ("call these with EXACTLY these signatures; don't invent names/arg
+counts"), targeting the E0061/E0425 tail.
+
 ## New shape unlocked: array-state stream ciphers ✅
 `detect_array_cipher` + `build_array_cipher_crate`: RC4-style byte-array state
 (`key_setup(state,key,len)` + `generate(state,out,len)`), state modelled as
