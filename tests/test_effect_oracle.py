@@ -39,6 +39,25 @@ def test_c_footprint_dump_scalars_and_arrays():
     assert "fwrite(_table, sizeof(_table), 1, stdout);" in dump  # array: bare name
 
 
+def test_detect_global_state_api():
+    from alchemist.autonomy.effect_oracle import detect_global_state_api
+    from alchemist.autonomy.onboard import discover_functions
+    src = ("static unsigned long _s = 0;\n"
+           "void gen_seed(unsigned long x) { _s = x; }\n"
+           "unsigned long gen_next(void) { _s = _s * 3 + 1; return _s; }\n")
+    api = detect_global_state_api(discover_functions(src), detect_globals(src))
+    assert api is not None
+    assert api.init == "gen_seed" and api.step == "gen_next"
+    assert api.step_ret == "u64"          # C `unsigned long` return -> Rust u64
+
+
+def test_no_global_state_api_without_globals():
+    from alchemist.autonomy.effect_oracle import detect_global_state_api
+    from alchemist.autonomy.onboard import discover_functions
+    src = "int add(int a, int b) { return a + b; }"   # pure, no globals
+    assert detect_global_state_api(discover_functions(src), []) is None
+
+
 def test_rust_state_struct_makes_globals_explicit():
     rs = emit_rust_state_struct(detect_globals(PRNG))
     assert "pub struct GlobalState" in rs
