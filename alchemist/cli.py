@@ -352,6 +352,36 @@ def _print_report_and_exit(report, start_time: float) -> None:
         raise typer.Exit(code=1)
 
 
+@app.command(name="translate-lib")
+def translate_lib(
+    source: Path = typer.Argument(..., help="Path to a multi-module C library"),
+    concurrency: int = typer.Option(4, "--concurrency", "-j",
+                                     help="Concurrent module translations (batched by the model)"),
+):
+    """Translate a large multi-module library MODULE-BY-MODULE, concurrently.
+
+    Each library `.c` is translated as its own single-module subject (sidestepping the
+    architect's whole-library limit) and the per-module runs execute in parallel — the local
+    model batches them, so wall-clock scales far better than one-at-a-time.
+    """
+    _banner()
+    import os as _os
+    from alchemist.lib_orchestrator import orchestrate_library
+    source = Path(source).resolve()
+    console.print(f"[cyan]Per-module translation of {source} (concurrency={concurrency})[/cyan]")
+    results = orchestrate_library(
+        source, max_concurrent=concurrency,
+        endpoint=_os.environ.get("ALCHEMIST_ENDPOINT"),
+    )
+    npass = sum(1 for r in results if r.overall_pass)
+    console.print(f"\n[bold]Library result: {npass}/{len(results)} modules verified[/bold]")
+    for r in results:
+        mark = "[green]PASS[/green]" if r.overall_pass else "[red]FAIL[/red]"
+        console.print(f"  {mark}  {r.module}   {r.detail}")
+    if npass < len(results):
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def inspect(
     source: Path = typer.Argument(..., help="Path to C/C++ source directory"),
