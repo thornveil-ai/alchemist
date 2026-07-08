@@ -34,7 +34,7 @@ from alchemist.standards import TestVector, lookup_test_vectors
 VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
-    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator"}
+    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator", "cipher_seq"}
 
 
 @dataclass
@@ -71,6 +71,9 @@ class AlgorithmHarness:
     state_rust: str | None = None
     mutator_bind: str | None = None
     mutator_arg_types: list | None = None
+    seq_struct: str | None = None
+    seq_init: str | None = None
+    seq_gen: str | None = None
     digest_len: int = 8
     # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
     # braid alignment, batch thresholds). Random sampling rarely lands
@@ -215,6 +218,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_scalar_block(h)
     if h.category == "scalar_mutator":
         return _proptest_scalar_mutator_block(h)
+    if h.category == "cipher_seq":
+        return _proptest_cipher_seq_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -275,6 +280,21 @@ def _proptest_inplace_block(h: AlgorithmHarness) -> str:
                 let rust_out = {h.rust_call};
                 let c_out = {h.c_call};
                 prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_cipher_seq_block(h: AlgorithmHarness) -> str:
+    """Whole-crate cipher sequence differential: init(key) then keystream(out), compare bytes."""
+    strat = h.input_strategy or "(prop::collection::vec(any::<u8>(), 1..64), 0usize..256)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference((key, outlen) in {strat}) {{
+                prop_assert_eq!(rust_{h.algorithm}(key.clone(), outlen), c_{h.algorithm}(key, outlen));
             }}
         }}
     """).rstrip()

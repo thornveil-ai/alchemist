@@ -408,7 +408,7 @@ def _emit_state_observer_seq_test(fn_name: str, vec, idx: int) -> str:
     lines = [f"    #[test]\n    fn test_{fn_name}_state_{idx}() {{\n"]
     lines.append(f"        let mut st = super::{rust_struct}::default();\n")
     lines.append(f"        let key = {key_lit};\n")
-    lines.append(f"        super::{fn_name}(&mut st, &key);\n")
+    lines.append(f"        super::{fn_name}(&mut st, key);\n")
     for pair in (vec.expected_output or "").split("|"):
         fname, _, lit = pair.partition(":")
         if not fname:
@@ -432,7 +432,7 @@ def _emit_cipher_seq_test(fn_name: str, vec, idx: int) -> str:
     lines = [f"    #[test]\n    fn test_{fn_name}_seq_{idx}() {{\n"]
     lines.append(f"        let mut st = super::{rust_struct}::default();\n")
     lines.append(f"        let key = {key_lit};\n")
-    lines.append(f"        super::{init_fn}(&mut st, &key);\n")
+    lines.append(f"        super::{init_fn}(&mut st, key);\n")
     lines.append(f"        let mut out = alloc::vec![0u8; {outlen}];\n")
     lines.append(f"        super::{fn_name}(&mut st, &mut out);\n")
     lines.append(f"        assert_eq!(&out[..], {vec.expected_output}, \"{vec.description}\");\n")

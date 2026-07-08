@@ -128,6 +128,7 @@ class DifferentialConfig:
     c_typedefs: TypedefMap = field(default_factory=TypedefMap)
     c_opaque_types: set[str] = field(default_factory=set)
     harnesses: list[AlgorithmHarness] = field(default_factory=list)
+    c_struct_defs: list = field(default_factory=list)
     # Used as the name of the generated FFI crate + DLL.
     ffi_crate_name: str = "c_reference"
     # Optional path under which to emit the FFI crate + differential test crate.
@@ -483,6 +484,7 @@ class DifferentialTester:
             lib_name=cfg.ffi_crate_name,
             typedefs=cfg.c_typedefs,
             opaque_types=cfg.c_opaque_types,
+            struct_defs=cfg.c_struct_defs,
         ))
         if not ffi_result.build.success:
             return GateResult(

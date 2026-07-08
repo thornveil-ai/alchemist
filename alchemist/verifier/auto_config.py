@@ -761,6 +761,25 @@ def build_diff_config(
     used_signatures: list[CSignature] = []
     _structs = struct_lift.structs_in_dir(c_source_dir)
     _typedef_overrides: dict[str, str] = {}
+    _struct_defs: list[str] = []
+    _cs = classify_cipher_sequence(by_name, _structs)
+    if _cs is not None:
+        _ffi = struct_lift.emit_ffi_struct(_cs["rust"], _cs["fields"])
+        if _ffi is not None:
+            _struct_defs.append(_ffi)
+            _typedef_overrides[_cs["struct"]] = _cs["rust"]
+            _gen_name = _cs["gen"][0]
+            harnesses.append(AlgorithmHarness(
+                algorithm=_gen_name,
+                category="cipher_seq",
+                rust_call=f"rust_{_gen_name}(key.clone(), outlen)",
+                c_call=f"c_{_gen_name}(key, outlen)",
+                cases=2000,
+                input_strategy="(prop::collection::vec(any::<u8>(), 1..64), 0usize..256)",
+                seq_struct=_cs["rust"], seq_init=_cs["init"][0], seq_gen=_gen_name,
+            ))
+            used_signatures.append(by_name[_cs["init"][0]])
+            used_signatures.append(by_name[_gen_name])
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             # The C signature shape is the real gate — a scalar-returning
@@ -772,6 +791,8 @@ def build_diff_config(
                 continue
             sig = by_name.get(alg.name)
             if sig is None:
+                continue
+            if _cs is not None and alg.name in (_cs['init'][0], _cs['gen'][0]):
                 continue
             _mut = classify_scalar_mutator_shape(sig, _structs)
             if _mut is not None:
@@ -869,6 +890,7 @@ def build_diff_config(
         c_public_signatures=used_signatures,
         c_typedefs=TypedefMap(entries=dict(_typedef_overrides)),
         c_opaque_types=set(),
+        c_struct_defs=list(_struct_defs),
         harnesses=harnesses,
         ffi_crate_name=f"c_{re.sub(r'[^a-z0-9_]', '_', subject)}_ref",
     )

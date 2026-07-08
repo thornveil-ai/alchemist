@@ -553,6 +553,33 @@ def run_implement_stage(
     arch = CrateArchitecture.model_validate(
         json.loads(arch_path.read_text(encoding="utf-8"))
     )
+    # Crate-layout fix (Phase 2): an error type referenced by a trait must live in the
+    # trait's crate. Traits are the dependency root; an error defined in a downstream crate
+    # is invisible to the trait -> "cannot find type Rc4Error". Reassign to the trait crate.
+    try:
+        _err = {e.name: e for e in arch.error_types}
+        _moved = 0
+        for _t in arch.traits:
+            for _m in _t.methods:
+                for _name, _e in _err.items():
+                    if _name in (_m.signature or "") and _e.crate != _t.crate:
+                        _e.crate = _t.crate
+                        _moved += 1
+        if _moved:
+            console.print(f"[cyan]crate-layout: moved {_moved} trait-referenced error type(s) to the trait crate[/cyan]")
+    except Exception as _ce:  # noqa: BLE001
+        console.print(f"[yellow]crate-layout fix skipped: {_ce}[/yellow]")
+    # Architect-invented state wrappers / builders emit `unimplemented!` method skeletons
+    # with no C backing -> they fail the anti-stub gate. The verified C->Rust translation is
+    # the free functions + the state struct; drop the OO embellishments.
+    try:
+        _drop = len(arch.state_wrappers) + len(arch.builders)
+        if _drop:
+            arch.state_wrappers = []
+            arch.builders = []
+            console.print(f"[cyan]crate-layout: dropped {_drop} unfilled wrapper/builder skeleton(s)[/cyan]")
+    except Exception:  # noqa: BLE001
+        pass
 
     # Field scanner: pre-populate shared-type field schemas.
     # The scanner's output is available to the TDD generator via the
