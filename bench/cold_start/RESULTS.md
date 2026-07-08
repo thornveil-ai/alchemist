@@ -56,6 +56,7 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `mathlib` | multi-dir library | checksum + WALL-4 | ATTEMPT | PASS | PASS | **PASS** ✅ subdir src + header + excluded test/main (Phase 2) |
 | `gentest` | Makefile-generated source | scalar + auto-build | ATTEMPT | PASS | PASS | **PASS** ✅ pipeline runs make to generate a needed header (Phase 2) |
 | **libcrc crc32** (REAL, never-seen) | multi-scalar + checksum | crc_32 + update_crc_32 | ATTEMPT | PASS | PASS | **PASS** ✅ real 3rd-party library module, byte-exact (Phase 2 acceptance) |
+| **libcrc crc8** (REAL, SHT75 variant) | inline-table checksum + multi-scalar | crc_8 + update_crc_8 | ATTEMPT | PASS | PASS | **PASS** ✅ non-standard CRC variant, byte-exact (Phase 2) |
 
 ### Phase 2 acceptance (2026-07-08): real never-seen library
 `libcrc` (Lammert Bies, MIT) fetched fresh from GitHub and run **blind**. The **crc32 module**
