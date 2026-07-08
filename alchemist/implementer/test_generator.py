@@ -440,6 +440,52 @@ def _emit_cipher_seq_test(fn_name: str, vec, idx: int) -> str:
     return "".join(lines)
 
 
+def _emit_alloc_init_test(fn_name: str, vec, idx: int) -> str:
+    """Post-init state-observer for an allocator: init a buffer of size cap, assert fields."""
+    parts = (vec.tolerance or "").split("|")
+    rust_struct = parts[1] if len(parts) > 1 else "State"
+    fnames = (parts[3].split(",") if len(parts) > 3 and parts[3] else [])
+    kinds = (parts[4].split(",") if len(parts) > 4 and parts[4] else ["buf"])
+    cap = vec.inputs.get("__cap__", "0")
+    args = "".join(", &mut buf" if k == "buf" else f", {cap}" for k in kinds)
+    exp = {kv.split(":")[0]: kv.split(":")[1] for kv in (vec.expected_output or "").split("|") if ":" in kv}
+    lines = [f"    #[test]\n    fn test_{fn_name}_ainit_{idx}() {{\n"]
+    lines.append(f"        let mut buf = alloc::vec![0u8; {cap}];\n")
+    lines.append(f"        let mut a = super::{rust_struct}::default();\n")
+    lines.append(f"        super::{fn_name}(&mut a{args});\n")
+    for fn in fnames:
+        if fn in exp:
+            lines.append(f"        assert_eq!(a.{fn} as i64, {exp[fn]}, \"{vec.description} {fn}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
+def _emit_alloc_seq_test(fn_name: str, vec, idx: int) -> str:
+    """init(buffer of size cap) then op(n) sequence; assert the return sequence vs C."""
+    parts = (vec.tolerance or "").split("|")
+    rust_struct = parts[1] if len(parts) > 1 else "State"
+    init_fn = parts[2] if len(parts) > 2 else "init"
+    ret_kind = parts[4] if len(parts) > 4 else "int"
+    kinds = (parts[5].split(",") if len(parts) > 5 and parts[5] else ["buf"])
+    cap = vec.inputs.get("__cap__", "0")
+    ns = vec.inputs.get("__ns__", "")
+    args = "".join(", &mut buf" if k == "buf" else f", {cap}" for k in kinds)
+    ns_lits = ", ".join(f"{x}usize" for x in ns.split(",") if x != "")
+    exp_lits = ", ".join(f"{x}i64" for x in (vec.expected_output or "").split(",") if x != "")
+    _map = ".map(|x| x as i64).unwrap_or(-1)" if ret_kind == "result" else " as i64"
+    lines = [f"    #[test]\n    fn test_{fn_name}_aseq_{idx}() {{\n"]
+    lines.append(f"        let mut buf = alloc::vec![0u8; {cap}];\n")
+    lines.append(f"        let mut a = super::{rust_struct}::default();\n")
+    lines.append(f"        super::{init_fn}(&mut a{args});\n")
+    lines.append(f"        let mut got: alloc::vec::Vec<i64> = alloc::vec::Vec::new();\n")
+    lines.append(f"        for &n in [{ns_lits}].iter() {{\n")
+    lines.append(f"            got.push(super::{fn_name}(&mut a, n){_map});\n")
+    lines.append(f"        }}\n")
+    lines.append(f"        assert_eq!(got, alloc::vec![{exp_lits}], \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_scalar_mutator_test(fn_name: str, vec, idx: int) -> str:
     """Drive the mutator on a seed state (+ extra args); assert (return, post-state)."""
     parts = (vec.tolerance or "").split("|")
@@ -595,6 +641,10 @@ def _emit_spec_test(
         return _emit_state_observer_test(fn_name, vec, idx)
     # Byte-buffer transform vectors (zmem* family) carry a pipe-encoded
     # tolerance field starting with "byte_transform".
+    if (vec.tolerance or "").startswith("alloc_init"):
+        return _emit_alloc_init_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("alloc_seq"):
+        return _emit_alloc_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("state_observer"):
         return _emit_state_observer_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("cipher_seq"):

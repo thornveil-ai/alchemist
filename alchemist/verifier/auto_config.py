@@ -739,6 +739,121 @@ def fuzz_cipher_sequence_vectors(dll, group, *, count: int = 10):
     return {init_name: init_vecs, gen_name: gen_vecs}
 
 
+def _rust_name_from_spec(specs, fn_name, default):
+    for module in specs or []:
+        for alg in getattr(module, 'algorithms', None) or []:
+            if alg.name == fn_name and alg.inputs:
+                rn = (alg.inputs[0].rust_type or '').replace('&mut', '').replace('&', '').strip()
+                if rn and (rn[0].isalpha() or rn[0] == '_'):
+                    return rn
+    return default
+
+
+def classify_alloc_sequence(by_name, structs, specs=None):
+    """init(S*, byte*, int) + op(S*, int) -> int, sharing a multi-field struct S
+    (bump/arena allocator: init sets a buffer+capacity, op returns offsets/-1). Returns a
+    group dict or None. The op's C return is int; the Rust port may lift it to Result."""
+    from alchemist.verifier import struct_lift as _sl
+    groups = {}
+    for name, sig in by_name.items():
+        if not sig.params:
+            continue
+        m = _STRUCT_PTR_RE.match((sig.params[0][1] or "").strip())
+        if not m or m.group(1) not in structs:
+            continue
+        if _sl.single_scalar_field(structs[m.group(1)]) is not None:
+            continue
+        groups.setdefault(m.group(1), []).append((name, sig))
+    for sname, fns_ in groups.items():
+        fields = structs[sname]
+        init = op = None
+        for name, sig in fns_:
+            ps = [(p[1] or "").strip() for p in sig.params]
+            ret = (sig.return_type or "").strip()
+            if (len(ps) == 3 and _CONST_BYTE_PTR2.match(ps[1].replace("const ", "") if False else ps[1])
+                    and _INT_C_TYPES.match(ps[2]) and ret == "void"):
+                init = (name, sig)
+            elif (len(ps) == 3 and _MUT_BYTE_PTR3.match(ps[1]) and _INT_C_TYPES.match(ps[2])
+                    and ret == "void"):
+                init = (name, sig)
+            elif len(ps) == 2 and _INT_C_TYPES.match(ps[1]) and _INT_C_TYPES.match(ret):
+                op = (name, sig)
+        if init and op:
+            rust = _rust_name_from_spec(specs, init[0], _sl.rust_struct_name(sname))
+            init_kinds = []
+            for module in specs or []:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name == init[0]:
+                        for inp in (alg.inputs or [])[1:]:
+                            init_kinds.append("buf" if "[u8]" in (inp.rust_type or "") else "cap")
+            return {"struct": sname, "rust": rust, "fields": fields,
+                    "init": init, "op": op, "init_kinds": init_kinds}
+    return None
+
+
+def fuzz_alloc_sequence_vectors(dll, group, op_ret_kind="int", init_kinds_csv="buf", *, count: int = 12):
+    """Drive init(buffer of size cap) then a sequence of op(n_i), capturing returns. Also
+    mint an init state-observer. Returns {init_name: [...], op_name: [...]}."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    sname, rust = group["struct"], group["rust"]
+    fields = group["fields"]
+    init_name = group["init"][0]
+    op_name = group["op"][0]
+    StructC = _ctypes_struct_cls(sname, fields)
+    if StructC is None:
+        return {}
+    try:
+        c_init = getattr(dll, init_name)
+        c_op = getattr(dll, op_name)
+    except AttributeError:
+        return {}
+    c_init.restype = None
+    c_init.argtypes = (ctypes.POINTER(StructC), ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int)
+    c_op.restype = ctypes.c_int
+    c_op.argtypes = (ctypes.POINTER(StructC), ctypes.c_int)
+    scalar_fields = [f for f in fields if not f.is_ptr and f.arr is None]
+    rng = _rng(_FUZZ_SEED)
+    init_vecs, seq_vecs = [], []
+    for vi in range(count):
+        cap = rng.randrange(0, 257)
+        buf = (ctypes.c_ubyte * cap)() if cap else (ctypes.c_ubyte * 0)()
+        st = StructC()
+        try:
+            c_init(ctypes.byref(st), buf, cap)
+        except Exception:  # noqa: BLE001
+            continue
+        # init state-observer
+        fa = "|".join(f"{f.name}:{int(getattr(st, f.name))}" for f in scalar_fields)
+        init_vecs.append(SpecTestVector(
+            description=f"init_cap_{cap}",
+            source=f"C reference (post-init state): {init_name}",
+            inputs={"__cap__": str(cap)},
+            expected_output=fa,
+            tolerance=f"alloc_init|{rust}|{init_name}|{','.join(f.name for f in scalar_fields)}|{init_kinds_csv}",
+        ))
+        # op sequence on a fresh init
+        st2 = StructC()
+        buf2 = (ctypes.c_ubyte * cap)() if cap else (ctypes.c_ubyte * 0)()
+        c_init(ctypes.byref(st2), buf2, cap)
+        ns = [rng.randrange(-2, cap + 8) for _ in range(rng.randrange(1, 7))]
+        outs = []
+        for n in ns:
+            try:
+                outs.append(int(c_op(ctypes.byref(st2), n)))
+            except Exception:  # noqa: BLE001
+                outs.append(-1)
+        seq_vecs.append(SpecTestVector(
+            description=f"seq_cap_{cap}",
+            source=f"C reference (init+op sequence): {op_name}",
+            inputs={"__cap__": str(cap), "__ns__": ",".join(str(x) for x in ns)},
+            expected_output=",".join(str(x) for x in outs),
+            tolerance=f"alloc_seq|{rust}|{init_name}|{op_name}|{op_ret_kind}|{init_kinds_csv}",
+        ))
+    return {init_name: init_vecs, op_name: seq_vecs}
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -762,6 +877,25 @@ def build_diff_config(
     _structs = struct_lift.structs_in_dir(c_source_dir)
     _typedef_overrides: dict[str, str] = {}
     _struct_defs: list[str] = []
+    _as = classify_alloc_sequence(by_name, _structs, specs)
+    if _as is not None:
+        _affi = struct_lift.emit_ffi_struct(_as["rust"], _as["fields"])
+        if _affi is not None:
+            _struct_defs.append(_affi)
+            _typedef_overrides[_as["struct"]] = _as["rust"]
+            _opn = _as["op"][0]
+            harnesses.append(AlgorithmHarness(
+                algorithm=_opn,
+                category="alloc_seq",
+                rust_call=f"rust_{_opn}(cap, ns.clone())",
+                c_call=f"c_{_opn}(cap, ns)",
+                cases=2000,
+                input_strategy="(0usize..256, prop::collection::vec(0usize..300, 1..8))",
+                seq_struct=_as["rust"], seq_init=_as["init"][0], seq_gen=_opn,
+                init_kinds=_as.get("init_kinds") or ["buf"],
+            ))
+            used_signatures.append(by_name[_as["init"][0]])
+            used_signatures.append(by_name[_opn])
     _cs = classify_cipher_sequence(by_name, _structs)
     if _cs is not None:
         _ffi = struct_lift.emit_ffi_struct(_cs["rust"], _cs["fields"])
@@ -793,6 +927,8 @@ def build_diff_config(
             if sig is None:
                 continue
             if _cs is not None and alg.name in (_cs['init'][0], _cs['gen'][0]):
+                continue
+            if _as is not None and alg.name in (_as['init'][0], _as['op'][0]):
                 continue
             _mut = classify_scalar_mutator_shape(sig, _structs)
             if _mut is not None:
@@ -992,6 +1128,22 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 augmented += 1
     # Stateful cipher sequence (init + keystream sharing a struct): attach state-observer
     # vectors to init and init->keystream sequence vectors to the generator.
+    try:
+        _ag = classify_alloc_sequence(by_name, _structs, specs)
+        if _ag is not None:
+            _opret = "int"
+            for _m in specs:
+                for _al in getattr(_m, "algorithms", None) or []:
+                    if _al.name == _ag["op"][0] and "Result" in (getattr(_al, "return_type", "") or ""):
+                        _opret = "result"
+            _abyfn = fuzz_alloc_sequence_vectors(dll, _ag, _opret, ",".join(_ag.get("init_kinds") or ["buf"]))
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _abyfn and _abyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _abyfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
     try:
         _grp = classify_cipher_sequence(by_name, _structs)
         if _grp is not None:

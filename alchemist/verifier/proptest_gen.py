@@ -34,7 +34,7 @@ from alchemist.standards import TestVector, lookup_test_vectors
 VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
-    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator", "cipher_seq"}
+    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator", "cipher_seq", "alloc_seq"}
 
 
 @dataclass
@@ -74,6 +74,7 @@ class AlgorithmHarness:
     seq_struct: str | None = None
     seq_init: str | None = None
     seq_gen: str | None = None
+    init_kinds: list | None = None
     digest_len: int = 8
     # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
     # braid alignment, batch thresholds). Random sampling rarely lands
@@ -220,6 +221,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_scalar_mutator_block(h)
     if h.category == "cipher_seq":
         return _proptest_cipher_seq_block(h)
+    if h.category == "alloc_seq":
+        return _proptest_alloc_seq_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -280,6 +283,21 @@ def _proptest_inplace_block(h: AlgorithmHarness) -> str:
                 let rust_out = {h.rust_call};
                 let c_out = {h.c_call};
                 prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_alloc_seq_block(h: AlgorithmHarness) -> str:
+    """Whole-crate allocator sequence differential: init(buffer of size cap) then op*."""
+    strat = h.input_strategy or "(0usize..256, prop::collection::vec(0usize..300, 1..8))"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference((cap, ns) in {strat}) {{
+                prop_assert_eq!(rust_{h.algorithm}(cap, ns.clone()), c_{h.algorithm}(cap, ns));
             }}
         }}
     """).rstrip()

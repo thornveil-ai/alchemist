@@ -541,6 +541,41 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (in-place)",
                 ))
+            elif h.category == "alloc_seq":
+                init_fn = _pick_unambiguous(h.seq_init, api)
+                op_fn = _pick_unambiguous(h.seq_gen, api)
+                if init_fn is None or op_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt alloc-seq '{h.algorithm}': init/op fn not found"
+                    )
+                ci = init_fn.crate_ident
+                st = h.seq_struct or "State"
+                _is_result = "Result" in (op_fn.ret or "")
+                _map = ".map(|x| x as i64).unwrap_or(-1)" if _is_result else " as i64"
+                _kinds = h.init_kinds or ["buf"]
+                _rinit = "".join(", &mut buf" if k == "buf" else ", cap as _" for k in _kinds)
+                _cinit = "".join(", buf.as_mut_ptr()" if k == "buf" else ", cap as _" for k in _kinds)
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(cap: usize, ns: Vec<usize>) -> Vec<i64> {{\n"
+                    f"    let mut buf = vec![0u8; cap];\n"
+                    f"    let mut a = {ci}::{st}::default();\n"
+                    f"    {ci}::{init_fn.name}(&mut a{_rinit});\n"
+                    f"    ns.into_iter().map(|n| {op_fn.crate_ident}::{op_fn.name}(&mut a, n){_map}).collect()\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(cap: usize, ns: Vec<usize>) -> Vec<i64> {{\n"
+                    f"    let mut buf = vec![0u8; cap];\n"
+                    f"    let mut a: {ffi_ident}::{st} = unsafe {{ core::mem::zeroed() }};\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(&mut a as *mut _, buf.as_mut_ptr(), cap as _); }}\n"
+                    f"    ns.into_iter().map(|n| unsafe {{ {ffi_ident}::{h.seq_gen}(&mut a as *mut _, n as _) }} as i64).collect()\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={init_fn.crate, op_fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{op_fn.name} (alloc seq)",
+                ))
             elif h.category == "cipher_seq":
                 init_fn = _pick_unambiguous(h.seq_init, api)
                 gen_fn = _pick_unambiguous(h.seq_gen, api)
