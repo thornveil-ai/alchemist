@@ -606,6 +606,11 @@ class TDDGenerator:
                     # Template didn't compile — revert and fall through to LLM
                     module_path.write_text(current, encoding="utf-8")
 
+        # Freeze the skeleton's parameter count BEFORE the fill loop. The loop may rewrite
+        # alg.inputs to match the model's returned signature (idiomatic param drift), which
+        # would defeat the arity guard — it would end up comparing the drifted signature
+        # against itself. The pre-generated differential tests are built for THIS arity.
+        _orig_arity = len(alg.inputs or [])
         for iteration in range(1, self.max_iter_per_fn + 1):
             attempt.iterations = iteration
             current = module_path.read_text(encoding="utf-8")
@@ -711,7 +716,7 @@ class TDDGenerator:
             # param drift (the model adding/removing a length or capacity argument) silently
             # breaks the pre-generated differential tests, which are built for the spec
             # signature — a whole class of stateful failures. Reject + re-prompt explicitly.
-            _exp_arity = len(alg.inputs or [])
+            _exp_arity = _orig_arity
             _sig_m = re.search(r"\bfn\s+" + re.escape(alg.name) + r"\s*\(([^)]*)\)", new_fn)
             if _sig_m is not None and _exp_arity > 0:
                 _got_arity = len([x for x in _sig_m.group(1).split(",") if x.strip()])
