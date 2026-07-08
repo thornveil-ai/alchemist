@@ -264,17 +264,19 @@ def classify_function(
     for pattern in ALGORITHM_PATTERNS:
         score = 0.0
 
-        # Name match (strongest signal)
-        for kw in pattern.name_keywords:
-            if kw in name_lower:
-                score += pattern.confidence
-                break
+        name_hit = any(kw in name_lower for kw in pattern.name_keywords)
+        call_hit = any(kw in calls_lower for kw in pattern.call_keywords)
+
+        # Name match (strongest signal). For GLUE patterns a name match ALONE is not
+        # decisive: a function named like glue (e.g. "*alloc*") that never makes the
+        # corresponding glue call (malloc/free) is real computational code (a custom
+        # allocator), not heap-management glue. Require corroborating call evidence.
+        if name_hit and not (pattern.category == "glue" and not call_hit):
+            score += pattern.confidence
 
         # Call match
-        for kw in pattern.call_keywords:
-            if kw in calls_lower:
-                score += 0.15
-                break
+        if call_hit:
+            score += 0.15
 
         # Variable match
         matched_vars = sum(1 for kw in pattern.var_keywords if kw in vars_lower)

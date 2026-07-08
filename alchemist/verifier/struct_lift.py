@@ -219,36 +219,46 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     struct as the source of truth. Mutates ``module.shared_types``; returns count added.
 
     This is the struct-carry that lets the skeleton compile stateful code cold (kills the
-    "cannot find type Rc4State" wall)."""
+    "cannot find type Rc4State" wall). The emitted Rust name is whatever the spec's first
+    (state) parameter uses — the model may name `bump_alloc`'s state `BumpAllocator`, not the
+    computed `BumpAlloc` — mapped to the C struct via the function's struct-pointer param."""
     from alchemist.extractor.schemas import SharedType
+    from alchemist.verifier.auto_config import collect_subject_signatures  # lazy: avoid cycle
     structs = structs_in_dir(c_source_dir)
-    by_rust = {rust_struct_name(cn): (cn, f) for cn, f in structs.items()}
-    if not by_rust:
+    if not structs:
         return 0
+    sigs = {s.name: s for s in collect_subject_signatures(c_source_dir)}
+    struct_ptr = re.compile(r"^(?:struct\s+)?([A-Za-z_]\w*)\s*\*$")
     added = 0
     for module in specs:
         present = {t.name for t in (getattr(module, "shared_types", None) or [])}
-        referenced: set[str] = set()
+        # rust_name -> (c_struct_name, fields), keyed on how the SPEC names the state type
+        want: dict[str, tuple] = {}
         for alg in getattr(module, "algorithms", None) or []:
-            for inp in (alg.inputs or []):
-                for tok in re.findall(r"[A-Za-z_]\w*", inp.rust_type or ""):
-                    if tok in by_rust:
-                        referenced.add(tok)
-        for rn in sorted(referenced):
-            if rn in present:
+            sig = sigs.get(alg.name)
+            if sig is None or not sig.params or not alg.inputs:
                 continue
-            cn, fields = by_rust[rn]
-            definition = emit_safe_struct(rn, fields)
+            m = struct_ptr.match((sig.params[0][1] or "").strip())
+            if not m or m.group(1) not in structs:
+                continue
+            rust_name = (alg.inputs[0].rust_type or "").replace("&mut", "").replace("&", "").strip()
+            if not rust_name or not (rust_name[0].isalpha() or rust_name[0] == "_"):
+                continue
+            want.setdefault(rust_name, (m.group(1), structs[m.group(1)]))
+        for rust_name, (cn, fields) in want.items():
+            if rust_name in present:
+                continue
+            definition = emit_safe_struct(rust_name, fields)
             if definition is None:
                 continue
             module.shared_types = list(getattr(module, "shared_types", None) or []) + [
                 SharedType(
-                    name=rn,
+                    name=rust_name,
                     rust_definition=definition,
                     description=f"State struct for C `{cn}` (lifted from source).",
                     fields=[],
                 )
             ]
-            present.add(rn)
+            present.add(rust_name)
             added += 1
     return added
