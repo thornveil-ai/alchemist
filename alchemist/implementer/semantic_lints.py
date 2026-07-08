@@ -348,11 +348,21 @@ _FAMILY_LINTS: dict[str, list[Callable[[str, AlgorithmSpec], list[SemanticFindin
 def _family_key(alg: AlgorithmSpec) -> str:
     name = alg.name.lower()
     standards_blob = " ".join(alg.referenced_standards or []).lower()
-    # `crc32`/`crc-32` anywhere, or a crc_* helper name (crc_word, crc_word_big,
-    # make_crc_table, ...) — the braid helpers don't carry "32" in their names.
-    if re.search(r"crc[_-]?32", name + " " + standards_blob) or \
-            re.search(r"(?:^|_)crc(?:_|$)", name):
+    ret = (getattr(alg, "return_type", "") or "").lower()
+    # Explicit CRC-32 by name/standard.
+    if re.search(r"crc[_-]?32", name + " " + standards_blob):
         return "crc32"
+    # zlib braid helpers by name — CRC-32 even though they operate on / return a 64-bit word.
+    if re.search(r"crc_word|make_crc_table|gen_crc_table|crc_braid", name):
+        return "crc32"
+    # A generic crc_* helper is CRC-32 — EXCEPT a non-32-bit CRC of the same family
+    # (crc_8/crc_16/crc_64, or a fn returning u8/u16/u64 like crc_dnp/crc_ccitt): those use a
+    # DIFFERENT polynomial and routing them to the crc32 lint family wrongly rejects correct code.
+    _non32 = {"u8", "u16", "u64", "i8", "i16", "i64",
+              "uint8_t", "uint16_t", "uint64_t", "int8_t", "int16_t", "int64_t"}
+    if re.search(r"(?:^|_)crc(?:_|$)", name):
+        if not (re.search(r"(?:crc|_)(?:8|16|64)(?:_|\b)", name) or ret in _non32):
+            return "crc32"
     if "adler" in name:
         return "adler32"
     if re.search(r"sha(?:1|256|512|224|384)?\b", name + " " + standards_blob):
