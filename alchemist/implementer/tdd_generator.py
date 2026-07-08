@@ -707,6 +707,31 @@ class TDDGenerator:
                 console.print(f"  [yellow]{alg.name}: anti-stub rejected iteration {iteration}[/yellow]")
                 continue
 
+            # Arity guard: the fill MUST keep the skeleton's parameter count. Idiomatic
+            # param drift (the model adding/removing a length or capacity argument) silently
+            # breaks the pre-generated differential tests, which are built for the spec
+            # signature — a whole class of stateful failures. Reject + re-prompt explicitly.
+            _exp_arity = len(alg.inputs or [])
+            _sig_m = re.search(r"\bfn\s+" + re.escape(alg.name) + r"\s*\(([^)]*)\)", new_fn)
+            if _sig_m is not None and _exp_arity > 0:
+                _got_arity = len([x for x in _sig_m.group(1).split(",") if x.strip()])
+                if _got_arity != _exp_arity:
+                    _want = ", ".join(f"{i.name}: {i.rust_type}" for i in (alg.inputs or []))
+                    previous_failure = (
+                        "## Previous iteration CHANGED the function signature (rejected).\n\n"
+                        f"You wrote a signature with {_got_arity} parameter(s); the required "
+                        f"signature has EXACTLY {_exp_arity}:\n"
+                        f"```rust\npub fn {alg.name}({_want}) ...\n```\n\n"
+                        "Keep this signature EXACTLY — do NOT add, remove, or reorder "
+                        "parameters. Fill only the body. If the C used a separate length/"
+                        "capacity argument, derive it from a slice parameter's .len()."
+                    )
+                    console.print(
+                        f"  [yellow]{alg.name}: arity guard rejected iter {iteration} "
+                        f"({_got_arity} params vs {_exp_arity})[/yellow]"
+                    )
+                    continue
+
             # Semantic lint (family-specific invariants) — reject early if
             # the candidate clearly violates its algorithm's math, so we
             # don't burn a cargo check/test cycle on it.
