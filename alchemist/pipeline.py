@@ -34,13 +34,28 @@ def run_analyze(
         console.print(f"[red]Source path {source} is not a directory.[/red]")
         raise SystemExit(1)
 
-    # Discover C/C++ files
+    # Discover C/C++ files. Skip non-library trees (test/example/bench/vendor) and any
+    # driver/generator that defines `int main(` — e.g. a build-time table generator — so
+    # the pipeline never tries to translate `main` (which has no library semantics).
+    from alchemist.verifier.build_c_dll import _MAIN_RE, _NONLIB_DIRS
     c_extensions = {".c", ".h", ".cpp", ".hpp", ".cc", ".cxx"}
+
+    def _keep_file(f) -> bool:
+        if ".git" in f.parts or "test" in f.name.lower():
+            return False
+        if {p.lower() for p in f.relative_to(source).parts[:-1]} & _NONLIB_DIRS:
+            return False
+        if f.suffix in {".c", ".cpp", ".cc", ".cxx"}:
+            try:
+                if _MAIN_RE.search(f.read_text(errors="replace")):
+                    return False
+            except OSError:
+                return False
+        return True
+
     all_files = sorted(
         f for f in source.rglob("*")
-        if f.suffix in c_extensions
-        and ".git" not in f.parts
-        and "test" not in f.name.lower()  # skip test files for now
+        if f.suffix in c_extensions and _keep_file(f)
     )
 
     # Filter to only .c and .h in the root (not contrib/test dirs for zlib)

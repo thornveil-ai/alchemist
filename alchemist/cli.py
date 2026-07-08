@@ -275,6 +275,15 @@ def translate(
     source = Path(source).resolve()
     out = output or (source / ".alchemist" / "output")
 
+    # Auto-build (WALL 4): if the subject is a real library with a native build
+    # (Makefile/CMake), run it first to materialize build-time-generated sources
+    # (lookup tables, config headers, *.inc). Best-effort; only when starting at stage 1.
+    if start_stage <= 1:
+        from alchemist.verifier.build_c_dll import prepare_native_build
+        _nb = prepare_native_build(source)
+        if _nb:
+            console.print(f"[cyan]native build: {_nb}[/cyan]")
+
     # Run the full integrated pipeline
     if no_tdd:
         # Legacy path: run stages individually using the old generator

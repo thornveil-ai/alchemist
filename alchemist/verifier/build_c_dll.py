@@ -31,6 +31,45 @@ _NONLIB_DIRS = {
 _MAIN_RE = re.compile(r"\bint\s+main\s*\(")
 
 
+def prepare_native_build(root, *, timeout: int = 180) -> str | None:
+    """Run a library's native build best-effort to materialize BUILD-TIME-GENERATED sources
+    (lookup tables, config headers, `*.inc` files) before discovery/compilation.
+
+    Detects a Makefile (make) or CMakeLists.txt (out-of-source cmake build). Best-effort:
+    never raises and a failed/partial build is fine as long as `discover_c_build` still finds
+    compilable sources afterwards. Returns a short status string, or None if no build system.
+
+    SECURITY: this executes the library's own build, i.e. arbitrary code from the subject.
+    That is inherent to "translate this library" (you must build what you translate), but it
+    should only ever run on a library the operator chose to translate. Bounded by `timeout`,
+    output captured, run in-tree as the current (non-root) user.
+    """
+    root = Path(root)
+    if shutil.which("make") is not None:
+        for mk in ("Makefile", "makefile", "GNUmakefile"):
+            if (root / mk).exists():
+                try:
+                    r = subprocess.run(
+                        ["make"], cwd=str(root), capture_output=True,
+                        text=True, timeout=timeout,
+                    )
+                    return f"make: {'ok' if r.returncode == 0 else 'partial'}"
+                except Exception:  # noqa: BLE001
+                    return "make: failed"
+    if (root / "CMakeLists.txt").exists() and shutil.which("cmake") is not None:
+        try:
+            bd = root / "_alch_cmake_build"
+            bd.mkdir(exist_ok=True)
+            subprocess.run(["cmake", str(root)], cwd=str(bd),
+                           capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(["cmake", "--build", "."], cwd=str(bd),
+                               capture_output=True, text=True, timeout=timeout)
+            return f"cmake: {'ok' if r.returncode == 0 else 'partial'}"
+        except Exception:  # noqa: BLE001
+            return "cmake: failed"
+    return None
+
+
 def discover_c_build(root, *, max_files: int = 300) -> tuple[list[Path], list[Path]]:
     """Discover a C library's compilable sources + include dirs from a directory tree.
 
