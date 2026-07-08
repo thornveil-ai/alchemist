@@ -68,6 +68,13 @@ def lint_crc32(source: str, alg: AlgorithmSpec) -> list[SemanticFinding]:
     need the polynomial constant embedded — they operate on arbitrary polys.
     """
     findings: list[SemanticFinding] = []
+    # This lint asserts the CRC-32 reflected polynomial (0xEDB88320). It must ONLY run on
+    # actual 32-bit CRCs — a crc_16/crc_64/crc_dnp/crc_ccitt (routed here by the broad
+    # `crc_*` family match) uses a DIFFERENT polynomial and would be wrongly rejected. Gate
+    # on a 32-bit return type; unknown/empty return still runs (backward compatible).
+    _ret = (getattr(alg, "return_type", "") or "").lower()
+    if _ret and "32" not in _ret:
+        return findings
     # Skip polynomial checks for helpers that don't process bytes.
     takes_bytes = any(
         re.search(r"\[u8\]|\*\s*(?:const|mut)\s*u8|Vec<\s*u8\s*>|&\s*str", p.rust_type or "")
