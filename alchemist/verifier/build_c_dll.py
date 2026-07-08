@@ -14,10 +14,59 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Directory names that hold NON-library code (tests, examples, build artifacts,
+# vendored deps). Excluded from oracle/differential compilation so a real library
+# tree builds cleanly without hand-config (WALL 4).
+_NONLIB_DIRS = {
+    "test", "tests", "example", "examples", "bench", "benches", "demo", "demos",
+    "fuzz", "fuzzing", "doc", "docs", "build", "cmake", "third_party", "vendor",
+    ".git", "target", ".alchemist", "node_modules", "contrib",
+}
+_MAIN_RE = re.compile(r"\bint\s+main\s*\(")
+
+
+def discover_c_build(root, *, max_files: int = 300) -> tuple[list[Path], list[Path]]:
+    """Discover a C library's compilable sources + include dirs from a directory tree.
+
+    Handles a real library layout (not just a flat dir of `.c` files):
+    - Recursively collects `.c` files, skipping NON-library trees (test/example/
+      bench/fuzz/doc/build/vendor) and any file defining `int main(` (a driver or
+      example — it would also clash at link time in a shared lib).
+    - Include dirs = the root plus every directory that contains a `.h` file.
+
+    Returns (sources, include_dirs). Falls back to a flat top-level `*.c` glob if the
+    recursive walk finds nothing usable, so single-file subjects behave as before.
+    """
+    root = Path(root)
+    sources: list[Path] = []
+    include_dirs: set[Path] = {root}
+    for cf in sorted(root.rglob("*.c")):
+        rel = cf.relative_to(root).parts[:-1]
+        if {p.lower() for p in rel} & _NONLIB_DIRS:
+            continue
+        try:
+            txt = cf.read_text(errors="replace")
+        except OSError:
+            continue
+        if _MAIN_RE.search(txt):
+            continue
+        sources.append(cf)
+        if len(sources) >= max_files:
+            break
+    for hf in root.rglob("*.h"):
+        rel = hf.relative_to(root).parts[:-1]
+        if {p.lower() for p in rel} & _NONLIB_DIRS:
+            continue
+        include_dirs.add(hf.parent)
+    if not sources:
+        sources = sorted(root.glob("*.c"))
+    return sources, sorted(include_dirs)
 
 
 @dataclass

@@ -124,9 +124,16 @@ def all_struct_names(text: str) -> list[str]:
 
 def structs_in_dir(c_source_dir) -> dict[str, list[Field]]:
     out: dict[str, list[Field]] = {}
-    for cf in sorted(Path(c_source_dir).glob("*.c")):
+    root = Path(c_source_dir)
+    _NONLIB = {"test", "tests", "example", "examples", "bench", "benches", "fuzz",
+               "doc", "docs", "build", "vendor", "third_party", ".git", ".alchemist"}
+    # Structs can live in headers or .c files, possibly in subdirs of a real library.
+    files = list(root.rglob("*.h")) + list(root.rglob("*.c"))
+    for cf in sorted(files):
+        if {p.lower() for p in cf.relative_to(root).parts[:-1]} & _NONLIB:
+            continue
         try:
-            text = cf.read_text()
+            text = cf.read_text(errors="replace")
         except Exception:  # noqa: BLE001
             continue
         for nm in all_struct_names(text):

@@ -242,17 +242,21 @@ def _parse_c_definitions(c_text: str):
 
 
 def collect_subject_signatures(c_source_dir: Path) -> list[CSignature]:
+    from alchemist.verifier.build_c_dll import discover_c_build, _NONLIB_DIRS
     sigs: list[CSignature] = []
     seen: set[str] = set()
     src = Path(c_source_dir)
-    for header in sorted(src.glob("*.h")):
+    for header in sorted(src.rglob("*.h")):
+        if {p.lower() for p in header.relative_to(src).parts[:-1]} & _NONLIB_DIRS:
+            continue
         for sig in parse_header(header.read_text(encoding="utf-8", errors="replace")):
             if sig.name not in seen:
                 seen.add(sig.name)
                 sigs.append(sig)
     # Headerless single-file subjects (arbitrary cold C): parse top-level function
-    # DEFINITIONS from .c files directly (skipping body statements).
-    for cfile in sorted(src.glob("*.c")):
+    # DEFINITIONS from library .c files (recursively; test/example/main drivers excluded).
+    c_files, _ = discover_c_build(src)
+    for cfile in c_files:
         for sig in _parse_c_definitions(cfile.read_text(encoding="utf-8", errors="replace")):
             if sig.name not in seen:
                 seen.add(sig.name)
@@ -1137,16 +1141,14 @@ def build_diff_config(
     if not harnesses:
         return None
 
-    c_sources = sorted(
-        f for f in c_source_dir.glob("*.c")
-        if "test" not in f.name.lower() and "example" not in f.name.lower()
-    )
+    from alchemist.verifier.build_c_dll import discover_c_build
+    c_sources, _c_inc_dirs = discover_c_build(c_source_dir)
     if not c_sources:
         return None
     subject = c_source_dir.name.lower() or "subject"
     return DifferentialConfig(
         c_sources=c_sources,
-        c_include_dirs=[c_source_dir],
+        c_include_dirs=_c_inc_dirs,
         c_public_signatures=used_signatures,
         c_typedefs=TypedefMap(entries=dict(_typedef_overrides)),
         c_opaque_types=set(),
@@ -1214,13 +1216,14 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
         return 0
     by_name = {s.name: s for s in signatures}
     _structs = struct_lift.structs_in_dir(cdir)
-    c_files = sorted(cdir.glob("*.c"))
+    from alchemist.verifier.build_c_dll import discover_c_build
+    c_files, _inc_dirs = discover_c_build(cdir)
     if not c_files:
         return 0
     work = cdir / ".alchemist" / "cvec"
     work.mkdir(parents=True, exist_ok=True)
     dll_path = work / ("cref.dll" if _os.name == "nt" else "libcref.so")
-    build = build_c_dll(c_files, dll_path, compiler=compiler)
+    build = build_c_dll(c_files, dll_path, include_dirs=_inc_dirs, compiler=compiler)
     if not build.success:
         return 0
     try:
