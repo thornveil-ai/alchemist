@@ -602,6 +602,16 @@ def run_implement_stage(
         console.print(f"[yellow]byte-buffer type-lift skipped: {_e}[/yellow]")
     # Struct-carry (Phase 2): emit the safe state struct into the crate so stateful code
     # compiles cold (kills "cannot find type Rc4State"); C struct is the source of truth.
+    # First make single-scalar state consistent across functions — the extractor sometimes
+    # keeps the struct name (`&mut FnvState`) and sometimes unwraps to the primitive
+    # (`&mut u32`) for the SAME state, breaking state sharing + leaving the struct undefined.
+    try:
+        from alchemist.verifier.struct_lift import normalize_single_scalar_state
+        _nn = normalize_single_scalar_state(source, specs)
+        if _nn:
+            console.print(f"[cyan]state-normalize: unified {_nn} single-scalar state param(s)[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]state-normalize skipped: {_e}[/yellow]")
     try:
         from alchemist.verifier.struct_lift import inject_state_shared_types
         _ns = inject_state_shared_types(source, specs)

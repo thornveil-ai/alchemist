@@ -267,3 +267,41 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
             present.add(rust_name)
             added += 1
     return added
+
+
+def normalize_single_scalar_state(c_source_dir, specs) -> int:
+    """The extractor is inconsistent about single-scalar state structs — some functions keep
+    the struct name (`&mut FnvState`), others unwrap to the primitive (`&mut u32`). That
+    breaks state sharing (different types) and leaves the struct name undefined. Force ALL
+    functions taking a single-scalar struct pointer to the same `&mut <primitive>` (or
+    `&<primitive>` for a const pointer). Mutates alg.inputs[*].rust_type; returns count fixed."""
+    from alchemist.verifier.auto_config import collect_subject_signatures
+    structs = structs_in_dir(c_source_dir)
+    single = {}
+    for cn, fields in structs.items():
+        prim = single_scalar_field(fields)
+        if prim is not None:
+            single[cn] = prim
+    if not single:
+        return 0
+    try:
+        sigs = {s.name: s for s in collect_subject_signatures(c_source_dir)}
+    except Exception:  # noqa: BLE001
+        return 0
+    struct_ptr = re.compile(r"^(const\s+)?(?:struct\s+)?([A-Za-z_]\w*)\s*\*$")
+    fixed = 0
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = sigs.get(alg.name)
+            if sig is None:
+                continue
+            for i, (_pn, pt) in enumerate(sig.params):
+                m = struct_ptr.match((pt or "").strip())
+                if not m or m.group(2) not in single:
+                    continue
+                prim = single[m.group(2)]
+                want = f"&{prim}" if m.group(1) else f"&mut {prim}"
+                if i < len(alg.inputs or []) and alg.inputs[i].rust_type != want:
+                    alg.inputs[i].rust_type = want
+                    fixed += 1
+    return fixed
