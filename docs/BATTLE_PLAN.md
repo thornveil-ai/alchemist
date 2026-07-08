@@ -89,10 +89,20 @@ UB-bearing C is correctly refused; stateful → Phase 2.**
       tracked `struct_lift.py` (C-struct → Rust/FFI field map) + a **scalar-state mutator
       shape** (classify → oracle captures `(return, post-state)` → tuple adapter → proptest),
       with the single-scalar struct carried as `&mut <int>` via a `c_typedefs` override.
-- [ ] **Multi-field struct carry** (`rc4` array field, `bump_alloc` pointer field): emit the
-      safe struct into the crate (`struct_lift` → `types.rs`) + a `#[repr(C)]` FFI mirror.
-- [ ] **Sequence differential** (init → op×N → compare output stream) for cipher/PRNG/alloc
-      APIs — generalizes the single-step mutator to driven state across calls.
+- [x] **Multi-field struct carry** — `struct_lift.inject_state_shared_types` emits the safe
+      struct (e.g. `Rc4State`) into the crate from the C source, wired before skeleton gen.
+      Verified: rc4 now emits `Rc4State`, skeleton compiles past the "cannot find type" wall.
+      *(Pointer-field structs like `bump_alloc` are refused by `emit_safe_struct` — still open.)*
+- [x] **Sequence oracle** — `classify_cipher_sequence` + a ctypes-struct oracle: **state-observer**
+      vectors for `init` (assert each struct field vs C) + **init→keystream sequence** vectors for
+      the generator (assert the byte stream). Validated on rc4: 10+10 vectors, keystream matches
+      compiled-C RC4 byte-for-byte.
+- [ ] **Architect crate-layout bug (rc4 blocker):** the architect emits a `Cipher` trait in an
+      `rc4-traits` crate referencing `Rc4Error` defined in `rc4-core` → cross-crate "cannot find
+      type Rc4Error", workspace won't compile. Fix: co-locate referenced error types with the
+      trait (or a shared crate). This blocks rc4 end-to-end despite the verified oracle.
+- [ ] **Whole-crate FFI sequence differential** — `#[repr(C)]` mirror struct + `rust_rc4`/`c_rc4`
+      proptest, to complement the per-function TDD oracle at fuzz scale.
 - [ ] **Wire `shim_synth` into the pipeline** — auto-generate the stateful poke/read shim
       from struct fields (kills the hand-written-shim requirement).
 - [ ] **State-mutator differential oracle**: snapshot struct state across calls, diff vs C.
