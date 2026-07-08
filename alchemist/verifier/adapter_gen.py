@@ -695,14 +695,18 @@ def plan_adapters(
                         f"cannot adapt rust side of scalar '{h.algorithm}': not found"
                     )
                 ret = fn.ret
+                _types = h.scalar_arg_types or ["u64"]
+                _names = [f"a{_i}" for _i in range(len(_types))]
+                _params = ", ".join(f"{n}: {t}" for n, t in zip(_names, _types))
+                _args = ", ".join(f"{n} as _" for n in _names)
                 rust_wrapper = (
-                    f"pub fn rust_{h.algorithm}(input: u64) -> {ret} {{\n"
-                    f"    {fn.crate_ident}::{fn.name}(input as _)\n"
+                    f"pub fn rust_{h.algorithm}({_params}) -> {ret} {{\n"
+                    f"    {fn.crate_ident}::{fn.name}({_args})\n"
                     f"}}\n"
                 )
                 c_wrapper = (
-                    f"pub fn c_{h.algorithm}(input: u64) -> {ret} {{\n"
-                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(input as _) as {ret} }}\n"
+                    f"pub fn c_{h.algorithm}({_params}) -> {ret} {{\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}({_args}) as {ret} }}\n"
                     f"}}\n"
                 )
                 plan.resolved.append(ResolvedAdapter(

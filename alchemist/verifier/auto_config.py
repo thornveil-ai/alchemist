@@ -70,7 +70,28 @@ _CTYPE_FOR: dict[str, type] = {
     "z_size_t": ctypes.c_size_t,
     "uInt": ctypes.c_uint,
     "uLong": ctypes.c_ulong,
+    "unsigned char": ctypes.c_ubyte,
+    "signed char": ctypes.c_byte,
+    "char": ctypes.c_ubyte,
+    "short": ctypes.c_short,
+    "unsigned long long": ctypes.c_ulonglong,
+    "long long": ctypes.c_longlong,
+    "int8_t": ctypes.c_int8,
+    "int16_t": ctypes.c_int16,
+    "int32_t": ctypes.c_int32,
+    "int64_t": ctypes.c_int64,
+    "ssize_t": ctypes.c_ssize_t,
 }
+
+# Any integer/char scalar as a by-value ARGUMENT (no pointer). Broader than
+# _INT_C_TYPES (which is used for length params) — it also admits char/short and
+# fixed-width signed types, so a pure multi-scalar function like
+# update_crc(uint32_t, unsigned char) -> uint32_t is differentiable.
+_SCALAR_ARG = re.compile(
+    r"^(unsigned char|signed char|char|unsigned short|short|unsigned int|unsigned long long|"
+    r"unsigned long|unsigned|int|long long|long|"
+    r"uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t|"
+    r"size_t|ssize_t|z_size_t|uInt|uLong)$")
 
 
 def _ctype(c_type: str):
@@ -340,14 +361,16 @@ def fuzz_digest_vectors(dll, alg, sig, *, count: int = 20):
 
 
 def classify_scalar_shape(sig) -> str | None:
-    """All-scalar signature: every param is an int type and the return is an int.
-    e.g. isqrt(unsigned)->unsigned, popcount(unsigned long)->int. -> 'scalar' | None."""
+    """All-scalar signature: every param is an int/char scalar and the return is a scalar.
+    e.g. isqrt(unsigned)->unsigned, popcount(unsigned long)->int,
+    update_crc_32(uint32_t, unsigned char)->uint32_t. -> 'scalar' | None.
+    Works for any arity >= 1; adapter/proptest/oracle handle N by-value scalar args."""
     if not _ctype(sig.return_type or ""):
         return None
     params = [t.strip() for _, t in sig.params]
     if not params:
         return None
-    if all(_INT_C_TYPES.match(p) for p in params):
+    if all(_SCALAR_ARG.match(p) for p in params):
         return "scalar"
     return None
 
@@ -1094,14 +1117,24 @@ def build_diff_config(
                 ))
                 used_signatures.append(sig)
                 continue
-            if classify_scalar_shape(sig) is not None and len(alg.inputs or []) == 1:
+            if classify_scalar_shape(sig) is not None:
+                _sargs = [(i.rust_type or "u64").strip() for i in (alg.inputs or [])] or ["u64"]
+                _snames = [f"a{_i}" for _i in range(len(_sargs))]
+                if len(_sargs) == 1:
+                    _sstrat = f"any::<{_sargs[0]}>()"
+                    _sbind = _snames[0]
+                else:
+                    _sstrat = "(" + ", ".join(f"any::<{t}>()" for t in _sargs) + ")"
+                    _sbind = "(" + ", ".join(_snames) + ")"
                 harnesses.append(AlgorithmHarness(
                     algorithm=alg.name,
                     category="scalar",
-                    rust_call=f"rust_{alg.name}(input)",
-                    c_call=f"c_{alg.name}(input)",
+                    rust_call=f"rust_{alg.name}(" + ", ".join(_snames) + ")",
+                    c_call=f"c_{alg.name}(" + ", ".join(_snames) + ")",
                     cases=4000,
-                    input_strategy="any::<u64>()",
+                    input_strategy=_sstrat,
+                    scalar_arg_types=_sargs,
+                    mutator_bind=_sbind,
                 ))
                 used_signatures.append(sig)
                 continue

@@ -79,6 +79,8 @@ class AlgorithmHarness:
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.
     hash_ret: str | None = None
+    # Multi-arg scalar function: rust types of each by-value arg (a0, a1, ...).
+    scalar_arg_types: list | None = None
     digest_len: int = 8
     # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
     # braid alignment, batch thresholds). Random sampling rarely lands
@@ -356,14 +358,15 @@ def _proptest_scalar_mutator_block(h: AlgorithmHarness) -> str:
 
 
 def _proptest_scalar_block(h: AlgorithmHarness) -> str:
-    """Differential for an all-scalar function: fuzz the input, compare Rust vs C."""
+    """Differential for an all-scalar function (any arity): fuzz the args, compare Rust vs C."""
     strategy = h.input_strategy or "any::<u64>()"
+    bind = h.mutator_bind or "a0"
     return dedent(f"""\
         proptest! {{
             #![proptest_config(ProptestConfig::with_cases({h.cases}))]
 
             #[test]
-            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+            fn {h.algorithm}_matches_c_reference({bind} in {strategy}) {{
                 let rust_out = {h.rust_call};
                 let c_out = {h.c_call};
                 prop_assert_eq!(rust_out, c_out);
