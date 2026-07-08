@@ -103,9 +103,12 @@ UB-bearing C is correctly refused; stateful → Phase 2.**
 - [x] **Whole-crate FFI sequence differential** — `#[repr(C)]` mirror-struct injection +
       `rust_rc4`/`c_rc4` proptest (2000 cases). **rc4 flagship OVERALL PASS cold** — the array-
       struct stateful cipher is translated + byte-exact verified. Second stateful cold-green.
-- [ ] **`bump_alloc` (raw-pointer field)** — the memory-ownership case: the struct holds a
-      `*mut u8` the architect validator + `emit_safe_struct` reject. Needs a safe pointer remap
-      (its value is observably irrelevant to the returned offsets). Bleeds into Phase-6 territory.
+- [x] **`bump_alloc` (raw-pointer field) — cold-green.** The memory-ownership allocator: raw
+      `buf` pointer DROPPED from the safe struct, offset logic verified via the **alloc-sequence
+      differential** (init + fuzzed op sequence, `Result`→i64, 2000 cases rust-vs-C). Six walls
+      cleared incl. triage glue-call-evidence + fill-loop arity guard. **ALL 3 benchmark stateful
+      fns (xorshift, rc4, bump_alloc) now cold-green.** *(Follow-up: extract is non-deterministic
+      on the capacity param count — harden spec consistency so it's green every run.)*
 - [ ] **Wire `shim_synth` into the pipeline** — auto-generate the stateful poke/read shim
       from struct fields (kills the hand-written-shim requirement).
 - [ ] **State-mutator differential oracle**: snapshot struct state across calls, diff vs C.

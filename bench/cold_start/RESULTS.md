@@ -49,7 +49,7 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `parse_int` | parser-buffer | buffer→scalar | ATTEMPT | — | REFUSE | **REFUSE** — C has integer-overflow UB |
 | `xorshift` | stateful-prng | scalar-state mutator | ATTEMPT | PASS | PASS | **PASS** ✅ first stateful cold-green (Phase 2) |
 | `rc4` | stateful-cipher | array-struct + sequence | ATTEMPT | PASS | PASS | **PASS** ✅ flagship stateful cipher (Phase 2) |
-| `bump_alloc` | stateful-allocator | pointer-struct | ATTEMPT | — | — | **open** — raw-pointer field (memory-ownership) |
+| `bump_alloc` | stateful-allocator | pointer-struct + alloc-seq | ATTEMPT | PASS | PASS | **PASS** ✅ pointer-field allocator (Phase 2) |
 
 ### Phase 2 progress (2026-07-07)
 - **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
@@ -68,10 +68,16 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
   (`rust_rc4` vs `c_rc4`, 2000 fuzzed `(key, outlen)` cases). New machinery: FFI `#[repr(C)]`
   mirror-struct injection, the `cipher_seq` differential shape, a crate-layout fix (trait-
   referenced error types → trait crate; drop architect-invented wrapper/builder skeletons).
-- **`bump_alloc` still open** — its state struct has a **raw-pointer field** (`unsigned char
-  *buf`), rejected by the architect validator and by `emit_safe_struct`. Needs the memory-
-  ownership remap (the `buf` value is observably irrelevant to the returned offsets, but a
-  faithful `a->buf = buf` translation needs a safe representation). Deeper sub-problem.
+- **`bump_alloc` — cold-green (2026-07-07). ALL 3 stateful benchmark functions now pass.**
+  The pointer-field allocator translates C→safe Rust and verifies byte-exact: the raw `buf`
+  pointer field is DROPPED (observably irrelevant to the returned offsets), and `bump_alloc_n`
+  is verified via the **alloc-sequence differential** — init(buffer of size `cap`) then a
+  fuzzed op sequence, `Result`→`i64` mapped, 2000 cases rust-vs-C + 24 state-observer/sequence
+  TDD tests. Six walls cleared: triage (glue needs call evidence), struct-carry (spec type
+  name), pointer-field drop, alloc-seq shape, init-arity handling, fill-loop arity guard.
+  *(Reliability caveat: the extract is non-deterministic on the `capacity` param count (2 vs 3
+  inputs); this run had a consistent 3-input spec. Hardening the extract/spec consistency is a
+  follow-up so it's green every run, not most runs.)*
 
 ### Phase 1 scorecard
 - **Clean single-function stateless: 5/5 = 100% cold-green** across 5 signature shapes
