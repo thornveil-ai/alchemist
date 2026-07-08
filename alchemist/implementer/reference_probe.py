@@ -159,15 +159,35 @@ _ARRAY_DEF_RE = re.compile(
 )
 
 
+def _read_with_includes(source_path: Path, *, depth: int = 2) -> str:
+    """Read a C file plus its local `#include "..."` files (e.g. generated *.inc lookup-table
+    files), resolved relative to the includer, bounded recursion. Lets a table defined in a
+    separate .inc (crc32/crc64 gentab*.inc) be visible to the array scanner, not just inline."""
+    try:
+        text = source_path.read_text(errors="replace")
+    except OSError:
+        return ""
+    if depth <= 0:
+        return text
+    parts = [text]
+    for m in re.finditer(r'#\s*include\s*"([^"]+)"', text):
+        try:
+            inc = (source_path.parent / m.group(1)).resolve()
+            if inc.exists() and inc.is_file():
+                parts.append(_read_with_includes(inc, depth=depth - 1))
+        except OSError:
+            continue
+    return "\n".join(parts)
+
+
 def extract_referenced_arrays(source_path: Path, fn_body: str,
                               *, max_chars: int = 40000) -> list[str]:
     """Return file-level const-array (lookup-table) DEFINITIONS whose name is referenced in
     `fn_body`. Feeding these into the fill prompt lets the model reproduce a table EXACTLY
     instead of guessing hundreds of magic numbers — the #1 cause of compile-but-diverge on
     table-driven code (CRC/hash lookup tables). Uses brace-matching, no tree-sitter needed."""
-    try:
-        text = source_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _read_with_includes(source_path)
+    if not text:
         return []
     out: list[str] = []
     for m in _ARRAY_DEF_RE.finditer(text):
