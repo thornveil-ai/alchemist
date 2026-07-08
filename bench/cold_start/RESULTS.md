@@ -51,6 +51,8 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `rc4` | stateful-cipher | array-struct + sequence | ATTEMPT | PASS | PASS | **PASS** ✅ flagship stateful cipher (Phase 2) |
 | `bump_alloc` | stateful-allocator | pointer-struct + alloc-seq | ATTEMPT | PASS | PASS | **PASS** ✅ pointer-field allocator (Phase 2) |
 | `fnv` | stateful-hash (3-fn lib) | hash-sequence | ATTEMPT | PASS | PASS | **PASS** ✅ first >2-fn library (Phase 2) |
+| `rollcksum` | checksum + static helper | checksum | ATTEMPT | PASS | PASS | **PASS** ✅ static helper inlined (Phase 2) |
+| `wsum` | 2-fn lib, inter-calling | checksum×2 | ATTEMPT | PASS | PASS | **PASS** ✅ 2 public fns, both verified (Phase 2) |
 
 ### Phase 2 progress (2026-07-07)
 - **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
