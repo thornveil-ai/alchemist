@@ -153,6 +153,88 @@ class ProbeResult:
     notes: str = ""
 
 
+_ARRAY_DEF_RE = re.compile(
+    r"(?:^|\n)[ \t]*(?:static\s+)?(?:const\s+)?[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s*"
+    r"\[[^\]]*\]\s*=\s*\{"
+)
+
+
+def extract_referenced_arrays(source_path: Path, fn_body: str,
+                              *, max_chars: int = 40000) -> list[str]:
+    """Return file-level const-array (lookup-table) DEFINITIONS whose name is referenced in
+    `fn_body`. Feeding these into the fill prompt lets the model reproduce a table EXACTLY
+    instead of guessing hundreds of magic numbers — the #1 cause of compile-but-diverge on
+    table-driven code (CRC/hash lookup tables). Uses brace-matching, no tree-sitter needed."""
+    try:
+        text = source_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out: list[str] = []
+    for m in _ARRAY_DEF_RE.finditer(text):
+        name = m.group(1)
+        if re.search(r"\b" + re.escape(name) + r"\b", fn_body) is None:
+            continue
+        brace = text.index("{", m.start())
+        depth, j = 0, brace
+        while j < len(text):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        semi = text.find(";", j)
+        end = semi + 1 if semi != -1 else j + 1
+        snippet = text[m.start():end].strip()
+        if 0 < len(snippet) <= max_chars:
+            out.append(snippet)
+    return out
+
+
+_C_ARR_TY = {
+    "uint8_t": "u8", "uint16_t": "u16", "uint32_t": "u32", "uint64_t": "u64",
+    "int8_t": "i8", "int16_t": "i16", "int32_t": "i32", "int64_t": "i64",
+    "unsigned char": "u8", "unsigned short": "u16", "unsigned int": "u32",
+    "unsigned long": "u64", "unsigned": "u32", "char": "u8", "int": "i32",
+    "long": "i64", "short": "i16",
+}
+_C_ARR_HEAD = re.compile(
+    r"^\s*(?:static\s+)?(?:const\s+)?"
+    r"(unsigned char|unsigned short|unsigned int|unsigned long|unsigned|"
+    r"uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t|"
+    r"char|short|int|long)\s+([A-Za-z_]\w*)\s*\[[^\]]*\]\s*=\s*\{(.*)\}\s*;\s*$",
+    re.DOTALL,
+)
+
+
+def c_array_to_rust_const(c_def: str) -> tuple[str, str] | None:
+    """Convert a C file-level const-array definition to a Rust `pub const NAME: [T; N] = [...]`.
+    Returns (name, rust_const) or None if the type isn't a plain integer array. This lets a
+    lookup table be EMITTED into the crate so the model references it by name rather than
+    (unreliably) re-typing hundreds of values."""
+    m = _C_ARR_HEAD.match(c_def.strip())
+    if not m:
+        return None
+    ctype, name, body = m.group(1).strip(), m.group(2), m.group(3)
+    rust_ty = _C_ARR_TY.get(ctype)
+    if rust_ty is None:
+        return None
+    vals = []
+    for tok in body.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        tok = re.sub(r"[uUlL]+$", "", tok)          # strip 0x..UL suffixes
+        if not re.fullmatch(r"[-+]?(?:0[xX][0-9a-fA-F]+|\d+)", tok):
+            return None                              # not a plain integer literal
+        vals.append(tok)
+    if not vals:
+        return None
+    rust = f"pub const {name}: [{rust_ty}; {len(vals)}] = [{', '.join(vals)}];"
+    return name, rust
+
+
 def extract_c_function_body(source_path: Path, function_name: str) -> str | None:
     """Locate a C function by name in the given source file and return its full text.
 

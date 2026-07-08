@@ -606,6 +606,38 @@ class TDDGenerator:
                     # Template didn't compile — revert and fall through to LLM
                     module_path.write_text(current, encoding="utf-8")
 
+        # Const-table carry: EMIT any lookup table(s) the C body reads as Rust `const`
+        # arrays into the crate module, so the model REFERENCES them by name instead of
+        # re-typing hundreds of values (which it can't do reliably — the #1 cause of
+        # compile-but-diverge on table-driven CRC/hash code).
+        try:
+            _src_root = getattr(self, "_source_root", None)
+            if _src_root:
+                from alchemist.implementer.reference_probe import (
+                    extract_c_function_body, extract_referenced_arrays,
+                    c_array_to_rust_const,
+                )
+                from alchemist.verifier.build_c_dll import discover_c_build as _disc2
+                _cur = module_path.read_text(encoding="utf-8")
+                _consts = []
+                for _cf in _disc2(_src_root)[0]:
+                    _b = extract_c_function_body(_cf, alg.name)
+                    if not _b:
+                        continue
+                    for _arr in extract_referenced_arrays(_cf, _b):
+                        _conv = c_array_to_rust_const(_arr)
+                        if _conv and f"const {_conv[0]}:" not in _cur:
+                            _consts.append(_conv[1])
+                    break
+                if _consts:
+                    module_path.write_text(
+                        _cur.rstrip() + "\n\n" + "\n".join(_consts) + "\n",
+                        encoding="utf-8")
+                    console.print(f"  [cyan]{alg.name}: carried {len(_consts)} lookup table(s) "
+                                  f"into the crate[/cyan]")
+        except Exception:  # noqa: BLE001
+            pass
+
         # Freeze the skeleton's parameter count BEFORE the fill loop. The loop may rewrite
         # alg.inputs to match the model's returned signature (idiomatic param drift), which
         # would defeat the arity guard — it would end up comparing the drifted signature
@@ -1036,13 +1068,28 @@ class TDDGenerator:
         try:
             _src_root = getattr(self, "_source_root", None)
             if _src_root:
-                from alchemist.implementer.reference_probe import extract_c_function_body
-                from pathlib import Path as _P
-                for _cf in sorted(_P(_src_root).glob("*.c")):
+                from alchemist.implementer.reference_probe import (
+                    extract_c_function_body, extract_referenced_arrays,
+                )
+                from alchemist.verifier.build_c_dll import discover_c_build as _disc
+                for _cf in _disc(_src_root)[0]:
                     _cbody = extract_c_function_body(_cf, alg.name)
                     if _cbody:
+                        # Feed any lookup table(s) the function references so the model
+                        # reproduces them EXACTLY instead of guessing (table-driven CRC/hash).
+                        _tbls = extract_referenced_arrays(_cf, _cbody)
+                        _tbl_section = ""
+                        if _tbls:
+                            _tbl_section = (
+                                "## Lookup table(s) the function reads are ALREADY defined in "
+                                "your crate module as Rust `const` arrays with these EXACT names "
+                                "and values. Reference them directly by name (e.g. "
+                                "`TABLE[idx as usize]`); do NOT redefine or regenerate them:\n"
+                                "```c\n" + "\n\n".join(_tbls) + "\n```\n\n"
+                            )
                         prompt = (
-                            f"## Original C source for `{alg.name}` — translate this "
+                            _tbl_section
+                            + f"## Original C source for `{alg.name}` — translate this "
                             f"FAITHFULLY into safe Rust. Preserve the EXACT arithmetic, "
                             f"integer widths, sign "
                             f"handling, loop bounds and edge cases. IMPORTANT: C integer arithmetic wraps on overflow (2s-complement); use Rust wrapping_add/wrapping_mul/wrapping_sub for any arithmetic that could overflow so the result matches C EXACTLY (plain +,*,- panic on overflow in Rust and would diverge from C). Do NOT invent a "

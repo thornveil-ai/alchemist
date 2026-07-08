@@ -806,7 +806,14 @@ def emit_module_test_block(
         #    specific APIs (Vec<u8> return with .as_slice(), etc.). Emitting
         #    them against arbitrary deflate*/inflate* helpers produces
         #    uncompilable tests that poison the whole crate's test run.
-        if _can_accept_byte_slice(alg) and _has_canonical_shape_for_category(alg):
+        #    CRITICAL: skip the catalog when the function ALREADY has its own
+        #    (auto-oracle / extractor) test vectors — those come from the SUBJECT'S
+        #    compiled C and are authoritative. The name-matched catalog holds
+        #    STANDARD values (e.g. canonical CRC-8) that are simply WRONG for a
+        #    custom variant of the same family (libcrc's SHT75 CRC-8), which would
+        #    fail a byte-exact-but-correct translation. The oracle is the truth.
+        if (not (alg.test_vectors or []) and _can_accept_byte_slice(alg)
+                and _has_canonical_shape_for_category(alg)):
             cat_vectors = catalog_lookup(alg.name)
             for i, v in enumerate(cat_vectors or []):
                 if alg.category == "checksum":
