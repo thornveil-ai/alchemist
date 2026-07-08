@@ -54,6 +54,19 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `rollcksum` | checksum + static helper | checksum | ATTEMPT | PASS | PASS | **PASS** ✅ static helper inlined (Phase 2) |
 | `wsum` | 2-fn lib, inter-calling | checksum×2 | ATTEMPT | PASS | PASS | **PASS** ✅ 2 public fns, both verified (Phase 2) |
 | `mathlib` | multi-dir library | checksum + WALL-4 | ATTEMPT | PASS | PASS | **PASS** ✅ subdir src + header + excluded test/main (Phase 2) |
+| `gentest` | Makefile-generated source | scalar + auto-build | ATTEMPT | PASS | PASS | **PASS** ✅ pipeline runs make to generate a needed header (Phase 2) |
+| **libcrc crc32** (REAL, never-seen) | multi-scalar + checksum | crc_32 + update_crc_32 | ATTEMPT | PASS | PASS | **PASS** ✅ real 3rd-party library module, byte-exact (Phase 2 acceptance) |
+
+### Phase 2 acceptance (2026-07-08): real never-seen library
+`libcrc` (Lammert Bies, MIT) fetched fresh from GitHub and run **blind**. The **crc32 module**
+(`crc_32` + `update_crc_32`) translates to safe Rust and verifies byte-exact vs the compiled C —
+a genuinely never-seen third-party library, not a crafted benchmark. Two capabilities made this
+autonomous: the **multi-scalar shape** (`update_crc_32(uint32_t, unsigned char) -> uint32_t`) and
+**auto native build** (`prepare_native_build` runs the library's own `make` to materialize the
+build-time-generated CRC lookup table, so no manual build is needed — proven end-to-end on `gentest`).
+**Honest frontier:** pointing at the WHOLE 11-module libcrc repo in one shot fails at the *architect*
+stage (it can't design 11 interdependent modules at once). Per-module translation works; whole-multi-
+module orchestration is the next frontier.
 
 ### Phase 2 progress (2026-07-07)
 - **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
