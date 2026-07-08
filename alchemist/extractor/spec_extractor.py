@@ -166,19 +166,28 @@ class SpecExtractor:
                 r"(?:^|\n)[ \t]*static\b[^\n;{]*\b" + re.escape(f["name"]) + r"\s*\(",
                 f.get("source", "")))
 
-        def _is_void_noarg(f: dict) -> bool:
-            # `void NAME(void)` / `void NAME()` — no inputs, no return: a pure side-effect
-            # initializer (e.g. a runtime lookup-table builder). Nothing to differentially
-            # verify, so skip it rather than let it stub out and fail the module. (Every
-            # stateful init we DO translate — fnv/rc4/bump — takes a state POINTER arg.)
-            return bool(re.search(
+        def _is_uncalled_void_noarg(f: dict) -> bool:
+            # `void NAME(void)` with NO caller in the module — a pure side-effect routine that
+            # nothing depends on (an EXTERNAL table generator like crc32_table, called only by
+            # a build-time `precalc` main). Skip it: no I/O to verify and no dependent code.
+            # BUT keep void-noarg initializers that ARE called (a lazy runtime-table builder
+            # like init_crcdnp_tab that crc_dnp invokes) — dropping those breaks the caller.
+            is_void_noarg = bool(re.search(
                 r"(?:^|\n)[ \t]*(?:static\s+)?void\s+" + re.escape(f["name"])
                 + r"\s*\(\s*(?:void)?\s*\)",
                 f.get("source", "")))
+            if not is_void_noarg:
+                return False
+            called = any(
+                other is not f and re.search(r"\b" + re.escape(f["name"]) + r"\s*\(",
+                                              other.get("source", ""))
+                for other in func_data
+            )
+            return not called
         significant = [
             f for f in func_data
             if ((5 <= f["lines"] <= 500) or (0 < f["lines"] < 5 and not _is_static_fn(f)))
-            and not _is_void_noarg(f)
+            and not _is_uncalled_void_noarg(f)
         ]
         if not significant:
             significant = func_data[:5]
