@@ -57,6 +57,7 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `gentest` | Makefile-generated source | scalar + auto-build | ATTEMPT | PASS | PASS | **PASS** ✅ pipeline runs make to generate a needed header (Phase 2) |
 | **libcrc crc32** (REAL, never-seen) | multi-scalar + checksum | crc_32 + update_crc_32 | ATTEMPT | PASS | PASS | **PASS** ✅ real 3rd-party library module, byte-exact (Phase 2 acceptance) |
 | **libcrc crc8** (REAL, SHT75 variant) | inline-table checksum + multi-scalar | crc_8 + update_crc_8 | ATTEMPT | PASS | PASS | **PASS** ✅ non-standard CRC variant, byte-exact (Phase 2) |
+| **libcrc crc16** (REAL, runtime table) | runtime-table checksum (3 fns) | crc_16 + update + init | ATTEMPT | PASS | PASS | **PASS** ✅ runtime-computed table translated (Phase 2) |
 
 ### Phase 2 acceptance (2026-07-08): real never-seen library
 `libcrc` (Lammert Bies, MIT) fetched fresh from GitHub and run **blind**. The **crc32 module**
@@ -66,8 +67,27 @@ autonomous: the **multi-scalar shape** (`update_crc_32(uint32_t, unsigned char) 
 **auto native build** (`prepare_native_build` runs the library's own `make` to materialize the
 build-time-generated CRC lookup table, so no manual build is needed — proven end-to-end on `gentest`).
 **Honest frontier:** pointing at the WHOLE 11-module libcrc repo in one shot fails at the *architect*
-stage (it can't design 11 interdependent modules at once). Per-module translation works; whole-multi-
-module orchestration is the next frontier.
+stage (it can't design 11 interdependent modules at once). Solved with **per-module orchestration**
+(`translate-lib`, concurrent) + a batch of fill-quality fixes.
+
+**libcrc per-module scorecard (2026-07-08), driven via `translate-lib`:**
+| module | shape | result |
+|---|---|---|
+| crc32 | precomputed-table checksum + multi-scalar | **PASS** (2/2) |
+| crc8 | inline-table (SHT75 variant) | **PASS** (2/2) |
+| crc16 | runtime-computed table (3 fns) | **PASS** (3/3) |
+| crckrmit | runtime-computed table | **PASS** (2/2) |
+| crc64 | inline 256×u64 table gen ×3 fns | crc_64_we was lint-blocked (fixed); slow to reverify |
+| crcccitt | parameterized generic helper | 4/5 (crc_ccitt_generic diverges) |
+| crcdnp | 16-bit runtime table | 0/2 (E0220 codegen error, fill quality) |
+| crcsick | non-standard byte manip | 0/? |
+| nmea-chk | output-BUFFER writer (`f(in, out)->ptr`) | needs a new output-buffer shape |
+
+**From 1/11 (pre-fixes) to 4 confirmed green + 1 near (crc64) + 1 partial (crcccitt 4/5)** on a real
+never-seen library — every green byte-exact vs the module's own compiled C. Fixes that drove it:
+recursive C-source feed, const-table carry, variant-KAT gate (main + differential), void-noarg
+skip, multi-scalar shape, 32-bit CRC-lint gate. Remaining = a per-function long tail (a generic
+helper, one codegen error, one new output-buffer shape) — NOT systemic.
 
 ### Phase 2 progress (2026-07-07)
 - **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
