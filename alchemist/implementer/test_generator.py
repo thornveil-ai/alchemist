@@ -397,6 +397,49 @@ def _emit_state_mutator_test(fn_name: str, vec: SpecTestVector, idx: int) -> str
     return "".join(lines)
 
 
+def _emit_state_observer_seq_test(fn_name: str, vec, idx: int) -> str:
+    """Post-init state-observer: run init(key), assert each struct field equals the C oracle."""
+    parts = (vec.tolerance or "").split("|")
+    rust_struct = parts[1] if len(parts) > 1 else "State"
+    key_param = parts[3] if len(parts) > 3 else "key"
+    len_param = parts[4] if len(parts) > 4 else "len"
+    key_lit = vec.inputs.get(key_param, "&[]")
+    klen = vec.inputs.get(len_param, "0")
+    lines = [f"    #[test]\n    fn test_{fn_name}_state_{idx}() {{\n"]
+    lines.append(f"        let mut st = super::{rust_struct}::default();\n")
+    lines.append(f"        let key = {key_lit};\n")
+    lines.append(f"        super::{fn_name}(&mut st, &key);\n")
+    for pair in (vec.expected_output or "").split("|"):
+        fname, _, lit = pair.partition(":")
+        if not fname:
+            continue
+        lines.append(f"        assert_eq!(st.{fname}, {lit}, \"{vec.description} {fname}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
+def _emit_cipher_seq_test(fn_name: str, vec, idx: int) -> str:
+    """init(key) then gen(out) — assert the keystream equals the C oracle."""
+    parts = (vec.tolerance or "").split("|")
+    rust_struct = parts[1] if len(parts) > 1 else "State"
+    init_fn = parts[2] if len(parts) > 2 else "init"
+    key_param = parts[3] if len(parts) > 3 else "key"
+    klen_param = parts[4] if len(parts) > 4 else "klen"
+    outlen_param = parts[5] if len(parts) > 5 else "outlen"
+    key_lit = vec.inputs.get(key_param, "&[]")
+    klen = vec.inputs.get(klen_param, "0")
+    outlen = vec.inputs.get(outlen_param, "0")
+    lines = [f"    #[test]\n    fn test_{fn_name}_seq_{idx}() {{\n"]
+    lines.append(f"        let mut st = super::{rust_struct}::default();\n")
+    lines.append(f"        let key = {key_lit};\n")
+    lines.append(f"        super::{init_fn}(&mut st, &key);\n")
+    lines.append(f"        let mut out = alloc::vec![0u8; {outlen}];\n")
+    lines.append(f"        super::{fn_name}(&mut st, &mut out);\n")
+    lines.append(f"        assert_eq!(&out[..], {vec.expected_output}, \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_scalar_mutator_test(fn_name: str, vec, idx: int) -> str:
     """Drive the mutator on a seed state (+ extra args); assert (return, post-state)."""
     parts = (vec.tolerance or "").split("|")
@@ -552,6 +595,10 @@ def _emit_spec_test(
         return _emit_state_observer_test(fn_name, vec, idx)
     # Byte-buffer transform vectors (zmem* family) carry a pipe-encoded
     # tolerance field starting with "byte_transform".
+    if (vec.tolerance or "").startswith("state_observer"):
+        return _emit_state_observer_seq_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("cipher_seq"):
+        return _emit_cipher_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("scalar_mutator"):
         return _emit_scalar_mutator_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("byte_transform"):

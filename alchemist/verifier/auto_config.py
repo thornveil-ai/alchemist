@@ -598,6 +598,147 @@ def fuzz_scalar_mutator_vectors(dll, alg, sig, info, *, count: int = 40):
     return vectors
 
 
+_CONST_BYTE_PTR2 = re.compile(r"^const\s+(unsigned char|uint8_t|char)\s*\*$")
+_MUT_BYTE_PTR3 = re.compile(r"^(unsigned char|uint8_t|char)\s*\*$")
+
+
+def _ct_for(rust):
+    import ctypes
+    return {
+        "u8": ctypes.c_uint8, "i8": ctypes.c_int8, "u16": ctypes.c_uint16,
+        "i16": ctypes.c_int16, "u32": ctypes.c_uint32, "i32": ctypes.c_int32,
+        "u64": ctypes.c_uint64, "i64": ctypes.c_int64, "usize": ctypes.c_size_t,
+    }.get(rust)
+
+
+def _ctypes_struct_cls(name, fields):
+    import ctypes
+    from alchemist.verifier.struct_lift import c_scalar_to_rust
+    cf = []
+    for f in fields:
+        if f.is_ptr:
+            cf.append((f.name, ctypes.c_void_p)); continue
+        base = _ct_for(c_scalar_to_rust(f.ctype))
+        if base is None:
+            return None
+        cf.append((f.name, (base * int(f.arr)) if f.arr is not None else base))
+    return type(name + "_C", (ctypes.Structure,), {"_fields_": cf})
+
+
+def classify_cipher_sequence(by_name, structs):
+    """Find init(S*, const byte*, int) + gen(S*, byte*, int) sharing a multi-field,
+    pointer-free struct S (RC4/arcfour-shaped stream ciphers). Returns a group dict or None."""
+    from alchemist.verifier import struct_lift as _sl
+    groups = {}
+    for name, sig in by_name.items():
+        if not sig.params:
+            continue
+        m = _STRUCT_PTR_RE.match((sig.params[0][1] or "").strip())
+        if not m:
+            continue
+        sname = m.group(1)
+        if sname not in structs:
+            continue
+        if _sl.single_scalar_field(structs[sname]) is not None:
+            continue
+        groups.setdefault(sname, []).append((name, sig))
+    for sname, fns_ in groups.items():
+        fields = structs[sname]
+        if any(f.is_ptr for f in fields):
+            continue
+        init = gen = None
+        for name, sig in fns_:
+            ps = [(p[1] or "").strip() for p in sig.params]
+            ret_void = (sig.return_type or "").strip() == "void"
+            if (len(ps) == 3 and _CONST_BYTE_PTR2.match(ps[1])
+                    and _INT_C_TYPES.match(ps[2]) and ret_void):
+                init = (name, sig)
+            elif (len(ps) == 3 and _MUT_BYTE_PTR3.match(ps[1])
+                    and _INT_C_TYPES.match(ps[2]) and ret_void):
+                gen = (name, sig)
+        if init and gen:
+            return {
+                "struct": sname, "rust": _sl.rust_struct_name(sname),
+                "fields": fields, "init": init, "gen": gen,
+            }
+    return None
+
+
+def fuzz_cipher_sequence_vectors(dll, group, *, count: int = 10):
+    """Drive the compiled C init+gen sequence on fuzzed keys, capturing post-init state
+    (state-observer vectors for init) and keystream output (sequence vectors for gen).
+    Returns {init_name: [...], gen_name: [...]}."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED, _bytes_to_rust_literal
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    sname, rust = group["struct"], group["rust"]
+    fields = group["fields"]
+    init_name, init_sig = group["init"]
+    gen_name, gen_sig = group["gen"]
+    StructC = _ctypes_struct_cls(sname, fields)
+    if StructC is None:
+        return {}
+    try:
+        c_init = getattr(dll, init_name)
+        c_gen = getattr(dll, gen_name)
+    except AttributeError:
+        return {}
+    c_init.restype = None
+    c_init.argtypes = (ctypes.POINTER(StructC), ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int)
+    c_gen.restype = None
+    c_gen.argtypes = (ctypes.POINTER(StructC), ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int)
+    init_key_param = init_sig.params[1][0]
+    init_len_param = init_sig.params[2][0]
+    gen_key_param = init_key_param  # sequence re-inits with the same key
+    gen_len_param = gen_sig.params[2][0]
+
+    def _field_literal(cval, f):
+        if f.arr is not None:
+            return "[" + ", ".join(f"{int(cval[i])}" for i in range(int(f.arr))) + "]"
+        return f"{int(cval)}"
+
+    rng = _rng(_FUZZ_SEED)
+    init_vecs, gen_vecs = [], []
+    for vi in range(count):
+        klen = 1 + (vi % 16) if vi < 6 else rng.randrange(1, 33)
+        key = bytes(rng.randrange(0, 256) for _ in range(klen))
+        kbuf = (ctypes.c_ubyte * klen)(*key)
+        st = StructC()
+        try:
+            c_init(ctypes.byref(st), kbuf, klen)
+        except Exception:  # noqa: BLE001
+            continue
+        # state-observer vector for init
+        field_asserts = "|".join(f"{f.name}:{_field_literal(getattr(st, f.name), f)}" for f in fields)
+        init_vecs.append(SpecTestVector(
+            description=f"init_klen_{klen}",
+            source=f"C reference (post-init state): {init_name}",
+            inputs={init_key_param: _bytes_to_rust_literal(key), init_len_param: f"{klen}"},
+            expected_output=field_asserts,
+            tolerance=f"state_observer|{rust}|{init_name}|{init_key_param}|{init_len_param}",
+        ))
+        # sequence vector for gen: fresh init then generate
+        outlen = rng.randrange(0, 129)
+        st2 = StructC()
+        c_init(ctypes.byref(st2), kbuf, klen)
+        obuf = (ctypes.c_ubyte * outlen)() if outlen else (ctypes.c_ubyte * 0)()
+        try:
+            c_gen(ctypes.byref(st2), obuf, outlen)
+        except Exception:  # noqa: BLE001
+            continue
+        out = bytes(obuf[i] for i in range(outlen))
+        gen_vecs.append(SpecTestVector(
+            description=f"seq_klen_{klen}_out_{outlen}",
+            source=f"C reference (init+keystream): {gen_name}",
+            inputs={gen_key_param: _bytes_to_rust_literal(key), init_len_param: f"{klen}",
+                    gen_len_param: f"{outlen}"},
+            expected_output=_bytes_to_rust_literal(out),
+            tolerance=(f"cipher_seq|{rust}|{init_name}|{gen_key_param}|{init_len_param}"
+                       f"|{gen_len_param}"),
+        ))
+    return {init_name: init_vecs, gen_name: gen_vecs}
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -827,4 +968,17 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
             if vecs:
                 alg.test_vectors = vecs
                 augmented += 1
+    # Stateful cipher sequence (init + keystream sharing a struct): attach state-observer
+    # vectors to init and init->keystream sequence vectors to the generator.
+    try:
+        _grp = classify_cipher_sequence(by_name, _structs)
+        if _grp is not None:
+            _byfn = fuzz_cipher_sequence_vectors(dll, _grp)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _byfn and _byfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _byfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
     return augmented
