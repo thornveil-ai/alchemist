@@ -173,14 +173,21 @@ def _default_expr(f: "Field") -> str | None:
     return zero
 
 
+def pointer_field_names(fields) -> list[str]:
+    """Raw-pointer field names — dropped from the safe struct; the model must not set them."""
+    return [f.name for f in (fields or []) if f.is_ptr]
+
+
 def emit_safe_struct(rust_name: str, fields) -> str | None:
-    """Emit a SAFE (non-repr-C) struct + Default. Returns None if any field is a raw
-    pointer (not representable in safe Rust) or has an unmappable type — the caller then
-    falls back to leaving the type to the model / a different shape."""
-    body, defaults = [], []
+    """Emit a SAFE (non-repr-C) struct + Default. Raw-pointer fields are DROPPED — a borrowed
+    or raw buffer pointer has no faithful safe field, and stateful logic that only tracks
+    scalar offsets/indices doesn't observe it. Returns None if no representable field remains
+    or a non-pointer scalar is unmappable."""
+    body, defaults, dropped = [], [], []
     for f in fields:
         if f.is_ptr:
-            return None
+            dropped.append(f.name)
+            continue
         base = c_scalar_to_rust(f.ctype)
         if base is None:
             return None
@@ -190,7 +197,13 @@ def emit_safe_struct(rust_name: str, fields) -> str | None:
         if dv is None:
             return None
         defaults.append(f"{f.name}: {dv}")
-    struct = "#[derive(Clone)]\npub struct " + rust_name + " {\n" + "\n".join(body) + "\n}\n"
+    if not body:
+        return None
+    note = ""
+    if dropped:
+        note = ("// Raw-pointer field(s) dropped (no safe representation; not observed by the\n"
+                "// scalar state logic): " + ", ".join(dropped) + "\n")
+    struct = note + "#[derive(Clone)]\npub struct " + rust_name + " {\n" + "\n".join(body) + "\n}\n"
     fields_init = ", ".join(defaults)
     dflt = (
         f"impl Default for {rust_name} {{\n"
