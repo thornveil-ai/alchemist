@@ -97,12 +97,15 @@ UB-bearing C is correctly refused; stateful → Phase 2.**
       vectors for `init` (assert each struct field vs C) + **init→keystream sequence** vectors for
       the generator (assert the byte stream). Validated on rc4: 10+10 vectors, keystream matches
       compiled-C RC4 byte-for-byte.
-- [ ] **Architect crate-layout bug (rc4 blocker):** the architect emits a `Cipher` trait in an
-      `rc4-traits` crate referencing `Rc4Error` defined in `rc4-core` → cross-crate "cannot find
-      type Rc4Error", workspace won't compile. Fix: co-locate referenced error types with the
-      trait (or a shared crate). This blocks rc4 end-to-end despite the verified oracle.
-- [ ] **Whole-crate FFI sequence differential** — `#[repr(C)]` mirror struct + `rust_rc4`/`c_rc4`
-      proptest, to complement the per-function TDD oracle at fuzz scale.
+- [x] **Architect crate-layout fix** — reassign trait-referenced error types to the trait's
+      crate (kills cross-crate `Rc4Error` undefined) + drop architect-invented state-wrapper /
+      builder skeletons that emit unfillable `unimplemented!()` (fixes anti-stub).
+- [x] **Whole-crate FFI sequence differential** — `#[repr(C)]` mirror-struct injection +
+      `rust_rc4`/`c_rc4` proptest (2000 cases). **rc4 flagship OVERALL PASS cold** — the array-
+      struct stateful cipher is translated + byte-exact verified. Second stateful cold-green.
+- [ ] **`bump_alloc` (raw-pointer field)** — the memory-ownership case: the struct holds a
+      `*mut u8` the architect validator + `emit_safe_struct` reject. Needs a safe pointer remap
+      (its value is observably irrelevant to the returned offsets). Bleeds into Phase-6 territory.
 - [ ] **Wire `shim_synth` into the pipeline** — auto-generate the stateful poke/read shim
       from struct fields (kills the hand-written-shim requirement).
 - [ ] **State-mutator differential oracle**: snapshot struct state across calls, diff vs C.

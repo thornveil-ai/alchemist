@@ -48,8 +48,8 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `isqrt` | math-scalar | scalar | ATTEMPT | — | REFUSE | **REFUSE** — C has divide-by-zero UB at `UINT_MAX` |
 | `parse_int` | parser-buffer | buffer→scalar | ATTEMPT | — | REFUSE | **REFUSE** — C has integer-overflow UB |
 | `xorshift` | stateful-prng | scalar-state mutator | ATTEMPT | PASS | PASS | **PASS** ✅ first stateful cold-green (Phase 2) |
-| `rc4` | stateful-cipher | array-struct carry | ATTEMPT | — | — | **Phase 2 (in progress)** |
-| `bump_alloc` | stateful-allocator | pointer-struct carry | ATTEMPT | — | — | **Phase 2 (in progress)** |
+| `rc4` | stateful-cipher | array-struct + sequence | ATTEMPT | PASS | PASS | **PASS** ✅ flagship stateful cipher (Phase 2) |
+| `bump_alloc` | stateful-allocator | pointer-struct | ATTEMPT | — | — | **open** — raw-pointer field (memory-ownership) |
 
 ### Phase 2 progress (2026-07-07)
 - **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
@@ -61,9 +61,17 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
   via a `c_typedefs` override, so no FFI struct is needed.
   *(Honest note: the trivial `xorshift_seed` one-line setter is dropped by the extractor as
   glue; the PRNG core `next` is what's verified.)*
-- **Next (scoped):** `rc4` (256-byte array field) + `bump_alloc` (raw-pointer field) need the
-  multi-field struct **emitted into the crate** (`struct_lift` → `types.rs`) + a `#[repr(C)]`
-  FFI mirror struct + a **sequence differential** (init → op×N → compare output stream).
+- **`rc4` flagship stateful cipher — cold-green (2026-07-07).** RC4 (256-byte s-box + i/j,
+  `init` + `keystream`) translates C→safe Rust and is byte-exact verified two ways: (1) 20
+  per-function TDD tests — a **state-observer** (post-init s-box/i/j match compiled C) + an
+  **init→keystream sequence** (keystream matches C); (2) a **whole-crate FFI differential**
+  (`rust_rc4` vs `c_rc4`, 2000 fuzzed `(key, outlen)` cases). New machinery: FFI `#[repr(C)]`
+  mirror-struct injection, the `cipher_seq` differential shape, a crate-layout fix (trait-
+  referenced error types → trait crate; drop architect-invented wrapper/builder skeletons).
+- **`bump_alloc` still open** — its state struct has a **raw-pointer field** (`unsigned char
+  *buf`), rejected by the architect validator and by `emit_safe_struct`. Needs the memory-
+  ownership remap (the `buf` value is observably irrelevant to the returned offsets, but a
+  faithful `a->buf = buf` translation needs a safe representation). Deeper sub-problem.
 
 ### Phase 1 scorecard
 - **Clean single-function stateless: 5/5 = 100% cold-green** across 5 signature shapes
