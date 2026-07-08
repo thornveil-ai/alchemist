@@ -654,6 +654,8 @@ class DifferentialTester:
             parts.append(emit_differential_test(
                 resolved_harnesses,
                 extra_imports=["use diff_test::*;"],
+                include_catalog_kats=False,  # subject's own compiled C is the oracle here;
+                                             # canonical KATs are wrong for a custom variant
                 module_doc="Auto-generated differential tests (Stage 5 gate).",
             ))
         else:

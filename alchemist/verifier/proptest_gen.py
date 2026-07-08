@@ -648,8 +648,14 @@ def emit_differential_test(
     *,
     extra_imports: list[str] | None = None,
     module_doc: str | None = None,
+    include_catalog_kats: bool = True,
 ) -> str:
-    """Emit a full `tests/differential.rs` file for a list of harnesses."""
+    """Emit a full `tests/differential.rs` file for a list of harnesses.
+
+    `include_catalog_kats=False` suppresses the standards-catalog fixed known-answer tests —
+    correct for an AUTO-ORACLE differential where the subject's OWN compiled C is the ground
+    truth: a canonical CRC/hash KAT is WRONG for a custom variant of that family (e.g. libcrc's
+    SHT75 CRC-8 vs canonical CRC-8) and would fail a byte-exact-correct translation."""
     imports: list[str] = list(DEFAULT_IMPORTS)
     for h in harnesses:
         imports.extend(h.extra_imports)
@@ -675,7 +681,7 @@ def emit_differential_test(
         if h.category not in VALID_CATEGORIES:
             raise ValueError(f"Unknown category for {h.algorithm}: {h.category}")
         lines.append(f"// === {h.algorithm} ({h.category}) ===")
-        block = _fixed_vectors_block(h)
+        block = _fixed_vectors_block(h) if include_catalog_kats else ""
         if block:
             lines.append(block)
             lines.append("")
