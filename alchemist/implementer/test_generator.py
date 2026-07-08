@@ -510,6 +510,53 @@ def _emit_scalar_mutator_test(fn_name: str, vec, idx: int) -> str:
     return "".join(lines)
 
 
+def _emit_hash_init_test(fn_name: str, vec, idx: int) -> str:
+    """init(&mut s) on a bare-primitive state; assert the post-init scalar vs C."""
+    parts = (vec.tolerance or "").split("|")
+    prim = parts[1] if len(parts) > 1 else "u32"
+    lines = [f"    #[test]\n    fn test_{fn_name}_hinit_{idx}() {{\n"]
+    lines.append(f"        let mut s: {prim} = Default::default();\n")
+    lines.append(f"        super::{fn_name}(&mut s);\n")
+    lines.append(f"        assert_eq!(s, {vec.expected_output}, \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
+def _emit_hash_update_test(fn_name: str, vec, idx: int) -> str:
+    """init(&mut s); update(&mut s, data); assert the post-update scalar vs C."""
+    parts = (vec.tolerance or "").split("|")
+    prim = parts[1] if len(parts) > 1 else "u32"
+    init_fn = parts[2] if len(parts) > 2 else "init"
+    data_param = parts[4] if len(parts) > 4 else "data"
+    data_lit = vec.inputs.get(data_param, "&[]")
+    lines = [f"    #[test]\n    fn test_{fn_name}_hupd_{idx}() {{\n"]
+    lines.append(f"        let mut s: {prim} = Default::default();\n")
+    lines.append(f"        super::{init_fn}(&mut s);\n")
+    lines.append(f"        let data = {data_lit};\n")
+    lines.append(f"        super::{fn_name}(&mut s, data);\n")
+    lines.append(f"        assert_eq!(s, {vec.expected_output}, \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
+def _emit_hash_final_test(fn_name: str, vec, idx: int) -> str:
+    """init(&mut s); update(&mut s, data); assert final(&s) digest vs C."""
+    parts = (vec.tolerance or "").split("|")
+    prim = parts[1] if len(parts) > 1 else "u32"
+    init_fn = parts[2] if len(parts) > 2 else "init"
+    upd_fn = parts[3] if len(parts) > 3 else "update"
+    data_param = parts[5] if len(parts) > 5 else "data"
+    data_lit = vec.inputs.get(data_param, "&[]")
+    lines = [f"    #[test]\n    fn test_{fn_name}_hfin_{idx}() {{\n"]
+    lines.append(f"        let mut s: {prim} = Default::default();\n")
+    lines.append(f"        super::{init_fn}(&mut s);\n")
+    lines.append(f"        let data = {data_lit};\n")
+    lines.append(f"        super::{upd_fn}(&mut s, data);\n")
+    lines.append(f"        assert_eq!(super::{fn_name}(&s), {vec.expected_output}, \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_byte_transform_test(
     fn_name: str, vec: SpecTestVector, idx: int,
 ) -> str:
@@ -651,6 +698,12 @@ def _emit_spec_test(
         return _emit_cipher_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("scalar_mutator"):
         return _emit_scalar_mutator_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("hash_init"):
+        return _emit_hash_init_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("hash_update"):
+        return _emit_hash_update_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("hash_final"):
+        return _emit_hash_final_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("byte_transform"):
         return _emit_byte_transform_test(fn_name, vec, idx)
     test_name = f"test_{fn_name}_spec_{idx}"

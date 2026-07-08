@@ -34,7 +34,8 @@ from alchemist.standards import TestVector, lookup_test_vectors
 VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
-    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator", "cipher_seq", "alloc_seq"}
+    "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
+    "cipher_seq", "alloc_seq", "hash_seq"}
 
 
 @dataclass
@@ -75,6 +76,9 @@ class AlgorithmHarness:
     seq_init: str | None = None
     seq_gen: str | None = None
     init_kinds: list | None = None
+    # Hash-sequence (init; update(data); final() -> digest): the state primitive is
+    # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.
+    hash_ret: str | None = None
     digest_len: int = 8
     # Input lengths at algorithmic fold boundaries (NMAX block edges, word/
     # braid alignment, batch thresholds). Random sampling rarely lands
@@ -223,6 +227,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_cipher_seq_block(h)
     if h.category == "alloc_seq":
         return _proptest_alloc_seq_block(h)
+    if h.category == "hash_seq":
+        return _proptest_hash_seq_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -313,6 +319,21 @@ def _proptest_cipher_seq_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference((key, outlen) in {strat}) {{
                 prop_assert_eq!(rust_{h.algorithm}(key.clone(), outlen), c_{h.algorithm}(key, outlen));
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_hash_seq_block(h: AlgorithmHarness) -> str:
+    """Whole-crate hash sequence differential: init; update(data); final() -> digest, compare."""
+    strat = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..128)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(data in {strat}) {{
+                prop_assert_eq!(rust_{h.algorithm}(data.clone()), c_{h.algorithm}(data));
             }}
         }}
     """).rstrip()

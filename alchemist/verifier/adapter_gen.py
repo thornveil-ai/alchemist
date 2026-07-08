@@ -608,6 +608,39 @@ def plan_adapters(
                     rust_crates={init_fn.crate, gen_fn.crate},
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{gen_fn.name} (cipher seq)",
                 ))
+            elif h.category == "hash_seq":
+                init_fn = _pick_unambiguous(h.seq_init, api)
+                upd_fn = _pick_unambiguous(h.seq_gen, api)
+                fin_fn = _pick_unambiguous(h.algorithm, api)
+                if init_fn is None or upd_fn is None or fin_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt hash-seq '{h.algorithm}': init/update/final fn not found"
+                    )
+                st = h.state_rust or "u32"
+                ret = h.hash_ret or fin_fn.ret or st
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(data: Vec<u8>) -> {ret} {{\n"
+                    f"    let mut s: {st} = Default::default();\n"
+                    f"    {init_fn.crate_ident}::{init_fn.name}(&mut s);\n"
+                    f"    {upd_fn.crate_ident}::{upd_fn.name}(&mut s, &data);\n"
+                    f"    {fin_fn.crate_ident}::{fin_fn.name}(&s)\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(data: Vec<u8>) -> {ret} {{\n"
+                    f"    let mut s: {st} = 0 as {st};\n"
+                    f"    unsafe {{\n"
+                    f"        {ffi_ident}::{h.seq_init}(&mut s as *mut {st});\n"
+                    f"        {ffi_ident}::{h.seq_gen}(&mut s as *mut {st}, data.as_ptr(), data.len() as _);\n"
+                    f"        {ffi_ident}::{h.algorithm}(&s as *const {st})\n"
+                    f"    }}\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={init_fn.crate, upd_fn.crate, fin_fn.crate},
+                    resolution=f"{h.algorithm} -> {init_fn.name}+{upd_fn.name}+{fin_fn.name} (hash seq)",
+                ))
             elif h.category == "scalar_mutator":
                 fn = _pick_unambiguous(h.algorithm, api)
                 if fn is None:

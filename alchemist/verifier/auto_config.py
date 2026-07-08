@@ -739,6 +739,108 @@ def fuzz_cipher_sequence_vectors(dll, group, *, count: int = 10):
     return {init_name: init_vecs, gen_name: gen_vecs}
 
 
+def classify_hash_sequence(by_name, structs):
+    """Find init(S*) + update(S*, const byte*, int) + final(S*) -> scalar sharing a
+    SINGLE-SCALAR struct S (FNV / incremental-hash shaped: reset, absorb bytes, read digest).
+    The state is unwrapped to a bare primitive (no FFI struct). Returns a group dict or None."""
+    from alchemist.verifier import struct_lift as _sl
+    groups = {}
+    for name, sig in by_name.items():
+        if not sig.params:
+            continue
+        p0 = re.sub(r"^const\s+", "", (sig.params[0][1] or "").strip())
+        m = _STRUCT_PTR_RE.match(p0)
+        if not m or m.group(1) not in structs:
+            continue
+        if _sl.single_scalar_field(structs[m.group(1)]) is None:
+            continue
+        groups.setdefault(m.group(1), []).append((name, sig))
+    for sname, fns_ in groups.items():
+        init = update = final = None
+        for name, sig in fns_:
+            ps = [(p[1] or "").strip() for p in sig.params]
+            ret = (sig.return_type or "").strip()
+            if len(ps) == 1 and ret == "void":
+                init = (name, sig)
+            elif (len(ps) == 3 and (_CONST_BYTE_PTR2.match(ps[1]) or _MUT_BYTE_PTR3.match(ps[1]))
+                    and _INT_C_TYPES.match(ps[2]) and ret == "void"):
+                update = (name, sig)
+            elif len(ps) == 1 and ret != "void" and _ctype(ret) is not None:
+                final = (name, sig)
+        if init and update and final:
+            return {
+                "struct": sname,
+                "prim": _sl.single_scalar_field(structs[sname]),
+                "field_ctype": structs[sname][0].ctype,
+                "ret_ctype": (final[1].return_type or "").strip(),
+                "init": init, "update": update, "final": final,
+            }
+    return None
+
+
+def fuzz_hash_sequence_vectors(dll, group, *, count: int = 12):
+    """Drive the compiled-C init;update(data);final() sequence on fuzzed data — post-init state
+    (init observer), post-update state (update observer), and the digest (final composed).
+    Returns {init_name: [...], update_name: [...], final_name: [...]}."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED, _bytes_to_rust_literal
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    prim = group["prim"]
+    state_ct = _ctype(group["field_ctype"])
+    if state_ct is None:
+        return {}
+    ret_ct = _ctype(group["ret_ctype"]) or state_ct
+    init_name = group["init"][0]
+    upd_name, upd_sig = group["update"]
+    fin_name = group["final"][0]
+    try:
+        c_init = getattr(dll, init_name)
+        c_upd = getattr(dll, upd_name)
+        c_fin = getattr(dll, fin_name)
+    except AttributeError:
+        return {}
+    c_init.restype = None
+    c_init.argtypes = (ctypes.POINTER(state_ct),)
+    c_upd.restype = None
+    c_upd.argtypes = (ctypes.POINTER(state_ct), ctypes.POINTER(ctypes.c_ubyte),
+                      _ctype(upd_sig.params[2][1]) or ctypes.c_int)
+    c_fin.restype = ret_ct
+    c_fin.argtypes = (ctypes.POINTER(state_ct),)
+    data_param = upd_sig.params[1][0]
+    len_param = upd_sig.params[2][0]
+    rng = _rng(_FUZZ_SEED)
+    init_vecs, upd_vecs, fin_vecs = [], [], []
+    st = state_ct()
+    c_init(ctypes.byref(st))
+    init_vecs.append(SpecTestVector(
+        description="init_basis", source=f"C reference (post-init): {init_name}",
+        inputs={}, expected_output=f"{int(st.value)}",
+        tolerance=f"hash_init|{prim}|{init_name}"))
+    for vi in range(count):
+        dlen = vi if vi < 6 else rng.randrange(0, 65)
+        data = bytes(rng.randrange(0, 256) for _ in range(dlen))
+        dbuf = (ctypes.c_ubyte * dlen)(*data) if dlen else (ctypes.c_ubyte * 0)()
+        st2 = state_ct()
+        c_init(ctypes.byref(st2))
+        c_upd(ctypes.byref(st2), dbuf, dlen)
+        upd_vecs.append(SpecTestVector(
+            description=f"upd_{dlen}", source=f"C reference (state after update): {upd_name}",
+            inputs={data_param: _bytes_to_rust_literal(data), len_param: f"{dlen}"},
+            expected_output=f"{int(st2.value)}",
+            tolerance=f"hash_update|{prim}|{init_name}|{upd_name}|{data_param}|{len_param}"))
+        st3 = state_ct()
+        c_init(ctypes.byref(st3))
+        c_upd(ctypes.byref(st3), dbuf, dlen)
+        digest = int(c_fin(ctypes.byref(st3)))
+        fin_vecs.append(SpecTestVector(
+            description=f"digest_{dlen}", source=f"C reference (init+update+final): {fin_name}",
+            inputs={data_param: _bytes_to_rust_literal(data), len_param: f"{dlen}"},
+            expected_output=f"{digest}",
+            tolerance=(f"hash_final|{prim}|{init_name}|{upd_name}|{fin_name}"
+                       f"|{data_param}|{len_param}")))
+    return {init_name: init_vecs, upd_name: upd_vecs, fin_name: fin_vecs}
+
+
 def _rust_name_from_spec(specs, fn_name, default):
     for module in specs or []:
         for alg in getattr(module, 'algorithms', None) or []:
@@ -914,6 +1016,26 @@ def build_diff_config(
             ))
             used_signatures.append(by_name[_cs["init"][0]])
             used_signatures.append(by_name[_gen_name])
+    _hs = classify_hash_sequence(by_name, _structs)
+    if _hs is not None:
+        _fin = _hs["final"][0]
+        _hret = struct_lift.c_scalar_to_rust(_hs["ret_ctype"]) or _hs["prim"]
+        _typedef_overrides[_hs["struct"]] = _hs["prim"]
+        harnesses.append(AlgorithmHarness(
+            algorithm=_fin,
+            category="hash_seq",
+            rust_call=f"rust_{_fin}(data.clone())",
+            c_call=f"c_{_fin}(data)",
+            cases=2000,
+            input_strategy="prop::collection::vec(any::<u8>(), 0..128)",
+            state_rust=_hs["prim"],
+            seq_init=_hs["init"][0],
+            seq_gen=_hs["update"][0],
+            hash_ret=_hret,
+        ))
+        used_signatures.append(by_name[_hs["init"][0]])
+        used_signatures.append(by_name[_hs["update"][0]])
+        used_signatures.append(by_name[_fin])
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             # The C signature shape is the real gate — a scalar-returning
@@ -929,6 +1051,8 @@ def build_diff_config(
             if _cs is not None and alg.name in (_cs['init'][0], _cs['gen'][0]):
                 continue
             if _as is not None and alg.name in (_as['init'][0], _as['op'][0]):
+                continue
+            if _hs is not None and alg.name in (_hs['init'][0], _hs['update'][0], _hs['final'][0]):
                 continue
             _mut = classify_scalar_mutator_shape(sig, _structs)
             if _mut is not None:
@@ -1152,6 +1276,17 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 for alg in getattr(module, "algorithms", None) or []:
                     if alg.name in _byfn and _byfn[alg.name] and not getattr(alg, "test_vectors", None):
                         alg.test_vectors = _byfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _hg = classify_hash_sequence(by_name, _structs)
+        if _hg is not None:
+            _hbyfn = fuzz_hash_sequence_vectors(dll, _hg)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _hbyfn and _hbyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _hbyfn[alg.name]
                         augmented += 1
     except Exception:  # noqa: BLE001
         pass

@@ -50,6 +50,7 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
 | `xorshift` | stateful-prng | scalar-state mutator | ATTEMPT | PASS | PASS | **PASS** ✅ first stateful cold-green (Phase 2) |
 | `rc4` | stateful-cipher | array-struct + sequence | ATTEMPT | PASS | PASS | **PASS** ✅ flagship stateful cipher (Phase 2) |
 | `bump_alloc` | stateful-allocator | pointer-struct + alloc-seq | ATTEMPT | PASS | PASS | **PASS** ✅ pointer-field allocator (Phase 2) |
+| `fnv` | stateful-hash (3-fn lib) | hash-sequence | ATTEMPT | PASS | PASS | **PASS** ✅ first >2-fn library (Phase 2) |
 
 ### Phase 2 progress (2026-07-07)
 - **First stateful function verified cold: `xorshift_next`** — a scalar-state mutator
@@ -78,6 +79,22 @@ undefined behaviour are correctly **REFUSED** — byte-exact-or-refused, no fake
   *(Reliability caveat: the extract is non-deterministic on the `capacity` param count (2 vs 3
   inputs); this run had a consistent 3-input spec. Hardening the extract/spec consistency is a
   follow-up so it's green every run, not most runs.)*
+
+### Phase 2 → whole-library (in progress)
+- **All 3 single-function stateful shapes certified green** with the committed code (re-ran to
+  completion: xorshift, rc4, bump_alloc all OVERALL PASS). A regression was caught + fixed in the
+  process: the spec-name struct-carry emitted a recursive `struct u64` for xorshift's single-scalar
+  state — now skipped (single-scalar structs carry as `&mut <primitive>`, not a struct).
+- **First >2-function stateful library COLD-GREEN: `fnv` (FNV-1a init/update/final).** OVERALL PASS.
+  Two things landed: (1) fixed the extractor **single-scalar state inconsistency**
+  (`fnv_init(&mut FnvState)` vs `fnv_update(&mut u32)`) via `normalize_single_scalar_state`; (2) built
+  the **hash-sequence shape** — classify `init(S*) + update(S*, byte*, int) + final(S*) -> scalar`
+  over a single-scalar state, oracle drives `init; update(data); final()` on fuzzed data → per-fn
+  vectors (init/update observers + composed digest) + a whole-crate differential
+  (`fnv_final_matches_c_reference`, 2000 fuzzed byte-vectors, rust vs compiled C). Model translated
+  faithfully: `fnv_update` = `for &b in data { *s ^= b as u32; *s = s.wrapping_mul(16777619); }`.
+  The 3 functions fill in declaration order (init→update→final), so the composed digest verifies.
+  **4 stateful subjects now green: 3 single-function shapes + 1 real 3-function library.**
 
 ### Phase 1 scorecard
 - **Clean single-function stateless: 5/5 = 100% cold-green** across 5 signature shapes
