@@ -241,6 +241,11 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
             m = struct_ptr.match((sig.params[0][1] or "").strip())
             if not m or m.group(1) not in structs:
                 continue
+            # Single-scalar structs are unwrapped to a bare `&mut <primitive>` (e.g.
+            # xorshift_state -> &mut u64). Do NOT emit a struct — the spec's "type name"
+            # is the primitive itself, and `struct u64 { state: u64 }` shadows + recurses.
+            if single_scalar_field(structs[m.group(1)]) is not None:
+                continue
             rust_name = (alg.inputs[0].rust_type or "").replace("&mut", "").replace("&", "").strip()
             if not rust_name or not (rust_name[0].isalpha() or rust_name[0] == "_"):
                 continue
