@@ -7,6 +7,7 @@ AlgorithmSpec / ModuleSpec for each detected module.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from rich.console import Console
@@ -156,8 +157,19 @@ class SpecExtractor:
             console.print(f"  [yellow]No functions found for {module['name']}[/yellow]")
             return None
 
-        # Skip very small (<5 lines) or very large (>500 lines) functions
-        significant = [f for f in func_data if 5 <= f["lines"] <= 500]
+        # Skip very large (>500 lines). Skip tiny (<5-line) functions ONLY when they are
+        # `static` (internal helpers the model can inline). Keep tiny PUBLIC functions — they
+        # are part of the library's surface (thin API wrappers, small exported ops) and
+        # dropping them silently loses coverage for whole-library translation.
+        def _is_static_fn(f: dict) -> bool:
+            return bool(re.search(
+                r"(?:^|\n)[ \t]*static\b[^\n;{]*\b" + re.escape(f["name"]) + r"\s*\(",
+                f.get("source", "")))
+        significant = [
+            f for f in func_data
+            if (5 <= f["lines"] <= 500)
+            or (0 < f["lines"] < 5 and not _is_static_fn(f))
+        ]
         if not significant:
             significant = func_data[:5]
 
