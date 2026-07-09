@@ -144,13 +144,12 @@ discovery are Phase 3. TRACTOR-parity milestone.
 - [ ] → **Phase 3** **Auto round-trip discovery**: detect encode/decode or compress/decompress
       pairs and generate the round-trip oracle automatically. Deferred — a whole-program concern.
 - [x] **Target: a never-seen small library → unified verified workspace, < 3 human
-      interventions. Measured + published.** `alchemist translate-lib` on fresh `libcrc`
-      (Lammert Bies, MIT), **one command, 0 human touches**: 4/9 modules verified byte-exact
-      (crc32, crc64, crc8, crcsick), assembled into ONE workspace, `cargo build --workspace`
-      + `cargo test --workspace` **PASS**, `workspace_receipt.json` published. The refused 5/9
-      are a documented per-function tail (runtime-table-in-isolation, output-buffer shape,
-      parameterized helper) — the verifier refusing what it can't prove, not faking greens.
-      See `bench/cold_start/RESULTS.md` §"Phase 2 EXIT".
+      interventions. Measured + published — HIT AT 9/9.** `alchemist translate-lib` on fresh
+      `libcrc` (Lammert Bies, MIT), **one command, 0 human touches**: **ALL 9/9 modules verified
+      byte-exact** (crc16, crc32, crc64, crc8, crcccitt, crcdnp, crckrmit, crcsick, nmea),
+      assembled into ONE 14-crate workspace, `cargo build --workspace` + `cargo test --workspace`
+      **PASS**, **0 `unsafe`**, `workspace_receipt.json` published. Every green is byte-exact vs the
+      module's own compiled C — nothing faked. See `bench/cold_start/RESULTS.md` §"Phase 2 EXIT".
 
 ## PHASE 3 — Whole program / multi-file / real projects
 - [ ] Multi-file / multi-module dependency graph → crate/workspace layout automatically.

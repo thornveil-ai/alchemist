@@ -78,21 +78,28 @@ then **assembles the modules that verified byte-exact into a single cargo worksp
 type model and proves the whole tree builds + tests **together**:
 
 ```
-Library result: 4/9 modules verified   (crc32, crc64, crc8, crcsick — each byte-exact vs its compiled C)
+Library result: 9/9 modules verified   (crc16 crc32 crc64 crc8 crcccitt crcdnp crckrmit crcsick nmea — each byte-exact vs its compiled C)
 Assembling verified modules into one unified workspace…
-  members: crc32-core, crc64-core, crc64-impl, crc8-core, crcsick-core
+  members: crc16-algos, crc16-core, crc32-core, crc64-algo, crc64-core, crc8-core,
+           crcccitt, crcccitt-core, crcdnp-core, crcdnp-traits, crckrmit-core,
+           crckrmit-traits, crcsick-core, nmea-checksum   (14 crates)
   cargo build --workspace: PASS   cargo test --workspace: PASS
 ```
 
-`workspace_receipt.json`: `{modules_verified: 4/9, cargo_build_workspace: true, cargo_test_workspace:
-true, human_touches: 0}`. This is the Phase-2 deliverable: a real never-seen stateful library →
-**one** verified Rust workspace, autonomously, with the verifier **refusing** (not faking) the modules
-it can't prove byte-exact. The refused tail is per-function and documented (runtime-table-in-isolation
-update helpers `crc16`/`crcdnp`, a runtime-table init stub `crckrmit`, the parameterized `crcccitt`
-generic, and `nmea`'s output-buffer shape) — narrow, not systemic. New machinery:
-`workspace_assembler` (identical shared items hoisted to a `<lib>-types` crate; name-conflicting
-defs left module-local, never merged) + the principle that a **compiled-C byte-exact differential is
-authoritative over any heuristic lint** (ended the recurring `lint_crc32` false-refusal).
+`workspace_receipt.json`: `{modules_verified: 9/9, cargo_build_workspace: true, cargo_test_workspace:
+true, human_touches: 0}`, **0 `unsafe`** across the whole workspace. This is the Phase-2 deliverable
+at 100%: a real never-seen stateful library → **one** verified Rust workspace of 14 crates,
+autonomously, every module byte-exact vs its own compiled C. The climb from the first cold run
+(4/9, partial) to 9/9 drove a batch of general fixes, each of which makes the pipeline better on ANY
+library: **compiled-C byte-exact differential is authoritative over any heuristic lint** (ended the
+`lint_crc32` false-refusal → crc32); **callee-context fed to the fill** so a standalone updater sees
+the shared table's init and reproduces it (crc16/crcdnp); **static helpers inlined into callers**
+(crc_ccitt_generic → crcccitt; init tables → crckrmit); a **C-string-in → buffer-out shape** (nmea);
+module-name identifier sanitization (`nmea-chk`→`nmea_chk`); dropping the architect's trait/error
+**over-design for infallible modules**; and normalizing the model's filled fn name to the skeleton's
+(`checksum_NMEA`→`checksum_nmea`). New assembly machinery: `workspace_assembler` (identical shared
+items hoisted to a `<lib>-types` crate; name-conflicting defs left module-local, never merged;
+multi-crate module outputs carried whole).
 
 **libcrc per-module scorecard (2026-07-08), driven via `translate-lib`:**
 | module | shape | result |
