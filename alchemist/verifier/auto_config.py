@@ -390,6 +390,59 @@ def fuzz_digest_vectors(dll, alg, sig, *, count: int = 20):
     return vectors
 
 
+def fuzz_digest_catalog_vectors(dll, alg, sig):
+    """Return the standards-catalog KATs (NIST CAVP / FIPS) for a digest fn — but ONLY after
+    VALIDATING each against the subject's OWN compiled-C oracle: run the C on the KAT input and
+    require its digest == the KAT's expected. This is the safe canonical-vs-variant gate:
+      * a genuine SHA-256's C reproduces the FIPS-180 KATs  -> emit them, so the Rust must match
+        the STANDARD (not merely == this C) — the second, independent proof for Phase 2.5;
+      * a VARIANT's C won't reproduce them -> emit NONE (never assert a canonical KAT on a
+        variant, the exact false-refusal the auto-oracle path guards against).
+    If ANY KAT disagrees with the oracle the whole set is dropped (fail-safe)."""
+    from alchemist.extractor.fuzz_vectors import _bytes_to_rust_literal
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    from alchemist.standards import lookup_test_vectors
+    desc = classify_digest_shape(sig)
+    if desc is None:
+        return []
+    try:
+        kats = lookup_test_vectors(alg.name)
+    except Exception:  # noqa: BLE001
+        return []
+    kats = [k for k in kats if k.input_hex is not None and k.expected_hex]
+    if not kats:
+        return []
+    binding = _digest_binding(sig, desc)
+    fn = binding.load(dll)
+    slice_params = [p for p in (alg.inputs or [])
+                    if "[u8]" in (p.rust_type or "") or "Vec<u8>" in (p.rust_type or "")]
+    if not slice_params:
+        return []
+    msg_param = slice_params[0].name
+    _ret = (getattr(alg, "return_type", "") or "").strip()
+    out = []
+    for kat in kats:
+        exp = kat.expected_bytes
+        if len(exp) != desc.digest_len:
+            return []  # catalog width != this fn's digest width -> not our algorithm
+        try:
+            got = bytes(binding.adapter(fn, kat.input_bytes))
+        except Exception:  # noqa: BLE001
+            return []
+        if got != exp:
+            return []  # compiled C does NOT match the standard KAT -> not canonical -> emit none
+        digest_lit = "vec![" + ", ".join(f"0x{b:02x}" for b in exp) + "]"
+        expected = f"Ok({digest_lit})" if _ret.startswith("Result<") else digest_lit
+        out.append(SpecTestVector(
+            description=f"CAVP_{kat.name}",
+            source=f"NIST/FIPS catalog (oracle-validated canonical): {alg.name} {kat.name}",
+            inputs={msg_param: _bytes_to_rust_literal(kat.input_bytes)},
+            expected_output=expected,
+            tolerance="exact",
+        ))
+    return out
+
+
 def classify_scalar_shape(sig) -> str | None:
     """All-scalar signature: every param is an int/char scalar and the return is a scalar.
     e.g. isqrt(unsigned)->unsigned, popcount(unsigned long)->int,
@@ -1437,6 +1490,9 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 vecs = fuzz_checksum_vectors(dll, alg, sig)
             elif classify_digest_shape(sig) is not None:
                 vecs = fuzz_digest_vectors(dll, alg, sig)
+                # Second, independent proof: attach the NIST/FIPS catalog KATs, but only the
+                # ones the subject's compiled C actually reproduces (canonical, not a variant).
+                vecs = list(vecs) + fuzz_digest_catalog_vectors(dll, alg, sig)
             elif classify_scalar_shape(sig) is not None:
                 vecs = fuzz_scalar_vectors(dll, alg, sig)
             elif classify_inplace_shape(sig) is not None:
