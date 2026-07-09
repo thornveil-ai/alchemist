@@ -143,9 +143,14 @@ discovery are Phase 3. TRACTOR-parity milestone.
       (already *demonstrated* by hand on the zlib inflate state machine).
 - [ ] → **Phase 3** **Auto round-trip discovery**: detect encode/decode or compress/decompress
       pairs and generate the round-trip oracle automatically. Deferred — a whole-program concern.
-- [ ] **Target: a never-seen small library → unified verified workspace, < 3 human
-      interventions.** Measure and publish. *(Machinery complete + locally cargo-verified;
-      awaiting the live libcrc capstone run on the model box for the published touch-count.)*
+- [x] **Target: a never-seen small library → unified verified workspace, < 3 human
+      interventions. Measured + published.** `alchemist translate-lib` on fresh `libcrc`
+      (Lammert Bies, MIT), **one command, 0 human touches**: 4/9 modules verified byte-exact
+      (crc32, crc64, crc8, crcsick), assembled into ONE workspace, `cargo build --workspace`
+      + `cargo test --workspace` **PASS**, `workspace_receipt.json` published. The refused 5/9
+      are a documented per-function tail (runtime-table-in-isolation, output-buffer shape,
+      parameterized helper) — the verifier refusing what it can't prove, not faking greens.
+      See `bench/cold_start/RESULTS.md` §"Phase 2 EXIT".
 
 ## PHASE 3 — Whole program / multi-file / real projects
 - [ ] Multi-file / multi-module dependency graph → crate/workspace layout automatically.

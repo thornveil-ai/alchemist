@@ -70,6 +70,30 @@ build-time-generated CRC lookup table, so no manual build is needed — proven e
 stage (it can't design 11 interdependent modules at once). Solved with **per-module orchestration**
 (`translate-lib`, concurrent) + a batch of fill-quality fixes.
 
+### Phase 2 EXIT (2026-07-08): never-seen library → ONE unified verified workspace, 0 human touches
+The TRACTOR-parity milestone. `alchemist translate-lib /path/to/libcrc` — **one command, zero human
+touches** — fetches nothing hand-written: it runs the library's own build, discovers the 9 real
+`src/*.c` modules (build-tool dirs like `precalc/` excluded), translates each module concurrently,
+then **assembles the modules that verified byte-exact into a single cargo workspace** with a shared
+type model and proves the whole tree builds + tests **together**:
+
+```
+Library result: 4/9 modules verified   (crc32, crc64, crc8, crcsick — each byte-exact vs its compiled C)
+Assembling verified modules into one unified workspace…
+  members: crc32-core, crc64-core, crc64-impl, crc8-core, crcsick-core
+  cargo build --workspace: PASS   cargo test --workspace: PASS
+```
+
+`workspace_receipt.json`: `{modules_verified: 4/9, cargo_build_workspace: true, cargo_test_workspace:
+true, human_touches: 0}`. This is the Phase-2 deliverable: a real never-seen stateful library →
+**one** verified Rust workspace, autonomously, with the verifier **refusing** (not faking) the modules
+it can't prove byte-exact. The refused tail is per-function and documented (runtime-table-in-isolation
+update helpers `crc16`/`crcdnp`, a runtime-table init stub `crckrmit`, the parameterized `crcccitt`
+generic, and `nmea`'s output-buffer shape) — narrow, not systemic. New machinery:
+`workspace_assembler` (identical shared items hoisted to a `<lib>-types` crate; name-conflicting
+defs left module-local, never merged) + the principle that a **compiled-C byte-exact differential is
+authoritative over any heuristic lint** (ended the recurring `lint_crc32` false-refusal).
+
 **libcrc per-module scorecard (2026-07-08), driven via `translate-lib`:**
 | module | shape | result |
 |---|---|---|
