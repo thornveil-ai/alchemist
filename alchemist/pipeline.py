@@ -595,6 +595,52 @@ def run_implement_stage(
             console.print(f"[cyan]crate-layout: dropped {_drop} unfilled wrapper/builder skeleton(s)[/cyan]")
     except Exception:  # noqa: BLE001
         pass
+    # Architect sometimes gives an error variant a payload of an UNDEFINED type — e.g.
+    # `NmeaError::CoreError(ChecksumError)` where ChecksumError is never defined -> E0425 and
+    # the whole crate fails to compile. Strip variant fields that name a bare type nothing
+    # defines (not another error type, not a primitive/std path); a variant left with no
+    # fields is a valid unit variant. These enums are usually dead (the fn returns a plain
+    # value), so this only removes a dangling reference, never real behaviour.
+    try:
+        import re as _re
+        _defined = {e.name for e in arch.error_types} | {
+            s.name for s in (getattr(arch, "shared_types", None) or [])}
+        _prims = {
+            "String", "str", "Vec", "Box", "u8", "u16", "u32", "u64", "u128", "usize",
+            "i8", "i16", "i32", "i64", "i128", "isize", "bool", "char", "f32", "f64", "()",
+        }
+
+        def _resolvable(f: str) -> bool:
+            base = _re.split(r"[<&\s(]", f.strip(), 1)[0].strip()
+            return (not base) or ("::" in base) or (base in _defined) or (base in _prims)
+        _stripped = 0
+        for _e in arch.error_types:
+            for _v in _e.variants:
+                _keep = [f for f in _v.fields if _resolvable(f)]
+                if len(_keep) != len(_v.fields):
+                    _stripped += len(_v.fields) - len(_keep)
+                    _v.fields = _keep
+        if _stripped:
+            console.print(f"[cyan]crate-layout: stripped {_stripped} error-variant field(s) of undefined types[/cyan]")
+    except Exception:  # noqa: BLE001
+        pass
+    # Architect over-designs an INFALLIBLE module (every spec fn returns a plain value) into a
+    # fallible trait/error hierarchy — `trait X { fn ..->Result<_, Self::Error> }`, a nested
+    # error enum across crates — that nothing fills and that breaks the build differently each
+    # run (undefined Self::Error, cross-crate error refs, malformed method sigs). If NO function
+    # in the spec is fallible, drop the invented traits + error types so the crate is just the
+    # verified free functions. Fallible modules (rc4's Result<_, Rc4Error>) keep their design.
+    try:
+        _rets = [(getattr(al, "return_type", "") or "")
+                 for m in specs for al in (getattr(m, "algorithms", None) or [])]
+        _fallible = any(("Result" in r) or ("Error" in r) for r in _rets)
+        if _rets and not _fallible and (arch.traits or arch.error_types):
+            _n = len(arch.traits) + len(arch.error_types)
+            arch.traits = []
+            arch.error_types = []
+            console.print(f"[cyan]crate-layout: dropped {_n} trait/error over-design(s) for an infallible module[/cyan]")
+    except Exception:  # noqa: BLE001
+        pass
 
     # Field scanner: pre-populate shared-type field schemas.
     # The scanner's output is available to the TDD generator via the

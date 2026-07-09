@@ -35,7 +35,7 @@ VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
-    "cipher_seq", "alloc_seq", "hash_seq"}
+    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out"}
 
 
 @dataclass
@@ -231,6 +231,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
         return _proptest_hash_seq_block(h)
+    if h.category == "cbuf_out":
+        return _proptest_cbuf_out_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -274,6 +276,25 @@ def _boundary_block(h: AlgorithmHarness) -> str:
                 let c_out = {h.c_call};
                 assert_eq!(rust_out, c_out,
                     "{h.algorithm} diverged from C reference at boundary length {{}}", len);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_cbuf_out_block(h: AlgorithmHarness) -> str:
+    """Differential for a C-string-in -> result-string-out fn (NMEA): fuzz a printable
+    ASCII string (no interior NUL — CString rejects it) that exercises the '$' start marker
+    and the '*'/CR/LF terminators, and compare the two result strings."""
+    strategy = h.input_strategy or r'"[A-Za-z0-9,.$*\r\n-]{0,40}"'
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+                let rust_out = {h.rust_call};
+                let c_out = {h.c_call};
+                prop_assert_eq!(rust_out, c_out);
             }}
         }}
     """).rstrip()

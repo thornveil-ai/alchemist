@@ -268,6 +268,13 @@ def _resolve_checksum_c(
 
 def _pick_unambiguous(name: str, api: dict[str, list[RustFn]]) -> RustFn | None:
     defs = api.get(name) or []
+    if not defs:
+        # The C symbol may carry non-snake casing (`checksum_NMEA`) while the generated
+        # Rust fn is snake_cased (`checksum_nmea`). Retry against the snake form.
+        from alchemist.implementer.skeleton import _snake
+        snaked = _snake(name)
+        if snaked != name:
+            defs = api.get(snaked) or []
     if len(defs) > 1:
         crates = ", ".join(sorted(d.crate for d in defs))
         raise AdapterError(
@@ -511,6 +518,45 @@ def plan_adapters(
                     c_wrapper=c_wrapper,
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name}",
+                ))
+            elif h.category == "cbuf_out":
+                # C-string in -> result-string out (NMEA): Rust fn is `(&str) -> String`;
+                # the C side calls the raw extern into an out-buffer and reads the string back.
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of cbuf_out '{h.algorithm}': not found")
+                path = f"{fn.crate_ident}::{fn.name}"
+                call = f"{path}(input)"
+                if fn.ret.startswith("Result<"):
+                    call = f"({call}).unwrap_or_default()"
+                if "Vec" in fn.ret or "[u8" in fn.ret:
+                    norm = f"String::from_utf8_lossy(&{{ let r = {call}; r }}).into_owned()"
+                else:
+                    norm = f"({call}).to_string()"
+                rust_wrapper = (
+                    f"/// String result of {fn.crate}::{fn.name} (buffer-writing string fn).\n"
+                    f"pub fn rust_{h.algorithm}(input: &str) -> String {{\n"
+                    f"    {norm}\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(input: &str) -> String {{\n"
+                    f"    let cin = match std::ffi::CString::new(input) "
+                    f"{{ Ok(c) => c, Err(_) => return String::new() }};\n"
+                    f"    let mut out = [0u8; 64];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}("
+                    f"cin.as_ptr() as _, out.as_mut_ptr() as _); }}\n"
+                    f"    let n = out.iter().position(|&b| b == 0).unwrap_or(out.len());\n"
+                    f"    String::from_utf8_lossy(&out[..n]).into_owned()\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (cbuf_out)",
                 ))
             elif h.category == "inplace":
                 fn = _pick_unambiguous(h.algorithm, api)

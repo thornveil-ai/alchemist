@@ -557,6 +557,21 @@ def _emit_hash_final_test(fn_name: str, vec, idx: int) -> str:
     return "".join(lines)
 
 
+def _emit_str_exact_test(fn_name: str, vec, idx: int, return_type: str | None = None) -> str:
+    """String-in -> string-out vector (NMEA cbuf_out): inputs + expected are already Rust
+    `&str` literals, so splice them directly and assert equality against the returned String.
+    Tolerates a `Result<String, _>` return (the architect sometimes wraps an infallible fn)
+    by unwrapping — the fuzz inputs are always valid, so Ok is expected."""
+    args = ", ".join(str(v) for v in vec.inputs.values())
+    unwrap = ".unwrap_or_default()" if "Result<" in (return_type or "") else ""
+    return (
+        f"    #[test]\n    fn test_{fn_name}_str_{idx}() {{\n"
+        f"        let got = super::{fn_name}({args}){unwrap};\n"
+        f"        assert_eq!(got, {vec.expected_output}, \"{_msg(vec.description or f'vector {idx}')}\");\n"
+        f"    }}\n"
+    )
+
+
 def _emit_byte_transform_test(
     fn_name: str, vec: SpecTestVector, idx: int,
 ) -> str:
@@ -706,6 +721,8 @@ def _emit_spec_test(
         return _emit_hash_final_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("byte_transform"):
         return _emit_byte_transform_test(fn_name, vec, idx)
+    if vec.tolerance == "str_exact":
+        return _emit_str_exact_test(fn_name, vec, idx, return_type)
     test_name = f"test_{fn_name}_spec_{idx}"
     lines = [f"    #[test]\n    fn {test_name}() {{\n"]
     # Sanitize parameter names the same way the skeleton does, so a C param

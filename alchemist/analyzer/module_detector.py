@@ -7,6 +7,7 @@ glue / platform / api.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -86,7 +87,13 @@ class ModuleDetector:
         if not functions:
             return None
 
-        filename = Path(filepath).stem.lower()
+        # Module name is used verbatim as a Rust module identifier (`pub mod X;` + `X.rs`),
+        # so it must be a valid identifier. A C file like `nmea-chk.c` would otherwise emit
+        # `pub mod nmea-chk;` — a compile error. Sanitize non-ident chars to '_' (the C file
+        # path itself is preserved separately in "files", so the source is still found).
+        filename = re.sub(r"[^a-z0-9_]", "_", Path(filepath).stem.lower())
+        if filename and filename[0].isdigit():
+            filename = "_" + filename
         func_names = [f["name"] for f in functions]
 
         # Classify each function using pattern matching

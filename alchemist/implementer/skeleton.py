@@ -660,6 +660,19 @@ def _lib_rs_for(
                             rust_crate = dep_crate.replace("-", "_")
                             lines.append(f"pub use {rust_crate}::{type_name};")
                             imported.add(type_name)
+            # An error enum in THIS crate can wrap an error type from a dependency crate
+            # (e.g. `NmeaError::Core(ChecksumError)` where ChecksumError lives in *-core).
+            # That variant reference needs the same cross-crate import, or E0425.
+            referenced_in_variants: set[str] = set()
+            for e in errors:
+                for v in e.variants:
+                    for f in v.fields:
+                        referenced_in_variants.add(re.split(r"[<&\s(]", f.strip(), 1)[0].strip())
+            for type_name, dep_crate in dep_type_names.items():
+                if type_name in referenced_in_variants and type_name not in imported:
+                    rust_crate = dep_crate.replace("-", "_")
+                    lines.append(f"pub use {rust_crate}::{type_name};")
+                    imported.add(type_name)
         if imported:
             lines.append("")
     # Trait definitions

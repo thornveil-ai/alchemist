@@ -503,6 +503,93 @@ def fuzz_inplace_vectors(dll, alg, sig, *, count: int = 24):
     return vectors
 
 
+def classify_cbuf_out(sig) -> str | None:
+    """C `<byteptr> f(const <byteptr> in, <byteptr> out)` — reads a NUL/delimiter-terminated
+    input string and writes a result STRING into a caller-provided output buffer, returning
+    the buffer. The extractor lifts it to `fn(input: &str) -> String`. (NMEA checksum:
+    `checksum_NMEA(const unsigned char *input_str, unsigned char *result) -> unsigned char*`.)"""
+    if not _BYTE_PTR.match((sig.return_type or "").strip()):
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if (len(params) == 2 and _BYTE_PTR.match(params[0])
+            and params[0].startswith("const") and _MUT_BYTE_PTR_LOOSE.match(params[1])):
+        return "cbuf_out"
+    return None
+
+
+def _rust_str_lit(s: str) -> str:
+    """A Rust `&str` literal for an ASCII string. Escapes backslash, quote and control
+    characters (CR/LF/TAB and other non-printables) — a bare CR/LF in a Rust string literal
+    is a compile error, and the NMEA fuzzer deliberately emits '\\r'/'\\n' terminators."""
+    out = []
+    for ch in s:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif 32 <= o < 127:
+            out.append(ch)
+        else:
+            out.append(f"\\x{o:02x}")
+    return '"' + "".join(out) + '"'
+
+
+def fuzz_cbuf_out_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint fill-loop vectors for a cbuf_out fn: run the compiled C on a fuzzed input string,
+    read the result STRING back out of the caller buffer. Emits `&str -> String` vectors with
+    a `str_exact` tolerance the test-generator compares with assert_eq!."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if classify_cbuf_out(sig) is None:
+        return []
+    str_param = next((p for p in (alg.inputs or [])
+                      if "str" in (p.rust_type or "").lower() or "[u8]" in (p.rust_type or "")),
+                     None)
+    if str_param is None:
+        return []
+    fn = getattr(dll, sig.name)
+    fn.restype = ctypes.c_void_p
+    fn.argtypes = (ctypes.c_char_p, ctypes.POINTER(ctypes.c_ubyte))
+    rng = _rng(_FUZZ_SEED)
+    # NMEA-ish inputs: printable ASCII incl. the '$' start marker and '*'/CR/LF terminators
+    # the algorithm keys off, so the fuzz exercises the delimiter handling.
+    alphabet = [ord(c) for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-$*"] + [13, 10]
+    seen: set[bytes] = set()
+    vectors = []
+    tries = 0
+    while len(vectors) < count and tries < count * 12:
+        tries += 1
+        n = rng.randint(0, 24)
+        s = bytes(alphabet[rng.randint(0, len(alphabet) - 1)] for _ in range(n))
+        if b"\x00" in s or s in seen:
+            continue
+        seen.add(s)
+        out = (ctypes.c_ubyte * 16)()
+        try:
+            fn(s, out)
+        except Exception:  # noqa: BLE001
+            continue
+        ob = bytes(out[i] for i in range(16))
+        res = ob.split(b"\x00", 1)[0].decode("ascii", "replace")
+        inp = s.decode("ascii", "replace")
+        vectors.append(SpecTestVector(
+            description=f"nmea_len_{n}",
+            source=f"C reference (cbuf_out): {sig.name}",
+            inputs={str_param.name: _rust_str_lit(inp)},
+            expected_output=_rust_str_lit(res),
+            tolerance="str_exact",
+        ))
+    return vectors
+
+
 def normalize_byte_buffer_types(c_source_dir, specs) -> int:
     """Force `&[u8]` for any spec input whose C type is a char*/byte pointer that comes
     with a length parameter. Such params are byte BUFFERS, not C strings; lifting them to
@@ -1138,6 +1225,18 @@ def build_diff_config(
                 ))
                 used_signatures.append(sig)
                 continue
+            if classify_cbuf_out(sig) is not None:
+                # C-string in -> result-string out (NMEA). The differential fuzzes an input
+                # string and compares the two result strings.
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="cbuf_out",
+                    rust_call=f"rust_{alg.name}(&input)",
+                    c_call=f"c_{alg.name}(&input)",
+                    cases=4000,
+                ))
+                used_signatures.append(sig)
+                continue
             shape = classify_checksum_shape(sig)
             if shape is not None:
                 boundaries = (_ADLER_BOUNDARIES if "adler" in alg.name.lower()
@@ -1279,6 +1378,8 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 vecs = fuzz_scalar_vectors(dll, alg, sig)
             elif classify_inplace_shape(sig) is not None:
                 vecs = fuzz_inplace_vectors(dll, alg, sig)
+            elif classify_cbuf_out(sig) is not None:
+                vecs = fuzz_cbuf_out_vectors(dll, alg, sig)
             elif (_mi := classify_scalar_mutator_shape(sig, _structs)) is not None:
                 vecs = fuzz_scalar_mutator_vectors(dll, alg, sig, _mi)
             else:

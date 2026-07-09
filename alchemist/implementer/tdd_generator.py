@@ -1158,6 +1158,7 @@ class TDDGenerator:
             # `content` ends up being a JSON string describing the schema,
             # not the Rust code. Detect and drill in.
             content = _unwrap_llm_schema_leak(content)
+            content = _normalize_filled_fn_name(content, alg.name)
             return content or None
         # Fallback: raw text
         raw = (resp.content or "").strip()
@@ -1165,6 +1166,7 @@ class TDDGenerator:
             raw = re.sub(r"^```(?:\w+)?\s*", "", raw)
             raw = re.sub(r"```\s*$", "", raw)
         raw = _unwrap_llm_schema_leak(raw)
+        raw = _normalize_filled_fn_name(raw, alg.name)
         return raw or None
 
     def _multi_sample_attempt(
@@ -2246,6 +2248,26 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
 
 def _top_lines(text: str, n: int) -> str:
     return "\n".join((text or "").splitlines()[:n])
+
+
+def _normalize_filled_fn_name(code: str, spec_name: str) -> str:
+    """Rename the model's filled function to the skeleton's snake_case name.
+
+    Fed the C source, the model faithfully keeps the C name's casing (e.g.
+    `checksum_NMEA`), but the skeleton + generated tests use the snake_case form
+    (`checksum_nmea`) — so the tests call a function that doesn't exist and fail.
+    Rename `pub fn <X>` to the expected snake name when X maps to the same snake
+    form (case/style-only difference); never touches a genuinely different name."""
+    if not code:
+        return code
+    from alchemist.implementer.skeleton import _snake
+    want = _snake(spec_name)
+    for m in re.finditer(r"\bpub\s+fn\s+([A-Za-z_]\w*)", code):
+        got = m.group(1)
+        if got != want and (got == spec_name or _snake(got) == want):
+            code = re.sub(r"\bfn\s+" + re.escape(got) + r"\b", f"fn {want}", code)
+            break
+    return code
 
 
 def _unwrap_llm_schema_leak(s: str) -> str:
