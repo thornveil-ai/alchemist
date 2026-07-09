@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
-[![tests](https://img.shields.io/badge/tests-693%20passing-success.svg)](#testing)
+[![tests](https://img.shields.io/badge/tests-655%20passing-success.svg)](#testing)
 [![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
 
@@ -273,7 +273,7 @@ docs/
 ├── phase_d_playbook.md           how to declare a translation "verified correct"
 └── troubleshooting.md            every failure mode we've seen
 
-tests/                            693 passing / 7 skipped
+tests/                            655 passing / 7 skipped
 .github/workflows/                CI across Ubuntu + Windows, py3.11 + 3.12
 ```
 
@@ -433,7 +433,7 @@ Pull requests welcome. Before submitting:
 
 1. `alchemist doctor` must print OK across the board.
 2. `pytest tests/ --ignore=tests/test_local_llm.py` must pass.
-3. New features need a test. The 693-test suite is the floor.
+3. New features need a test. A green `pytest` run is the floor.
 4. The scrubber has 30 rules, each with a regression fixture in `tests/test_scrubber.py`. New scrubber rules follow the same pattern.
 5. Domain plugins live in `alchemist/plugins/` with sibling tests in `tests/test_plugins.py`.
 

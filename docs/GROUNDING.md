@@ -41,7 +41,7 @@ re-implementation* of the shipping pipeline, and toward pure byte-exact-copy-the
 | Multi-sample fill | `implementer/multi_sample.py` | `fill_quality.py::best_of_n` |
 | Decomposition | `implementer/decomposed.py` | `decompose.py` |
 | Mechanical fixes | `implementer/scrubber.py` (30 rules) | `mechanical.py`, `borrow_fix.py`, `type_fix.py` |
-| No-unsafe / safety | `implementer/unsafe_fence.py` + verifier gate | `provenance.py::safety_audit` |
+| No-unsafe / safety | skeleton emits `#![forbid(unsafe_code)]` (compiler-enforced) + `verifier/differential_tester.py::gate_no_unsafe` | `provenance.py::safety_audit` |
 | Receipts | `verifier/receipt.py` (richer, HMAC) | `provenance.py` receipt |
 | FFI | `verifier/auto_ffi.py` | `ffi_migrate.py` |
 | C→safe-Rust transliteration | `implementer/reference_probe.py` | `safeify.py` (c2rust framing) |
