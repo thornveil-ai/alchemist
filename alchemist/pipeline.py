@@ -661,6 +661,18 @@ def run_implement_stage(
             console.print(f"[cyan]type-lift: {_nb} char*+len param(s) -> &[u8] (byte buffer, not &str)[/cyan]")
     except Exception as _e:  # noqa: BLE001
         console.print(f"[yellow]byte-buffer type-lift skipped: {_e}[/yellow]")
+    # Digest-shape spec normalization (SipHash/SHA family): the generic lifter turns
+    # `int f(const in*, inlen, out*, outlen)` into `f(&[u8], &mut [u8]) -> Result<(), E>`,
+    # which mismatches the digest differential adapter AND (being fallible) invites the
+    # architect to wrap a one-shot hash in a Hasher trait + error hierarchy. Rewrite it to
+    # the shape the digest oracle expects: `f(data: &[u8]) -> Vec<u8>` (RETURNS the digest).
+    try:
+        from alchemist.verifier.auto_config import normalize_digest_specs
+        _nd = normalize_digest_specs(source, specs)
+        if _nd:
+            console.print(f"[cyan]digest-lift: {_nd} hash fn(s) -> `fn(&[u8]) -> Vec<u8>` (returns the digest)[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]digest type-lift skipped: {_e}[/yellow]")
     # Struct-carry (Phase 2): emit the safe state struct into the crate so stateful code
     # compiles cold (kills "cannot find type Rc4State"); C struct is the source of truth.
     # First make single-scalar state consistent across functions — the extractor sometimes

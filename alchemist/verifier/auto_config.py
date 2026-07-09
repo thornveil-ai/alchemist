@@ -137,24 +137,48 @@ class DigestShape:
     digest_len: int
 
 
+# Known fixed digest sizes (bytes) by algorithm family — a hash writes a FIXED number of
+# bytes regardless of the caller's outlen, so the oracle must bake the right size or it
+# truncates (SipHash 8, SHA-256 32, ...). Inferred from the C function name.
+_DIGEST_LENS = {
+    "sha512_256": 32, "sha512_224": 28, "sha224": 28, "sha256": 32, "sha384": 48,
+    "sha512": 64, "sha1": 20, "sha3_256": 32, "sha3_512": 64, "md5": 16, "blake2s": 32,
+    "blake2b": 64, "siphash": 8,
+}
+
+
+def _digest_len_for(name: str) -> int:
+    """Fixed digest length in bytes for a known hash, else the default. Matches the longest
+    family key first (sha512_256 before sha512), then falls back to an embedded bit width."""
+    n = (name or "").lower()
+    for key in sorted(_DIGEST_LENS, key=len, reverse=True):
+        if key in n:
+            return _DIGEST_LENS[key]
+    m = re.search(r"(128|160|224|256|384|512)", n)
+    if m:
+        return int(m.group(1)) // 8
+    return _DEFAULT_DIGEST_LEN
+
+
 def classify_digest_shape(sig: CSignature) -> "DigestShape | None":
     """Recognize a byte-digest hash (SipHash / SHA / HMAC family)."""
     if (sig.return_type or "").strip() != "int":
         return None
     types = [t.strip() for _, t in sig.params]
+    dlen = _digest_len_for(sig.name)
     # Unkeyed: (const in*, inlen, mut out*, outlen)
     if (len(types) == 4 and _CONST_IN_PTR.match(types[0]) and _SIZE_T.match(types[1])
             and _MUT_BYTE_PTR.match(types[2]) and _SIZE_T.match(types[3])):
         return DigestShape(in_idx=0, inlen_idx=1, out_idx=2, outlen_idx=3,
                            key_idx=None, key_len=0,
-                           digest_len=_DEFAULT_DIGEST_LEN)
+                           digest_len=dlen)
     # Keyed: (const in*, inlen, const key*, mut out*, outlen)
     if (len(types) == 5 and _CONST_IN_PTR.match(types[0]) and _SIZE_T.match(types[1])
             and _CONST_IN_PTR.match(types[2]) and _MUT_BYTE_PTR.match(types[3])
             and _SIZE_T.match(types[4])):
         return DigestShape(in_idx=0, inlen_idx=1, out_idx=3, outlen_idx=4,
                            key_idx=2, key_len=_DEFAULT_KEY_LEN,
-                           digest_len=_DEFAULT_DIGEST_LEN)
+                           digest_len=dlen)
     return None
 
 
@@ -350,11 +374,17 @@ def fuzz_digest_vectors(dll, alg, sig, *, count: int = 20):
         if outlen_param:
             row[outlen_param] = f"{desc.digest_len}usize"
         digest_lit = "vec![" + ", ".join(f"0x{b:02x}" for b in digest) + "]"
+        # Match the generated fn's return shape: a normalized digest fn returns a bare
+        # `Vec<u8>` (see normalize_digest_specs); a Result-returning one needs `Ok(...)`.
+        # Emitting `Ok(...)` against a bare-Vec return is a hard type-mismatch compile error
+        # that no model fill can ever satisfy.
+        _ret = (getattr(alg, "return_type", "") or "")
+        expected = f"Ok({digest_lit})" if _ret.strip().startswith("Result<") else digest_lit
         vectors.append(SpecTestVector(
             description=f"fuzz_input_len_{len(data)}",
             source=f"C reference (digest): {sig.name}",
             inputs=row,
-            expected_output=f"Ok({digest_lit})",
+            expected_output=expected,
             tolerance="exact",
         ))
     return vectors
@@ -616,6 +646,39 @@ def normalize_byte_buffer_types(c_source_dir, specs) -> int:
                     inp.rust_type = "&[u8]"
                     changed += 1
     return changed
+
+
+def normalize_digest_specs(c_source_dir, specs) -> int:
+    """For a function the C exposes as a byte-digest (`int f(const in*, inlen, [key,] out*,
+    outlen)`, SipHash/SHA family), rewrite the spec so the Rust fn RETURNS the digest:
+    `fn f(data: &[u8]) -> Vec<u8>`. The generic lifter otherwise produces
+    `f(&[u8], &mut [u8]) -> Result<(), E>` (out-param), which mismatches the digest differential
+    adapter (it expects the digest as the return) AND, being fallible, invites the architect to
+    wrap a one-shot hash in a Hasher trait + error hierarchy. Returns the count normalized."""
+    try:
+        sigs = {s.name: s for s in collect_subject_signatures(Path(c_source_dir))}
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = sigs.get(alg.name)
+            if sig is None or classify_digest_shape(sig) is None:
+                continue
+            # Keep the read-only byte-slice input(s) (message [+ key]); drop the mut out buffer
+            # and any length param — the digest length is baked into the oracle.
+            keep = [p for p in (alg.inputs or [])
+                    if "[u8]" in (p.rust_type or "") and "mut" not in (p.rust_type or "")]
+            if not keep:
+                continue
+            alg.inputs = keep
+            try:
+                alg.outputs = []
+            except Exception:  # noqa: BLE001
+                pass
+            alg.return_type = "Vec<u8>"
+            n += 1
+    return n
 
 
 _STRUCT_PTR_RE = re.compile(r"^(?:struct\s+)?([A-Za-z_]\w*)\s*\*$")

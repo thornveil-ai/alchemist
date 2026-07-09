@@ -153,8 +153,13 @@ class ProbeResult:
     notes: str = ""
 
 
+# REQUIRE `static` and/or `const`: that marks a FILE-SCOPE lookup table (`static const
+# uint32_t k[64]`), not a function-LOCAL array initializer (`uint32_t state[8] = {IV}`).
+# Carrying a local as a crate const emits e.g. `pub const state: [u32;8]` which then collides
+# with the function's own `let state` (E0530) and dooms every faithful fill — the SHA-256 IV
+# was exactly this failure. Locals are neither static nor const, so this excludes them.
 _ARRAY_DEF_RE = re.compile(
-    r"(?:^|\n)[ \t]*(?:static\s+)?(?:const\s+)?[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s*"
+    r"(?:^|\n)[ \t]*(?:(?:static|const)\s+)+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s*"
     r"\[[^\]]*\]\s*=\s*\{"
 )
 
