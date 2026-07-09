@@ -151,7 +151,26 @@ discovery are Phase 3. TRACTOR-parity milestone.
       **PASS**, **0 `unsafe`**, `workspace_receipt.json` published. Every green is byte-exact vs the
       module's own compiled C — nothing faked. See `bench/cold_start/RESULTS.md` §"Phase 2 EXIT".
 
+## PHASE 2.5 — Crypto primitive, NIST-CAVP-verified (the credibility gate) ★
+*The single highest-leverage next proof, and the reason libcrc alone isn't enough. libcrc showed
+"small algorithmic library, byte-exact." A CRYPTOGRAPHIC primitive shows it generalizes to the
+algorithms federal buyers actually care about — and NIST CAVP known-answer vectors are the
+recognized bar. CRC byte-exact reads as "neat"; SHA-256 CAVP-green reads as "this is real."
+This is the threshold that turns a research demo into a fundable capability (ROADMAP M14).*
+- [ ] **SHA-256 (or AES-CBC) cold → safe Rust, verified TWO ways: byte-exact vs the compiled-C
+      oracle (any input) AND against the NIST CAVP vectors (the standard's own KATs).** Both gates
+      must pass — the differential proves it matches this C; CAVP proves this C matches the spec.
+- [ ] **Crypto plugin CAVP import**: any recognized primitive (SHA-2, AES, HMAC) auto-loads its
+      NIST CAVP vectors into the verify gate, no per-subject hand-entry.
+- [ ] **Target: one crypto primitive, cold, 0 human touches, CAVP-green — measured + published.**
+
 ## PHASE 3 — Whole program / multi-file / real projects
+- [ ] **★ WALL 3 — Control-flow structuring** (deferred from Phase 2, and the capability that
+      separates "algorithmic functions" from "real programs" — build this FIRST in Phase 3):
+      mechanical `goto` / irreducible state machine → labeled-break/loop/state-enum, verified
+      equivalent. Seed from the (hand-done) zlib inflate state machine.
+- [ ] **Auto round-trip discovery** (deferred from Phase 2): detect encode/decode or
+      compress/decompress pairs and generate the round-trip oracle automatically.
 - [ ] Multi-file / multi-module dependency graph → crate/workspace layout automatically.
 - [ ] **Preprocessor reality**: `#ifdef` config matrices, macros-as-code, conditional compilation.
 - [ ] Global state & init ordering (`architect/global_state`) at project scale.
@@ -202,9 +221,13 @@ discovery are Phase 3. TRACTOR-parity milestone.
 - [ ] **Miri UB gate + sanitizer-diff** on by default where toolchain allows (both promoted).
 - [ ] **Human-review UX**: surface only the functions the machine is unsure about.
 - [ ] **Packaging**: publishable crate output, provenance-attested.
-- [ ] **Benchmark vs TRACTOR / c2rust** publicly on shared corpora — % safe, % verified,
-      human-touches. Lead on *verified-correct*, not just *compiles*.
-- [ ] **Target: a stranger points it at a real library and gets verified safe Rust back.**
+- [ ] **★ Benchmark vs TRACTOR / c2rust** publicly on shared corpora — % safe, % verified,
+      human-touches. Lead on *verified-correct*, not just *compiles*. **PULL FORWARD — a
+      lightweight version (even N≈10 functions) is a credibility unlock NOW, not a Phase-7
+      afterthought: we report the axis nobody else does (verified-correct + human-touch count).**
+- [ ] **★ Target: a stranger points it at a real library and gets verified safe Rust back.**
+      **PULL FORWARD — ONE external user translating their OWN C kills the "founder-demo"
+      discount instantly; worth more than ten more internal subjects.**
 
 ---
 
@@ -219,6 +242,21 @@ discovery are Phase 3. TRACTOR-parity milestone.
    (Phase 5) until a single stateful library is autonomous (Phase 2), or we build breadth on sand.
 
 ## The one-line honest status
-Today: **best-in-class differential *verifier* + autonomous translator of known-pattern
-stateless functions.** The gap to "any C/C++" is **Phase 1 (kill the triage wall) + Phase 2
-(autonomous stateful libraries).** Everything past that is breadth on a proven core.
+Today: **autonomous translator + best-in-class differential verifier of stateless functions AND
+stateful *libraries*** (Phase 1 + Phase 2 done — a never-seen library, cold, 0 touches, 9/9
+byte-exact into one workspace). The frontier is now generalization: crypto (Phase 2.5), real
+programs / `goto` (Phase 3), and C++ (Phase 4). Everything past that is breadth on a proven core.
+
+## Highest-leverage next moves (credibility → funding) ★
+These four span phases but are the real VALUE drivers — each converts "promising research" into
+"fundable capability" (SBIR NV013, DARPA TRACTOR adjacency, the methodology paper). Do them close
+to next, out of strict phase order. Note WHY: the OSS is Apache-2.0 (no exclusivity moat) — the
+value is the *proven capability* + the *byte-exact-or-refused* discipline as the technical spine of
+funding, not the source itself. So value tracks what we point it at next and who watches.
+1. **Crypto primitive, CAVP-verified** — Phase 2.5. The credibility threshold. SHA-256 / AES.
+   CRC → "neat"; SHA-256 CAVP-green → "real." Biggest single unlock; directly in reach.
+2. **Benchmark vs c2rust / TRACTOR** — Phase 7, pulled forward. Win on *verified-correct*, the
+   axis nobody else reports. Even a small public corpus counts.
+3. **One external user** — Phase 7, pulled forward. Someone else's C, their run. Kills the
+   founder-demo discount.
+4. **WALL 3 — `goto` → safe Rust** — Phase 3. Turns "algorithmic functions" into "real programs."
