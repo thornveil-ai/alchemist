@@ -111,12 +111,18 @@ def _run_module_full(subj: Path, mod: str, endpoint: str | None) -> ModuleResult
     env = dict(_os.environ)
     if endpoint:
         env["ALCHEMIST_ENDPOINT"] = endpoint
+    rc = 1
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900, env=env)
         out = (r.stdout or "") + "\n" + (r.stderr or "")
+        rc = r.returncode
     except subprocess.TimeoutExpired:
         out = "TIMEOUT after 900s"
+        rc = 124
     log_path.write_text(out, encoding="utf-8", errors="replace")
-    ok = "OVERALL: PASS" in out
+    # Success is the child's EXIT CODE (the CLI raises typer.Exit(1) unless the report is
+    # fully ok), NOT a grep of human-formatted stdout — a log line or echoed spec text
+    # containing "OVERALL: PASS" must never be able to launder a failed module to green.
+    ok = (rc == 0)
     detail = next((ln.strip() for ln in out.splitlines() if "OVERALL" in ln), "")
     return ModuleResult(module=mod, overall_pass=ok, log_path=log_path, detail=detail)

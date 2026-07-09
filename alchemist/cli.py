@@ -376,14 +376,19 @@ def translate_lib(
         endpoint=_os.environ.get("ALCHEMIST_ENDPOINT"),
     )
     npass = sum(1 for r in results if r.overall_pass)
-    console.print(f"\n[bold]Library result: {npass}/{len(results)} modules verified[/bold]")
+    ntotal = len(results)
+    complete = npass == ntotal
+    refused = [r.module for r in results if not r.overall_pass]
+    console.print(f"\n[bold]Library result: {npass}/{ntotal} modules verified[/bold]")
     for r in results:
         mark = "[green]PASS[/green]" if r.overall_pass else "[red]FAIL[/red]"
         console.print(f"  {mark}  {r.module}   {r.detail}")
 
     if assemble and npass:
         from alchemist.lib_orchestrator import assemble_library_workspace
-        console.print("\n[cyan]Assembling verified modules into one unified workspace…[/cyan]")
+        label = ("verified" if complete else
+                 f"the {npass} VERIFIED modules — this is a PARTIAL translation")
+        console.print(f"\n[cyan]Assembling {label} into one workspace…[/cyan]")
         plan, receipt = assemble_library_workspace(source, results)
         console.print(f"  workspace: {plan.root}")
         console.print(f"  members  : {', '.join(plan.members)}")
@@ -395,23 +400,38 @@ def translate_lib(
             bmark = "[green]PASS[/green]" if receipt.build_ok else "[red]FAIL[/red]"
             tmark = "[green]PASS[/green]" if receipt.test_ok else "[red]FAIL[/red]"
             console.print(f"  cargo build --workspace: {bmark}   cargo test --workspace: {tmark}")
-            _write_workspace_receipt(source, plan, receipt, npass, len(results))
+            _write_workspace_receipt(source, plan, receipt, npass, ntotal, refused)
             if not (receipt.build_ok and receipt.test_ok):
-                console.print("[red]Unified workspace failed to build/test — Phase-2 workspace gate RED[/red]")
+                console.print("[red]Unified workspace failed to build/test — workspace gate RED[/red]")
                 raise typer.Exit(code=1)
-            console.print("[bold green]Unified workspace builds + tests as one type universe.[/bold green]")
+            if complete:
+                console.print("[bold green]Unified workspace builds + tests as one type universe.[/bold green]")
+            else:
+                # The assembled workspace of the passing subset builds+tests green, which is
+                # easy to misread as success. Say the true thing loudly: this is INCOMPLETE.
+                console.print(
+                    f"[bold yellow]⚠ INCOMPLETE TRANSLATION — REFUSED {len(refused)}/{ntotal} "
+                    f"module(s): {', '.join(refused)}.[/bold yellow]")
+                console.print(
+                    "[yellow]  The assembled workspace contains ONLY the byte-exact-verified "
+                    "modules; it is NOT a complete port of the library. The refused modules were "
+                    "not shipped because Alchemist could not verify them byte-exact.[/yellow]")
 
-    if npass < len(results):
+    if not complete:
         raise typer.Exit(code=1)
 
 
-def _write_workspace_receipt(source, plan, receipt, npass, ntotal):
-    """Persist a workspace verification receipt (the whole-library deliverable + touch-count)."""
+def _write_workspace_receipt(source, plan, receipt, npass, ntotal, refused):
+    """Persist a workspace verification receipt (the whole-library deliverable + touch-count).
+    `complete` is the honest headline: a partial (npass<ntotal) workspace still builds+tests
+    green over its subset, so the receipt states outright whether the LIBRARY was fully ported."""
     import json
     rec = {
         "library": Path(source).name,
+        "complete": npass == ntotal,
         "modules_verified": npass,
         "modules_total": ntotal,
+        "modules_refused_unverified": list(refused),
         "workspace_members": plan.members,
         "shared_types_crate": plan.types_crate,
         "hoisted_shared_items": plan.hoisted,
