@@ -1459,11 +1459,14 @@ class TDDGenerator:
         header = (
             "\n## Reference implementation(s) — adapt to the signature above\n"
             "The following Rust is a known-good implementation of this exact algorithm. "
-            "Use it as the template; change only names and signature to match the spec.\n\n"
-            "CRITICAL: Do NOT redefine any constants (CRC32_TABLE, ADLER_BASE, etc.) — "
-            "they are already imported via `use zlib_types::*;` and `use crate::*;`. "
-            "Just USE them in your function body. Return ONLY the function definition, "
-            "no const declarations, no module-level items.\n"
+            "Use it as the template; change ONLY names and the signature/return type to match "
+            "the spec above (e.g. if the spec returns `Vec<u8>`, return `the_array.to_vec()`).\n\n"
+            "CRITICAL — CONSTANTS: KEEP any constants/lookup tables the reference declares "
+            "(its IV, round constants K, S-boxes, etc.) UNLESS an identically-named constant is "
+            "already listed as in scope below — declare them yourself so the function compiles. "
+            "Do NOT assume anything is imported. It is fine to include the `const`/`static` "
+            "declarations the reference shows; just return a working, self-contained function "
+            "(plus its constants) and no unrelated module items.\n"
         )
         return header + "\n\n".join(snippets)
 
