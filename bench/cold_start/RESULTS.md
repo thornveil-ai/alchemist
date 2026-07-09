@@ -114,6 +114,15 @@ normalization (`f(&[u8])->Vec<u8>`, no Hasher over-design), and the reference-he
 ADAPTS the repo's known-good Rust SHA-256 reference on iter 1 instead of reinventing it — the fill
 had been failing because a zlib-boilerplate header stripped the reference's own `const K`/`H0`).
 
+### Phase 3 prep — GENERALITY proof (2026-07-09): 6/6 reference-free, non-checksum, non-zlib
+`genlib` — a grab-bag with **no curated reference** and **no checksum/hash shape**: `gray_encode`,
+`gray_decode`, `bit_reverse32`, `next_pow2`, `ilog2`, `longest_run`. **Cold, 0 human touches →
+OVERALL PASS, 6/6 byte-exact** vs the compiled-C oracle. 4 landed on iter 1; the 2 harder ones
+(`gray_decode`, `ilog2`) recovered via multi-sample + the ephemeral probe-synthesized reference
+(the faithful-translation lever — NOT a hand-curated Rust answer). This is the load-bearing
+Phase-3 datapoint: the general fill holds up **outside** the checksum/digest/zlib sweet spot the
+valuation flagged as the moat's narrow reach.
+
 **libcrc per-module scorecard (2026-07-08), driven via `translate-lib`:**
 | module | shape | result |
 |---|---|---|

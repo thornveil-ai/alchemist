@@ -1078,6 +1078,32 @@ class TDDGenerator:
                 for _cf in _srcs:
                     _cbody = extract_c_function_body(_cf, alg.name)
                     if _cbody:
+                        # WALL 3 — control-flow structuring. Rust has no `goto`; a faithful
+                        # translation of a C function that uses one needs an explicit recipe
+                        # or the model emits `goto`/labels that don't compile. Give it the
+                        # standard structured-equivalent transform; the differential still gates
+                        # byte-exactness, so a wrong restructuring fails loudly.
+                        _goto_section = ""
+                        if re.search(r"\bgoto\b", _cbody):
+                            _goto_section = (
+                                "## This C function uses `goto`. Rust has NO goto — translate the "
+                                "control flow into STRUCTURED safe Rust that is byte-exact "
+                                "equivalent (same computation, same side effects, same result):\n"
+                                "- A BACKWARD goto (to a label ABOVE it) is a LOOP: wrap that "
+                                "region in `loop { … }`; the jump-back becomes `continue` (or the "
+                                "loop's natural back-edge), and the loop-exit condition becomes a "
+                                "`break`.\n"
+                                "- A FORWARD goto (jumping DOWN, e.g. to a `cleanup:`/`done:` "
+                                "label) is an early exit: use an early `return`, or `break "
+                                "'label` out of a labeled block `'label: { … }`, running the "
+                                "code at/after the label afterwards.\n"
+                                "- Shared trailing code after a `done:` label (cleanup, a final "
+                                "return value) must still run on EVERY path that jumped there.\n"
+                                "- If the control flow is irreducible, use an explicit state "
+                                "machine: `let mut state = …; loop { state = match state { … } }`.\n"
+                                "Do NOT emit `goto`, labels-as-statements, or `unsafe`. Preserve "
+                                "the exact arithmetic and evaluation order.\n\n"
+                            )
                         # Feed the EXACT #define constants (start values, polynomials, magic
                         # numbers) the function references so the model uses them verbatim
                         # instead of guessing (e.g. CRC_START_64_WE = 0xFFFF..., not 0x0).
@@ -1129,6 +1155,7 @@ class TDDGenerator:
                         prompt = (
                             _tbl_section
                             + _callee_section
+                            + _goto_section
                             + f"## Original C source for `{alg.name}` — translate this "
                             f"FAITHFULLY into safe Rust. Preserve the EXACT arithmetic, "
                             f"integer widths, sign "
