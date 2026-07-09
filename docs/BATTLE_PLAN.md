@@ -171,10 +171,14 @@ This is the threshold that turns a research demo into a fundable capability (ROA
       with a complete known-good Rust reference and correct guidance the model adapts it on iter 1.
 
 ## PHASE 3 — Whole program / multi-file / real projects
-- [ ] **★ WALL 3 — Control-flow structuring** (deferred from Phase 2, and the capability that
-      separates "algorithmic functions" from "real programs" — build this FIRST in Phase 3):
-      mechanical `goto` / irreducible state machine → labeled-break/loop/state-enum, verified
-      equivalent. Seed from the (hand-done) zlib inflate state machine.
+- [~] **★ WALL 3 — Control-flow structuring — OPENED (2026-07-09), first subject verified.**
+      When a C fn uses `goto`, the fill injects the structured-equivalent recipe (backward goto →
+      `loop`; forward goto → early `return`/labeled `break`; shared trailing code preserved on
+      every path; irreducible → state machine), and the byte-exact differential gates it. Proven:
+      `gotolib` (collatz_steps backward-goto loop, classify_char forward-gotos-to-shared-cleanup,
+      digit_sum) → **3/3 OVERALL PASS, byte-exact, 0 `unsafe`, 0 goto in the Rust.** REMAINING:
+      irreducible/state-machine cases + `goto` inside real libraries at scale (this is model-
+      guided structuring, not yet a mechanical relooper — the differential keeps it honest).
 - [ ] **Auto round-trip discovery** (deferred from Phase 2): detect encode/decode or
       compress/decompress pairs and generate the round-trip oracle automatically.
 - [ ] Multi-file / multi-module dependency graph → crate/workspace layout automatically.

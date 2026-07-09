@@ -123,6 +123,15 @@ OVERALL PASS, 6/6 byte-exact** vs the compiled-C oracle. 4 landed on iter 1; the
 Phase-3 datapoint: the general fill holds up **outside** the checksum/digest/zlib sweet spot the
 valuation flagged as the moat's narrow reach.
 
+### Phase 3 prep — WALL 3 OPENED (2026-07-09): `goto` → structured safe Rust, byte-exact
+`gotolib` — three routines written with real C `goto` (forward + backward, 13 gotos): a backward-
+goto Collatz loop (`collatz_steps`), forward-gotos to a shared `done:` cleanup that must run on
+every path (`classify_char`), and a backward-goto digit-sum loop (`digit_sum`). **Cold, 0 human
+touches → OVERALL PASS 3/3 byte-exact, 0 `unsafe`, and 0 `goto` in the generated Rust.** The fill
+injects the structured-equivalent recipe when a C body contains `goto`; the differential gate
+enforces byte-exactness so a wrong restructuring fails loudly. This opens the capability that turns
+"algorithmic functions" into "real programs" — the gate for the rest of Phase 3.
+
 **libcrc per-module scorecard (2026-07-08), driven via `translate-lib`:**
 | module | shape | result |
 |---|---|---|
