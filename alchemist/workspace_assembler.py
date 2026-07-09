@@ -263,7 +263,19 @@ def _add_glob_import(crate: Path, types_pkg: str) -> None:
     use = f"use {_crate_ident(types_pkg)}::*;"
     if use in text:
         return
-    lib_rs.write_text(use + "\n" + text, encoding="utf-8")
+    # Inner attributes (`#![forbid(unsafe_code)]`, `#![allow(...)]`) and inner doc comments
+    # (`//!`) MUST stay at the crate root's top — inserting a `use` before them is a compile
+    # error ("inner attribute not permitted"). Skip past that leading block, then insert.
+    lines = text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        s = lines[i].lstrip()
+        if s.startswith("#![") or s.startswith("//!") or s.strip() == "":
+            i += 1
+        else:
+            break
+    lines.insert(i, use + "\n")
+    lib_rs.write_text("".join(lines), encoding="utf-8")
 
 
 def _write_types_crate(dest: Path, pkg: str, items: list[TopItem]) -> None:

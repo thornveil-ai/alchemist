@@ -184,10 +184,22 @@ class SpecExtractor:
                 for other in func_data
             )
             return not called
+
+        def _is_static_void_noarg(f: dict) -> bool:
+            # A `static void NAME(void)` — an internal table INITIALIZER (e.g. init_crc16_tab)
+            # that fills a module-global lookup table. Drop it EVEN IF called: it has no
+            # fuzzable input→output so it always stubs (anti-stub fail), and its callers build
+            # the table inline (fed the init's body via collect_callee_context). Static = never
+            # public API; the byte-exact differential catches any caller that mis-inlines it.
+            return bool(re.search(
+                r"(?:^|\n)[ \t]*static\s+void\s+" + re.escape(f["name"])
+                + r"\s*\(\s*(?:void)?\s*\)",
+                f.get("source", "")))
         significant = [
             f for f in func_data
             if ((5 <= f["lines"] <= 500) or (0 < f["lines"] < 5 and not _is_static_fn(f)))
             and not _is_uncalled_void_noarg(f)
+            and not _is_static_void_noarg(f)
         ]
         if not significant:
             significant = func_data[:5]

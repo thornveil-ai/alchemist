@@ -301,6 +301,42 @@ def extract_referenced_defines(source_path: Path, fn_body: str, *, include_dirs=
     return out
 
 
+_CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+_C_CALL_KEYWORDS = {
+    "if", "for", "while", "switch", "return", "sizeof", "do", "else", "void",
+    "case", "default", "goto", "static", "const", "struct", "union", "enum",
+}
+
+
+def collect_callee_context(target_body: str, c_files, *, include_dirs=None,
+                           exclude=()) -> list[tuple[str, str, list[str]]]:
+    """For each function CALLED in `target_body` that is defined in one of `c_files`, return
+    `(name, body, referenced_#defines)`. Feeding a target's callees into the fill prompt lets
+    the model see SHARED state it can't infer from the target alone — e.g. the lazy table
+    initializer `update_crc_16` calls (`init_crc16_tab`), which encodes the exact polynomial
+    and shift direction of the shared `crc_tab16`. Without it the model invents a different,
+    wrong table for the standalone updater. Depth-1 (direct callees) — enough for the
+    table-init case; keeps the prompt bounded."""
+    c_files = list(c_files)
+    names: list[str] = []
+    seen: set[str] = set(exclude)
+    for m in _CALL_RE.finditer(target_body):
+        n = m.group(1)
+        if n in _C_CALL_KEYWORDS or n in seen:
+            continue
+        seen.add(n)
+        names.append(n)
+    out: list[tuple[str, str, list[str]]] = []
+    for n in names:
+        for cf in c_files:
+            body = extract_c_function_body(cf, n)
+            if body:
+                defs = extract_referenced_defines(cf, body, include_dirs=include_dirs)
+                out.append((n, body, defs))
+                break
+    return out
+
+
 def extract_c_function_body(source_path: Path, function_name: str) -> str | None:
     """Locate a C function by name in the given source file and return its full text.
 

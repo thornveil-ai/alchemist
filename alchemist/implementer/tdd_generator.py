@@ -1069,6 +1069,7 @@ class TDDGenerator:
             _src_root = getattr(self, "_source_root", None)
             if _src_root:
                 from alchemist.implementer.reference_probe import (
+                    collect_callee_context,
                     extract_c_function_body, extract_referenced_arrays,
                     extract_referenced_defines,
                 )
@@ -1100,8 +1101,34 @@ class TDDGenerator:
                                 "`TABLE[idx as usize]`); do NOT redefine or regenerate them:\n"
                                 "```c\n" + "\n\n".join(_tbls) + "\n```\n\n"
                             )
+                        # Feed the bodies of functions THIS one calls within the module
+                        # (e.g. a lazy runtime-table initializer). A standalone updater
+                        # like update_crc_16 shares crc_16's table; without seeing the
+                        # init routine the model invents a DIFFERENT (wrong) table.
+                        _callee_section = ""
+                        try:
+                            _callees = collect_callee_context(
+                                _cbody, _srcs, include_dirs=_incs, exclude=(alg.name,))
+                        except Exception:  # noqa: BLE001
+                            _callees = []
+                        if _callees:
+                            _parts = []
+                            for _cn, _cb, _cd in _callees:
+                                _seg = ""
+                                if _cd:
+                                    _seg += "// exact constants: " + "; ".join(_cd) + "\n"
+                                _parts.append(_seg + _cb)
+                            _callee_section = (
+                                "## Helper function(s) THIS function calls, defined elsewhere in "
+                                "the same C module. It SHARES their state — most importantly a "
+                                "lookup table filled by an init routine. Reproduce that shared "
+                                "table/logic EXACTLY (same polynomial, shift DIRECTION, start "
+                                "value); do NOT invent a different table for the standalone "
+                                "function:\n```c\n" + "\n\n".join(_parts) + "\n```\n\n"
+                            )
                         prompt = (
                             _tbl_section
+                            + _callee_section
                             + f"## Original C source for `{alg.name}` — translate this "
                             f"FAITHFULLY into safe Rust. Preserve the EXACT arithmetic, "
                             f"integer widths, sign "
