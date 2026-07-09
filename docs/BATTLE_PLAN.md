@@ -83,7 +83,12 @@ UB-bearing C is correctly refused; stateful → Phase 2.**
       verdict wired into the cold path so UB functions report `c-buggy` instead of a hard refuse.
 
 ## PHASE 2 — Any single C **library** (stateful, autonomous) — IN PROGRESS
-*Kill WALLs 2–4. Goal: point at a small real library dir → verified Rust workspace.*
+*Kill WALLs 2 & 4 (WALL 3 = control-flow structuring moved to Phase 3, where irreducible
+control flow actually lives; it has no libcrc-class small-library subject). Goal: point at a
+small real library dir → **one** verified Rust workspace with a shared type model.*
+**Exit-target scope (owner decision 2026-07-08):** Phase 2 closes on the never-seen-library
+→ unified-verified-workspace capstone + type unification; WALL 3 (`goto`) and auto-round-trip
+discovery are Phase 3. TRACTOR-parity milestone.
 - [x] **First stateful function verified cold** — `xorshift_next` (scalar-state mutator,
       `fn(&mut u64) -> u64`), differential over 4000 fuzzed states vs compiled C. Built the
       tracked `struct_lift.py` (C-struct → Rust/FFI field map) + a **scalar-state mutator
@@ -109,20 +114,38 @@ UB-bearing C is correctly refused; stateful → Phase 2.**
       cleared incl. triage glue-call-evidence + fill-loop arity guard. **ALL 3 benchmark stateful
       fns (xorshift, rc4, bump_alloc) now cold-green.** *(Follow-up: extract is non-deterministic
       on the capacity param count — harden spec consistency so it's green every run.)*
-- [ ] **Wire `shim_synth` into the pipeline** — auto-generate the stateful poke/read shim
-      from struct fields (kills the hand-written-shim requirement).
-- [ ] **State-mutator differential oracle**: snapshot struct state across calls, diff vs C.
-- [ ] **Auto build/harness detection** (WALL 4): parse Makefile/CMake, build the C reference
-      DLL/.a automatically, no per-subject hand config.
-- [ ] **Control-flow structuring pass** (WALL 3): mechanical `goto` → labeled-break/loop/
-      state-enum transform, verified equivalent. Seed from the zlib inflate state machine.
-- [ ] **Whole-library type unification**: one coherent Rust type model across modules
-      (`architect/type_unifier` at library scale).
-- [ ] **Dependency-ordered fill**: translate leaf functions first, bottom-up.
-- [ ] **Auto round-trip discovery**: detect encode/decode or compress/decompress pairs and
-      generate the round-trip oracle automatically.
-- [ ] **Target: a never-seen small library (e.g. a hash lib, a codec) → verified workspace,
-      < 3 human interventions.** Measure and publish.
+- [x] **Wire `shim_synth` into the pipeline** — **SUPERSEDED** by the auto-oracle sequence
+      differential: we never hand-write a poke/read shim anymore. The compiled-C subject IS
+      the oracle; `classify_*_sequence` + the ctypes/FFI mirror drive `init→…→observe` and
+      diff every struct field vs C automatically (scalar_mutator / cipher_seq / alloc_seq /
+      hash_seq). No separate `shim_synth` wiring is needed for autonomous stateful verify.
+- [x] **State-mutator differential oracle**: snapshot struct state across calls, diff vs C.
+      Done — the four sequence shapes above ARE this (xorshift/rc4/bump_alloc/fnv cold-green).
+- [x] **Auto build/harness detection** (WALL 4): `build_c_dll.discover_c_build` +
+      `prepare_native_build` run the library's own make/cmake and materialize generated
+      sources; wired at CLI stage-1. Proven on `mathlib` (subdir src + header) and `gentest`
+      (Makefile-generated header) — zero hand config.
+- [x] **Whole-library type unification**: one coherent Rust type model across modules.
+      `workspace_assembler.assemble_workspace` hoists items defined IDENTICALLY in ≥2 modules
+      into a shared `<lib>-types` crate the members depend on, and leaves genuinely
+      name-conflicting definitions (e.g. crc64's per-variant `crc_tab64`) module-local rather
+      than silently merging them. Proven: a 4-module fixture assembles + `cargo build/test
+      --workspace` green (`tests/test_workspace_assembler.py`).
+- [x] **Dependency-ordered fill**: translate in declaration order so callees fill before the
+      composed differential gate (fnv init→update→final cold-green).
+- [x] **Unified workspace assembly + receipt**: `lib_orchestrator.assemble_library_workspace`
+      + `translate-lib --assemble` gather the PASSING per-module crates into ONE workspace,
+      cargo-verify it builds+tests together, and emit `workspace_receipt.json` (members,
+      hoisted shared types, conflicts, `human_touches`). The one-type-universe proof.
+- [ ] → **Phase 3** **Control-flow structuring pass** (WALL 3): mechanical `goto` →
+      labeled-break/loop/state-enum, verified. Deferred — libcrc-class small libraries have no
+      irreducible `goto` machines; this belongs with whole-program/real-project control flow
+      (already *demonstrated* by hand on the zlib inflate state machine).
+- [ ] → **Phase 3** **Auto round-trip discovery**: detect encode/decode or compress/decompress
+      pairs and generate the round-trip oracle automatically. Deferred — a whole-program concern.
+- [ ] **Target: a never-seen small library → unified verified workspace, < 3 human
+      interventions.** Measure and publish. *(Machinery complete + locally cargo-verified;
+      awaiting the live libcrc capstone run on the model box for the published touch-count.)*
 
 ## PHASE 3 — Whole program / multi-file / real projects
 - [ ] Multi-file / multi-module dependency graph → crate/workspace layout automatically.

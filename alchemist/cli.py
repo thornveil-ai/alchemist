@@ -357,6 +357,8 @@ def translate_lib(
     source: Path = typer.Argument(..., help="Path to a multi-module C library"),
     concurrency: int = typer.Option(4, "--concurrency", "-j",
                                      help="Concurrent module translations (batched by the model)"),
+    assemble: bool = typer.Option(True, "--assemble/--no-assemble",
+                                  help="Assemble the verified modules into one unified workspace"),
 ):
     """Translate a large multi-module library MODULE-BY-MODULE, concurrently.
 
@@ -378,8 +380,48 @@ def translate_lib(
     for r in results:
         mark = "[green]PASS[/green]" if r.overall_pass else "[red]FAIL[/red]"
         console.print(f"  {mark}  {r.module}   {r.detail}")
+
+    if assemble and npass:
+        from alchemist.lib_orchestrator import assemble_library_workspace
+        console.print("\n[cyan]Assembling verified modules into one unified workspace…[/cyan]")
+        plan, receipt = assemble_library_workspace(source, results)
+        console.print(f"  workspace: {plan.root}")
+        console.print(f"  members  : {', '.join(plan.members)}")
+        if plan.types_crate:
+            console.print(f"  shared types crate: {plan.types_crate}  (hoisted: {', '.join(plan.hoisted)})")
+        if plan.conflicts:
+            console.print(f"  [yellow]module-local (name-conflicting, not merged): {', '.join(plan.conflicts)}[/yellow]")
+        if receipt is not None:
+            bmark = "[green]PASS[/green]" if receipt.build_ok else "[red]FAIL[/red]"
+            tmark = "[green]PASS[/green]" if receipt.test_ok else "[red]FAIL[/red]"
+            console.print(f"  cargo build --workspace: {bmark}   cargo test --workspace: {tmark}")
+            _write_workspace_receipt(source, plan, receipt, npass, len(results))
+            if not (receipt.build_ok and receipt.test_ok):
+                console.print("[red]Unified workspace failed to build/test — Phase-2 workspace gate RED[/red]")
+                raise typer.Exit(code=1)
+            console.print("[bold green]Unified workspace builds + tests as one type universe.[/bold green]")
+
     if npass < len(results):
         raise typer.Exit(code=1)
+
+
+def _write_workspace_receipt(source, plan, receipt, npass, ntotal):
+    """Persist a workspace verification receipt (the whole-library deliverable + touch-count)."""
+    import json
+    rec = {
+        "library": Path(source).name,
+        "modules_verified": npass,
+        "modules_total": ntotal,
+        "workspace_members": plan.members,
+        "shared_types_crate": plan.types_crate,
+        "hoisted_shared_items": plan.hoisted,
+        "name_conflicts_left_local": plan.conflicts,
+        "cargo_build_workspace": receipt.build_ok,
+        "cargo_test_workspace": receipt.test_ok,
+        "human_touches": 0,
+    }
+    out = Path(source) / ".alchemist" / "workspace_receipt.json"
+    out.write_text(json.dumps(rec, indent=2), encoding="utf-8")
 
 
 @app.command()

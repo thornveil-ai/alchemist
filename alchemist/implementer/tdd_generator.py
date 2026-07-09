@@ -1070,17 +1070,30 @@ class TDDGenerator:
             if _src_root:
                 from alchemist.implementer.reference_probe import (
                     extract_c_function_body, extract_referenced_arrays,
+                    extract_referenced_defines,
                 )
                 from alchemist.verifier.build_c_dll import discover_c_build as _disc
-                for _cf in _disc(_src_root)[0]:
+                _srcs, _incs = _disc(_src_root)
+                for _cf in _srcs:
                     _cbody = extract_c_function_body(_cf, alg.name)
                     if _cbody:
+                        # Feed the EXACT #define constants (start values, polynomials, magic
+                        # numbers) the function references so the model uses them verbatim
+                        # instead of guessing (e.g. CRC_START_64_WE = 0xFFFF..., not 0x0).
+                        _defs = extract_referenced_defines(_cf, _cbody, include_dirs=_incs)
+                        _def_section = ""
+                        if _defs:
+                            _def_section = (
+                                "## Exact constants the function uses (from C `#define`s) — "
+                                "use these VALUES verbatim; do NOT guess or truncate them:\n"
+                                "```c\n" + "\n".join(_defs) + "\n```\n\n"
+                            )
                         # Feed any lookup table(s) the function references so the model
                         # reproduces them EXACTLY instead of guessing (table-driven CRC/hash).
-                        _tbls = extract_referenced_arrays(_cf, _cbody)
-                        _tbl_section = ""
+                        _tbls = extract_referenced_arrays(_cf, _cbody, include_dirs=_incs)
+                        _tbl_section = _def_section
                         if _tbls:
-                            _tbl_section = (
+                            _tbl_section = _def_section + (
                                 "## Lookup table(s) the function reads are ALREADY defined in "
                                 "your crate module as Rust `const` arrays with these EXACT names "
                                 "and values. Reference them directly by name (e.g. "

@@ -77,6 +77,31 @@ def orchestrate_library(root, *, max_concurrent: int = 4, endpoint: str | None =
     return results
 
 
+def assemble_library_workspace(root, results, *, lib_name: str | None = None,
+                               verify: bool = True):
+    """Assemble the PASSING per-module crates into one unified, type-shared cargo workspace
+    and (optionally) verify it builds + tests together. Returns (WorkspacePlan, receipt|None).
+
+    This is the whole-library deliverable: per-module orchestration proves each module in
+    isolation; this proves they coexist in ONE type universe. Only modules that already passed
+    their own byte-exact gate are admitted — a red module never enters the workspace."""
+    from alchemist.workspace_assembler import (
+        assemble_workspace,
+        collect_module_crates,
+        verify_workspace,
+    )
+    root = Path(root)
+    lib_name = lib_name or root.name
+    work = root / ".alchemist" / "modules"
+    passed = {r.module for r in results if r.overall_pass}
+    all_crates = collect_module_crates(work)
+    crates = {m: c for m, c in all_crates.items() if m in passed}
+    out = root / ".alchemist" / "workspace"
+    plan = assemble_workspace(crates, out, lib_name)
+    receipt = verify_workspace(out) if (verify and crates) else None
+    return plan, receipt
+
+
 def _run_module_full(subj: Path, mod: str, endpoint: str | None) -> ModuleResult:
     """Run the full pipeline (stages 1-6) on a per-module subject."""
     log_path = subj / "translate.log"

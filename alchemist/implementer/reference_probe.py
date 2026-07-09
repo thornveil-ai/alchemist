@@ -159,10 +159,11 @@ _ARRAY_DEF_RE = re.compile(
 )
 
 
-def _read_with_includes(source_path: Path, *, depth: int = 2) -> str:
-    """Read a C file plus its local `#include "..."` files (e.g. generated *.inc lookup-table
-    files), resolved relative to the includer, bounded recursion. Lets a table defined in a
-    separate .inc (crc32/crc64 gentab*.inc) be visible to the array scanner, not just inline."""
+def _read_with_includes(source_path: Path, *, include_dirs=None, depth: int = 2) -> str:
+    """Read a C file plus its local `#include "..."` files (generated *.inc tables, shared
+    headers), bounded recursion. Resolves each include relative to the includer AND against
+    `include_dirs` (the -I search path, so a bare `#include "checksum.h"` that lives in
+    include/ is found) — a table or #define in a separate file is then visible to the scanners."""
     try:
         text = source_path.read_text(errors="replace")
     except OSError:
@@ -170,23 +171,32 @@ def _read_with_includes(source_path: Path, *, depth: int = 2) -> str:
     if depth <= 0:
         return text
     parts = [text]
+    _dirs = [Path(d) for d in (include_dirs or [])]
     for m in re.finditer(r'#\s*include\s*"([^"]+)"', text):
-        try:
-            inc = (source_path.parent / m.group(1)).resolve()
-            if inc.exists() and inc.is_file():
-                parts.append(_read_with_includes(inc, depth=depth - 1))
-        except OSError:
-            continue
+        inc_name = m.group(1)
+        cands = [source_path.parent / inc_name]
+        for d in _dirs:
+            cands.append(d / inc_name)
+            cands.append(d / Path(inc_name).name)
+        for cand in cands:
+            try:
+                cand = cand.resolve()
+                if cand.exists() and cand.is_file():
+                    parts.append(_read_with_includes(
+                        cand, include_dirs=include_dirs, depth=depth - 1))
+                    break
+            except OSError:
+                continue
     return "\n".join(parts)
 
 
 def extract_referenced_arrays(source_path: Path, fn_body: str,
-                              *, max_chars: int = 40000) -> list[str]:
+                              *, include_dirs=None, max_chars: int = 40000) -> list[str]:
     """Return file-level const-array (lookup-table) DEFINITIONS whose name is referenced in
     `fn_body`. Feeding these into the fill prompt lets the model reproduce a table EXACTLY
     instead of guessing hundreds of magic numbers — the #1 cause of compile-but-diverge on
     table-driven code (CRC/hash lookup tables). Uses brace-matching, no tree-sitter needed."""
-    text = _read_with_includes(source_path)
+    text = _read_with_includes(source_path, include_dirs=include_dirs)
     if not text:
         return []
     out: list[str] = []
@@ -253,6 +263,42 @@ def c_array_to_rust_const(c_def: str) -> tuple[str, str] | None:
         return None
     rust = f"pub const {name}: [{rust_ty}; {len(vals)}] = [{', '.join(vals)}];"
     return name, rust
+
+
+# Two-group form: NAME + VALUE. Named _DEFINE_KV_RE to avoid colliding with the
+# name-only _DEFINE_RE defined later in this module (extract_referenced_macros).
+_DEFINE_KV_RE = re.compile(
+    r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+(\S.*)$",
+    re.MULTILINE)
+
+
+def _strip_c_comment(val: str) -> str:
+    """Drop a trailing // or /* ... */ comment from a captured #define value."""
+    val = re.sub(r"/\*.*?\*/", "", val)
+    val = re.sub(r"//.*$", "", val)
+    return val.strip()
+
+
+def extract_referenced_defines(source_path: Path, fn_body: str, *, include_dirs=None) -> list[str]:
+    """Return object-like `#define NAME VALUE` macros whose NAME is referenced in `fn_body`
+    (with the .c's local #includes resolved, so defines in a shared header are found). Feeding
+    these lets the model use the EXACT constant — a CRC start value, polynomial or magic number
+    — instead of guessing it (e.g. CRC_START_64_WE = 0xFFFFFFFFFFFFFFFF, which the model
+    otherwise wrote as 0x0, failing a correct crc_64_we)."""
+    text = _read_with_includes(source_path, include_dirs=include_dirs)
+    if not text:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _DEFINE_KV_RE.finditer(text):
+        name = m.group(1)
+        val = _strip_c_comment(m.group(2))
+        if name in seen or not val:
+            continue
+        if re.search(r"\b" + re.escape(name) + r"\b", fn_body):
+            seen.add(name)
+            out.append(f"#define {name} {val}")
+    return out
 
 
 def extract_c_function_body(source_path: Path, function_name: str) -> str | None:
