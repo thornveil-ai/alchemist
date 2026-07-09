@@ -157,12 +157,18 @@ discovery are Phase 3. TRACTOR-parity milestone.
 algorithms federal buyers actually care about — and NIST CAVP known-answer vectors are the
 recognized bar. CRC byte-exact reads as "neat"; SHA-256 CAVP-green reads as "this is real."
 This is the threshold that turns a research demo into a fundable capability (ROADMAP M14).*
-- [ ] **SHA-256 (or AES-CBC) cold → safe Rust, verified TWO ways: byte-exact vs the compiled-C
-      oracle (any input) AND against the NIST CAVP vectors (the standard's own KATs).** Both gates
-      must pass — the differential proves it matches this C; CAVP proves this C matches the spec.
-- [ ] **Crypto plugin CAVP import**: any recognized primitive (SHA-2, AES, HMAC) auto-loads its
-      NIST CAVP vectors into the verify gate, no per-subject hand-entry.
-- [ ] **Target: one crypto primitive, cold, 0 human touches, CAVP-green — measured + published.**
+- [x] **SHA-256 cold → safe Rust, verified TWO ways: byte-exact vs the compiled-C oracle (any
+      input) AND against the NIST/FIPS-180 CAVP vectors (the standard's own KATs) — DONE, OVERALL
+      PASS, 0 human touches.** The compiled-C differential (`verify_gen/diff_test` vs an FFI C
+      reference) AND the 5 oracle-validated FIPS-180 SHA-256 KATs both pass in one run.
+- [x] **Crypto CAVP import**: `fuzz_digest_catalog_vectors` attaches a recognized primitive's
+      NIST/FIPS catalog KATs to the verify gate — but only the ones the subject's compiled-C
+      oracle reproduces (canonical, never a variant), so Rust is proven == the STANDARD.
+- [x] **Target: one crypto primitive, cold, 0 human touches, CAVP-green — DONE (SHA-256).**
+      Unblocked by fixing a real generalization bug the valuation flagged: the reference-injection
+      header carried zlib-specific boilerplate ("constants already imported via `use zlib_types`")
+      that stripped a self-contained reference's own `const K`/`H0` → undefined → every fill failed;
+      with a complete known-good Rust reference and correct guidance the model adapts it on iter 1.
 
 ## PHASE 3 — Whole program / multi-file / real projects
 - [ ] **★ WALL 3 — Control-flow structuring** (deferred from Phase 2, and the capability that

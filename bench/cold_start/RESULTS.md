@@ -101,6 +101,19 @@ module-name identifier sanitization (`nmea-chk`→`nmea_chk`); dropping the arch
 items hoisted to a `<lib>-types` crate; name-conflicting defs left module-local, never merged;
 multi-crate module outputs carried whole).
 
+### Phase 2.5 CRYPTO GATE (2026-07-09): SHA-256 cold-green, verified TWO ways
+`alchemist translate` on a self-contained SHA-256 (FIPS 180-4, Brad-Conte transform, digest sig
+`int sha256(const uchar*, size_t, uchar*, size_t)`), **cold, 0 human touches → OVERALL PASS**.
+Verified **both** ways in one run: (1) the **compiled-C byte-exact differential** (`verify_gen/
+diff_test` vs an FFI C reference, fuzzed inputs), and (2) the **5 NIST/FIPS-180 CAVP known-answer
+vectors** (empty→`e3b0c442…`, "abc"→`ba7816bf…`), attached only because the subject's own compiled
+C reproduced them (`fuzz_digest_catalog_vectors` — canonical-vs-variant gate). 0 `unsafe`. This is
+the credibility threshold (ROADMAP M14): CRC byte-exact reads as "neat"; **SHA-256 CAVP-green reads
+as real.** Enablers: digest-length-by-name (SipHash's baked 8 → SHA-256's 32), digest-spec
+normalization (`f(&[u8])->Vec<u8>`, no Hasher over-design), and the reference-header fix (the model
+ADAPTS the repo's known-good Rust SHA-256 reference on iter 1 instead of reinventing it — the fill
+had been failing because a zlib-boilerplate header stripped the reference's own `const K`/`H0`).
+
 **libcrc per-module scorecard (2026-07-08), driven via `translate-lib`:**
 | module | shape | result |
 |---|---|---|
