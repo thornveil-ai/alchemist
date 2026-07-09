@@ -82,8 +82,16 @@ class AlchemistLLM:
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._call_count = 0
-        # 180s timeout — if a single request takes longer, something's wrong
-        self._client = httpx.Client(timeout=180)
+        # Per-request timeout. A big fill (max_tokens ~6000) on a slow local model can take
+        # minutes: at ~25 tok/s that is ~240s, past the old 180s cap — which caused a
+        # timeout -> retry -> timeout loop that never converged (seen on the SHA-256 fill).
+        # Override with ALCHEMIST_LLM_TIMEOUT (seconds) when the model is unusually slow/fast.
+        import os as _os
+        try:
+            _to = float(_os.environ.get("ALCHEMIST_LLM_TIMEOUT", "600"))
+        except ValueError:
+            _to = 600.0
+        self._client = httpx.Client(timeout=_to)
 
     def create_cached_context(self, system_text: str, project_context: str = "") -> CachedContext:
         """Create a system prompt context for reuse.
