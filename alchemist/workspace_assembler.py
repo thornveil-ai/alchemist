@@ -104,41 +104,57 @@ class WorkspacePlan:
     conflicts: list[str] = field(default_factory=list)    # same name, different body — left local
 
 
+def _member_crates(output: Path) -> list[Path]:
+    """Every crate dir inside a module's output workspace (a module output is itself a
+    mini-workspace, e.g. `crc64-algo` + `crc64-core`). Excludes the cargo `target/` dir."""
+    return [p for p in sorted(output.iterdir())
+            if p.is_dir() and p.name != "target"
+            and (p / "Cargo.toml").is_file() and (p / "src").is_dir()]
+
+
 def collect_module_crates(work_root: Path) -> dict[str, Path]:
-    """Map module name → its generated output crate dir, from a lib_orchestrator work tree
-    (`<work>/<mod>/.alchemist/output/<crate>/`). Only dirs with a `Cargo.toml` + `src/` count."""
+    """Map module name → its generated output WORKSPACE dir, from a lib_orchestrator work
+    tree (`<work>/<mod>/.alchemist/output/`). A module output is a mini-workspace that may
+    hold several crates (an `-algo` crate path-depending on a `-core` crate); the assembler
+    carries them ALL, so those intra-module deps keep resolving."""
     work_root = Path(work_root)
     out: dict[str, Path] = {}
     for mod_dir in sorted(p for p in work_root.iterdir() if p.is_dir()):
         output = mod_dir / ".alchemist" / "output"
-        if not output.is_dir():
-            continue
-        for crate in sorted(output.iterdir()):
-            if (crate / "Cargo.toml").is_file() and (crate / "src").is_dir():
-                out[mod_dir.name] = crate
-                break
+        if output.is_dir() and _member_crates(output):
+            out[mod_dir.name] = output
     return out
 
 
-def assemble_workspace(module_crates: dict[str, Path], out_dir: Path,
+def assemble_workspace(module_outputs: dict[str, Path], out_dir: Path,
                        lib_name: str) -> WorkspacePlan:
-    """Copy each module crate into `out_dir`, hoist identical shared items into `<lib>-types`,
-    and write the `[workspace]` Cargo.toml. Returns the plan (members, hoisted, conflicts)."""
+    """Copy every crate of each module output into `out_dir`, hoist identical shared items
+    into `<lib>-types`, and write the `[workspace]` Cargo.toml. Returns the plan (members,
+    hoisted, conflicts). Each value in `module_outputs` is a module's output workspace dir,
+    which may contain several crates; all are carried so intra-module path deps still resolve."""
     out_dir = Path(out_dir)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
-    # Copy members in, learning each crate's package name.
+    # Copy every member crate of every module in, learning each crate's package name.
     members: list[str] = []
     crate_dirs: dict[str, Path] = {}
-    for mod, crate in module_crates.items():
-        pkg = _package_name(crate) or f"{mod}-rs"
-        dest = out_dir / pkg
-        shutil.copytree(crate, dest)
-        _strip_nested_workspace(dest)
-        members.append(pkg)
-        crate_dirs[pkg] = dest
+    for mod, output in module_outputs.items():
+        for crate in _member_crates(output):
+            pkg = _package_name(crate) or crate.name
+            if pkg in crate_dirs:
+                # Distinct crate name per module is expected (names are module-prefixed);
+                # a genuine clash would break sibling path deps, so refuse rather than
+                # silently overwrite.
+                raise ValueError(
+                    f"crate name collision '{pkg}' between modules — cannot assemble safely")
+            dest = out_dir / pkg
+            shutil.copytree(crate, dest)
+            shutil.rmtree(dest / "target", ignore_errors=True)
+            _strip_nested_workspace(dest)
+            members.append(pkg)
+            crate_dirs[pkg] = dest
 
     # Find every top-level item per member, grouped by name.
     #   name -> {pkg -> (normalized_body, TopItem, src_file)}

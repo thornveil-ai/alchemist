@@ -27,6 +27,10 @@ _NONLIB_DIRS = {
     "test", "tests", "example", "examples", "bench", "benches", "demo", "demos",
     "fuzz", "fuzzing", "doc", "docs", "build", "cmake", "third_party", "vendor",
     ".git", "target", ".alchemist", "node_modules", "contrib",
+    # Build-time tooling that GENERATES sources (e.g. table generators) — not the
+    # library itself. Their .c files (libcrc's precalc/crc32_table.c) fill a global
+    # table and have nothing to differentially fuzz; treating them as modules is wrong.
+    "precalc", "precompute", "gen", "tools", "tool", "scripts", "bin", "util", "utils",
 }
 _MAIN_RE = re.compile(r"\bint\s+main\s*\(")
 

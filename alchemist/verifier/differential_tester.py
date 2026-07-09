@@ -428,6 +428,11 @@ class DifferentialTester:
                           "UB-free under Miri" if ok else "Miri found undefined behaviour",
                           stdout=r.stdout, stderr=r.stderr)
 
+    def _diff_is_oracle_backed(self) -> bool:
+        """True when the differential runs against a real COMPILED-C oracle (c_sources),
+        i.e. ground truth independent of the model — not a self-derived KAT-only config."""
+        return bool(self.diff_config and getattr(self.diff_config, "c_sources", None))
+
     def run_all(self) -> VerificationReport:
         compile_r = self.gate_compile()
         # Run all informational gates regardless of compile outcome so the
@@ -456,6 +461,22 @@ class DifferentialTester:
             name="differential", passed=False,
             summary="skipped — test gate failed",
         )
+        # Byte-exact against a COMPILED-C oracle over fuzzed inputs is ground truth.
+        # A heuristic family lint (semantic gate) must not veto a function the
+        # differential PROVED correct — that would be a false refusal of correct code.
+        # So when the differential passed against a real compiled-C oracle, demote any
+        # semantic-lint ERROR to advisory. (The lint stays a hard gate when there is no
+        # oracle-backed differential — e.g. self-derived KATs, where its wrong-variant
+        # worry genuinely applies.)
+        if diff_r.passed and not semantic_r.passed and self._diff_is_oracle_backed():
+            semantic_r = GateResult(
+                name="semantic",
+                passed=True,
+                summary=(f"{semantic_r.summary} — demoted to advisory "
+                         f"(compiled-C differential is byte-exact and authoritative)"),
+                stdout=semantic_r.stdout,
+                stderr=semantic_r.stderr,
+            )
         miri_r = self.gate_miri() if test_r.passed else GateResult(
             "miri", True, "skipped — test gate failed")
         return VerificationReport(
