@@ -185,21 +185,33 @@ class SpecExtractor:
             )
             return not called
 
-        def _is_static_void_noarg(f: dict) -> bool:
-            # A `static void NAME(void)` — an internal table INITIALIZER (e.g. init_crc16_tab)
-            # that fills a module-global lookup table. Drop it EVEN IF called: it has no
-            # fuzzable input→output so it always stubs (anti-stub fail), and its callers build
-            # the table inline (fed the init's body via collect_callee_context). Static = never
-            # public API; the byte-exact differential catches any caller that mis-inlines it.
-            return bool(re.search(
-                r"(?:^|\n)[ \t]*static\s+void\s+" + re.escape(f["name"])
-                + r"\s*\(\s*(?:void)?\s*\)",
+        def _called_by_other(f: dict) -> bool:
+            return any(
+                other is not f and re.search(r"\b" + re.escape(f["name"]) + r"\s*\(",
+                                              other.get("source", ""))
+                for other in func_data)
+
+        def _is_inlinable_static(f: dict) -> bool:
+            # A `static` (internal-linkage) helper is NEVER public API. Drop it so the model
+            # INLINES it into its callers (whose fill prompt is fed the helper body via
+            # collect_callee_context). Two cases: (1) a static table INITIALIZER like
+            # init_crc16_tab (void — no fuzzable I/O, always stubs); (2) a static worker like
+            # crc_ccitt_generic that the public wrappers (crc_xmodem/1d0f/ffff) call with a
+            # fixed start value. Drop when the static is void OR is called by another module
+            # function (the inline target). A static that is uncalled AND returns a value is
+            # left alone (rare leaf). The byte-exact differential catches any caller that
+            # mis-inlines it, so this can never launder a wrong translation to green.
+            if not _is_static_fn(f):
+                return False
+            is_void = bool(re.search(
+                r"(?:^|\n)[ \t]*static\s+void\b[^\n;{]*\b" + re.escape(f["name"]) + r"\s*\(",
                 f.get("source", "")))
+            return is_void or _called_by_other(f)
         significant = [
             f for f in func_data
             if ((5 <= f["lines"] <= 500) or (0 < f["lines"] < 5 and not _is_static_fn(f)))
             and not _is_uncalled_void_noarg(f)
-            and not _is_static_void_noarg(f)
+            and not _is_inlinable_static(f)
         ]
         if not significant:
             significant = func_data[:5]
