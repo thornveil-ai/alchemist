@@ -189,6 +189,61 @@ class TranslationReport:
         return "\n".join(lines) + "\n" + ("OVERALL: PASS" if self.ok else "OVERALL: FAIL")
 
 
+def _flatten_codec_traits(arch, specs, source) -> int:
+    """Drop architect-invented traits (Compressor/Decompressor/Hasher/...) whose
+    methods are stateless byte codecs — buf_transform (`int f(in,inlen,out,outlen)`)
+    or digest shapes. Such a function is lifted to a FREE `fn(&[u8]) -> Vec<u8>`
+    (see normalize_digest_specs) and the differential harness calls it as a free
+    module function (`rust_smaz_compress(&input)`). A trait wrapper
+    (`fn compress(&self, ...) -> Result<usize, Self::Error>`) contradicts that on
+    every axis AND the LLM architect emits it inconsistently — sometimes with a
+    dangling `Self::Error` that won't even compile. Removing the trait forces the
+    reliable free-function layout, making a codec translation REPRODUCIBLE instead
+    of dependent on which crate design the architect happened to roll.
+
+    Returns the number of traits dropped.
+    """
+    if not getattr(arch, "traits", None):
+        return 0
+    try:
+        from alchemist.verifier.auto_config import (
+            collect_subject_signatures, classify_buf_transform, classify_digest_shape,
+        )
+        sigs = {s.name: s for s in collect_subject_signatures(Path(source))}
+    except Exception:  # noqa: BLE001
+        return 0
+    if not sigs:
+        return 0
+
+    def _is_codec_method(m) -> bool:
+        # Map a trait method to a C signature by name (method name or the fn it wraps).
+        sig = sigs.get(getattr(m, "name", ""))
+        if sig is None:
+            # methods sometimes carry the C fn name inside the signature text
+            for nm, s in sigs.items():
+                if nm in (getattr(m, "signature", "") or ""):
+                    sig = s
+                    break
+        if sig is None:
+            return False
+        try:
+            return (classify_buf_transform(sig) is not None
+                    or classify_digest_shape(sig) is not None)
+        except Exception:  # noqa: BLE001
+            return False
+
+    kept, dropped = [], 0
+    for t in arch.traits:
+        methods = getattr(t, "methods", None) or []
+        if methods and all(_is_codec_method(m) for m in methods):
+            dropped += 1
+        else:
+            kept.append(t)
+    if dropped:
+        arch.traits = kept
+    return dropped
+
+
 def _reconcile_module_placement(arch, specs) -> None:
     """Ensure every spec module is claimed by exactly one crate's `modules`.
 
@@ -409,6 +464,12 @@ def run_architect_stage(
     # empty crates (0 functions). Guarantee every spec module is claimed by
     # exactly one crate; drop crates left with nothing.
     _reconcile_module_placement(arch, specs)
+    n_flat = _flatten_codec_traits(arch, specs, source)
+    if n_flat:
+        console.print(
+            f"[cyan]codec-flatten: dropped {n_flat} trait(s) wrapping stateless "
+            f"byte codecs — emitting free `fn(&[u8]) -> Vec<u8>` (reproducible)[/cyan]"
+        )
     n_err = _reconcile_error_types(arch, specs)
     n_bld = _prune_dangling_builders(arch)
     if n_err or n_bld:
