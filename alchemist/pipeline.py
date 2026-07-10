@@ -120,6 +120,31 @@ def run_analyze(
                 f"[yellow]ALCHEMIST_ONLY_MODULE={_only!r} matched no module; "
                 f"translating all[/yellow]")
 
+    # Function scoping (ALCHEMIST_ONLY_FNS): translate only the named functions
+    # within the kept module(s). Lets the PURE surface of a real cyclic module
+    # be conquered from real source (e.g. luaS_hash out of lstring's 15 fns)
+    # without dragging in the VM-coupled functions that need the whole type
+    # universe. Oracle still links the whole dir. Comma-separated exact/substr.
+    _onlyfns = (_os.environ.get("ALCHEMIST_ONLY_FNS") or "").strip()
+    if _onlyfns:
+        _wf = [w.strip() for w in _onlyfns.split(",") if w.strip()]
+
+        def _keepfn(fn):
+            return any(w == fn or w.lower() in fn.lower() for w in _wf)
+        _tot = 0
+        for m in modules:
+            fns = m.get("functions", []) if isinstance(m, dict) else []
+            kept = [f for f in fns if _keepfn(f)]
+            if isinstance(m, dict):
+                m["functions"] = kept
+                fd = m.get("function_details")
+                if isinstance(fd, dict):
+                    m["function_details"] = {k: v for k, v in fd.items() if _keepfn(k)}
+            _tot += len(kept)
+        console.print(
+            f"[cyan]function scope: translating {_tot} function(s) matching "
+            f"{_wf} (oracle still links the whole dir)[/cyan]")
+
     # Build summary
     total_functions = sum(len(pf["functions"]) for pf in parsed_files.values())
     total_structs = sum(len(pf["structs"]) for pf in parsed_files.values())
