@@ -256,19 +256,24 @@ def _resolve_checksum_c(
     # `as _` casts infer argument types from the extern declaration; the
     # result is cast to the SAME width the rust wrapper returns so the
     # comparison is width-identical on both sides.
+    # `data.as_ptr()` is *const u8, but a `const char*` param binds as *const i8
+    # (c_char) — a signed/unsigned pointer mismatch (E0308) that bites every
+    # Lua fn (char* everywhere). `as *const _` coerces to whatever the extern
+    # declares (i8 for char*, u8 for unsigned char*), so both cases compile.
+    ptr = "data.as_ptr() as *const _"
     if nparams == 3:
         if getattr(h, "seed_trailing", False):
             return (
-                f"unsafe {{ {ffi_crate}::{h.algorithm}(data.as_ptr(), "
+                f"unsafe {{ {ffi_crate}::{h.algorithm}({ptr}, "
                 f"data.len() as _, {seed} as _) as {ret} }}"
             )
         return (
-            f"unsafe {{ {ffi_crate}::{h.algorithm}({seed} as _, data.as_ptr(), "
+            f"unsafe {{ {ffi_crate}::{h.algorithm}({seed} as _, {ptr}, "
             f"data.len() as _) as {ret} }}"
         )
     if nparams == 2:
         return (
-            f"unsafe {{ {ffi_crate}::{h.algorithm}(data.as_ptr(), "
+            f"unsafe {{ {ffi_crate}::{h.algorithm}({ptr}, "
             f"data.len() as _) as {ret} }}"
         )
     raise AdapterError(

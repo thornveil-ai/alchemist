@@ -55,14 +55,14 @@ def test_adapter_c_seed_trailing():
     sig = parse_header("unsigned int luaS_hash(const char *str, size_t l, unsigned int seed);")[0]
     h = SimpleNamespace(algorithm="luaS_hash", category="hash", seed=5, seed_trailing=True)
     body = _resolve_checksum_c(h, "cref", {"luaS_hash": sig}, "u32")
-    assert "data.as_ptr(), data.len() as _, 5 as _" in body
+    assert "data.as_ptr() as *const _, data.len() as _, 5 as _" in body
 
 
 def test_adapter_c_seed_first_unchanged():
     sig = parse_header("unsigned long adler32(unsigned long a, const unsigned char *buf, unsigned int len);")[0]
     h = SimpleNamespace(algorithm="adler32", category="checksum", seed=1, seed_trailing=False)
     body = _resolve_checksum_c(h, "cref", {"adler32": sig}, "u32")
-    assert "1 as _, data.as_ptr(), data.len() as _" in body
+    assert "1 as _, data.as_ptr() as *const _, data.len() as _" in body
 
 
 def test_fuzz_vectors_include_trailing_seed(tmp_path):
