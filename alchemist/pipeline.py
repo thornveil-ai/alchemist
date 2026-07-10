@@ -93,6 +93,33 @@ def run_analyze(
     detector = ModuleDetector()
     modules = detector.detect(parsed_files, call_graph)
 
+    # Module scoping (ALCHEMIST_ONLY_MODULE): translate only the named module(s)
+    # of a big multi-module library while the differential ORACLE still compiles
+    # the WHOLE directory (discover_c_build) so cross-module symbols resolve.
+    # This is how a real cyclic library (Lua: 24 modules / 1085 fns) is translated
+    # bottom-up one module at a time against a whole-library oracle, instead of
+    # attempting all modules at once. Comma-separated substrings, case-insensitive.
+    import os as _os
+    _only = (_os.environ.get("ALCHEMIST_ONLY_MODULE") or "").strip()
+    if _only:
+        _wanted = [w.strip().lower() for w in _only.split(",") if w.strip()]
+
+        def _mname(m):
+            return (m.get("name", "") if isinstance(m, dict)
+                    else getattr(m, "name", "")) or ""
+        _kept = [m for m in modules
+                 if any(w in _mname(m).lower() for w in _wanted)]
+        if _kept:
+            console.print(
+                f"[cyan]module scope: translating {len(_kept)}/{len(modules)} "
+                f"module(s) matching {_wanted} (oracle still links the whole dir)"
+                f"[/cyan]")
+            modules = _kept
+        else:
+            console.print(
+                f"[yellow]ALCHEMIST_ONLY_MODULE={_only!r} matched no module; "
+                f"translating all[/yellow]")
+
     # Build summary
     total_functions = sum(len(pf["functions"]) for pf in parsed_files.values())
     total_structs = sum(len(pf["structs"]) for pf in parsed_files.values())
