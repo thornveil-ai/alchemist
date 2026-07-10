@@ -833,14 +833,24 @@ def normalize_digest_specs(c_source_dir, specs) -> int:
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
+            is_buf_transform = classify_buf_transform(sig) is not None if sig else False
             if sig is None or (classify_digest_shape(sig) is None
-                               and classify_buf_transform(sig) is None):
+                               and not is_buf_transform):
                 continue
-            # Keep the read-only byte-slice input(s) (message [+ key]); drop the mut out buffer
-            # and any length param — the digest length is baked into the oracle. For a
-            # buf_transform codec the returned Vec IS the written output, same normalization.
-            keep = [p for p in (alg.inputs or [])
-                    if "[u8]" in (p.rust_type or "") and "mut" not in (p.rust_type or "")]
+            # Keep the read-only byte-slice input(s) (message [+ key]); drop the out buffer
+            # and any length param — the returned Vec IS the written output.
+            byte_slices = [p for p in (alg.inputs or []) if "[u8]" in (p.rust_type or "")]
+            if is_buf_transform:
+                # A codec is exactly `(in, inlen, out, outlen)`: ONE input slice, ONE output
+                # slice. The output `char *out` is NOT const, so it lifts to `&[u8]` (no `mut`)
+                # and the mut-heuristic below would wrongly keep it as a phantom second param —
+                # the signature/arity mismatch that made smaz's fills unwinnable. Keep only the
+                # first byte-slice (the input); the returned Vec replaces `out`.
+                keep = byte_slices[:1]
+            else:
+                # Digest (SipHash/SHA): drop the `&mut` out buffer, keep read-only inputs
+                # (message [+ key]).
+                keep = [p for p in byte_slices if "mut" not in (p.rust_type or "")]
             if not keep:
                 continue
             alg.inputs = keep
