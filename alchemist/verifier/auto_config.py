@@ -586,6 +586,69 @@ def fuzz_inplace_vectors(dll, alg, sig, *, count: int = 24):
     return vectors
 
 
+def classify_buf_transform(sig) -> str | None:
+    """`<int> f(<byteptr> in, <int> inlen, <byteptr> out, <int> outlen)` that RETURNS the number
+    of bytes written to `out`: a variable-length buffer transform — a codec (compress / encode /
+    decode). Verified byte-exact by comparing `out[0..ret]` and `ret`, C vs Rust, over fuzzed
+    inputs; the extractor lifts it to `fn(input: &[u8]) -> Vec<u8>` (the returned Vec IS the
+    written output). Distinct from the digest shape (whose output length is FIXED). This is the
+    Phase-3 shape that lets a real codec — where `goto` usually lives — be verified at all."""
+    if (sig.return_type or "").strip() not in (
+            "int", "size_t", "long", "ssize_t", "unsigned", "unsigned int", "uint32_t"):
+        return None
+    p = [t.strip() for _, t in sig.params]
+    if (len(p) == 4 and _BYTE_PTR.match(p[0]) and _INT_C_TYPES.match(p[1])
+            and _BYTE_PTR.match(p[2]) and _INT_C_TYPES.match(p[3])):
+        return "buf_transform"
+    return None
+
+
+def fuzz_buf_transform_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint fill-loop vectors for a variable-length buffer transform: run the compiled C on a
+    fuzzed input buffer, capture `out[0..return_value]`. Emits `&[u8] -> Vec<u8>` vectors the
+    generic (exact) test-emitter already understands."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import (
+        _bytes_to_rust_literal, _gen_byte_inputs, _rng, _FUZZ_SEED,
+    )
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if classify_buf_transform(sig) is None:
+        return []
+    slice_params = [p for p in (alg.inputs or []) if "[u8]" in (p.rust_type or "")]
+    if not slice_params:
+        return []
+    msg_param = slice_params[0].name
+    fn = getattr(dll, sig.name)
+    fn.restype = ctypes.c_int
+    _lenct = _ctype(sig.params[1][1]) or ctypes.c_int
+    fn.argtypes = (ctypes.POINTER(ctypes.c_ubyte), _lenct,
+                   ctypes.POINTER(ctypes.c_ubyte), _lenct)
+    rng = _rng(_FUZZ_SEED)
+    _ret = (getattr(alg, "return_type", "") or "").strip()
+    vectors = []
+    for data in _gen_byte_inputs(rng, count):
+        data = bytes(data)
+        inbuf = (ctypes.c_ubyte * len(data))(*data) if data else (ctypes.c_ubyte * 1)()
+        cap = len(data) * 4 + 512
+        out = (ctypes.c_ubyte * cap)()
+        try:
+            ret = int(fn(inbuf, len(data), out, cap))
+        except Exception:  # noqa: BLE001
+            continue
+        if ret < 0 or ret > cap:
+            continue  # overflow/error sentinel — can't represent as a clean output Vec
+        result = bytes(out[i] for i in range(ret))
+        lit = "vec![" + ", ".join(f"0x{b:02x}" for b in result) + "]"
+        vectors.append(SpecTestVector(
+            description=f"transform_len_{len(data)}",
+            source=f"C reference (buf_transform): {sig.name}",
+            inputs={msg_param: _bytes_to_rust_literal(data)},
+            expected_output=(f"Ok({lit})" if _ret.startswith("Result<") else lit),
+            tolerance="exact",
+        ))
+    return vectors
+
+
 def classify_cbuf_out(sig) -> str | None:
     """C `<byteptr> f(const <byteptr> in, <byteptr> out)` — reads a NUL/delimiter-terminated
     input string and writes a result STRING into a caller-provided output buffer, returning
@@ -716,10 +779,12 @@ def normalize_digest_specs(c_source_dir, specs) -> int:
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
-            if sig is None or classify_digest_shape(sig) is None:
+            if sig is None or (classify_digest_shape(sig) is None
+                               and classify_buf_transform(sig) is None):
                 continue
             # Keep the read-only byte-slice input(s) (message [+ key]); drop the mut out buffer
-            # and any length param — the digest length is baked into the oracle.
+            # and any length param — the digest length is baked into the oracle. For a
+            # buf_transform codec the returned Vec IS the written output, same normalization.
             keep = [p for p in (alg.inputs or [])
                     if "[u8]" in (p.rust_type or "") and "mut" not in (p.rust_type or "")]
             if not keep:
@@ -1386,6 +1451,20 @@ def build_diff_config(
                     cases=5000,
                 ))
                 used_signatures.append(sig)
+                continue
+            # Checked LAST (after digest): a variable-length buffer transform (codec) — its
+            # signature `int f(byteptr, int, byteptr, int)` overlaps a fixed-output digest, so
+            # digest (more specific) wins first; anything left that fits is a variable codec.
+            if classify_buf_transform(sig) is not None:
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="buf_transform",
+                    rust_call=f"rust_{alg.name}(&input)",
+                    c_call=f"c_{alg.name}(&input)",
+                    boundary_lengths=list(_GENERIC_BOUNDARIES),
+                    cases=4000,
+                ))
+                used_signatures.append(sig)
     if not harnesses:
         return None
 
@@ -1499,6 +1578,8 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
                 vecs = fuzz_inplace_vectors(dll, alg, sig)
             elif classify_cbuf_out(sig) is not None:
                 vecs = fuzz_cbuf_out_vectors(dll, alg, sig)
+            elif classify_buf_transform(sig) is not None:
+                vecs = fuzz_buf_transform_vectors(dll, alg, sig)
             elif (_mi := classify_scalar_mutator_shape(sig, _structs)) is not None:
                 vecs = fuzz_scalar_mutator_vectors(dll, alg, sig, _mi)
             else:

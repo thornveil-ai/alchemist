@@ -519,6 +519,42 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name}",
                 ))
+            elif h.category == "buf_transform":
+                # Variable-length buffer transform (codec): Rust fn is `(&[u8]) -> Vec<u8>`;
+                # the C side calls the raw extern into a generous out-buffer and returns the
+                # first `ret` bytes (the written length is the extern's return value).
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of buf_transform '{h.algorithm}': not found")
+                path = f"{fn.crate_ident}::{fn.name}"
+                call = f"{path}(input)"
+                if fn.ret.startswith("Result<"):
+                    call = f"({call}).unwrap_or_default()"
+                rust_wrapper = (
+                    f"/// Byte output of {fn.crate}::{fn.name} (variable-length codec).\n"
+                    f"pub fn rust_{h.algorithm}(input: &[u8]) -> Vec<u8> {{\n"
+                    f"    {call}\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(input: &[u8]) -> Vec<u8> {{\n"
+                    f"    let mut out = vec![0u8; input.len() * 4 + 512];\n"
+                    f"    let cap = out.len() as i32;\n"
+                    f"    let ret = unsafe {{ {ffi_ident}::{h.algorithm}("
+                    f"input.as_ptr() as _, input.len() as _, out.as_mut_ptr() as _, cap) }};\n"
+                    f"    let n = if ret < 0 {{ 0usize }} else {{ (ret as usize).min(out.len()) }};\n"
+                    f"    out.truncate(n);\n"
+                    f"    out\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (buf_transform)",
+                ))
             elif h.category == "cbuf_out":
                 # C-string in -> result-string out (NMEA): Rust fn is `(&str) -> String`;
                 # the C side calls the raw extern into an out-buffer and reads the string back.

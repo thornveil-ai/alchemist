@@ -35,7 +35,7 @@ VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
-    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out"}
+    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "buf_transform"}
 
 
 @dataclass
@@ -231,6 +231,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
         return _proptest_hash_seq_block(h)
+    if h.category == "buf_transform":
+        return _proptest_buf_transform_block(h)
     if h.category == "cbuf_out":
         return _proptest_cbuf_out_block(h)
     if h.category == "inplace":
@@ -276,6 +278,22 @@ def _boundary_block(h: AlgorithmHarness) -> str:
                 let c_out = {h.c_call};
                 assert_eq!(rust_out, c_out,
                     "{h.algorithm} diverged from C reference at boundary length {{}}", len);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_buf_transform_block(h: AlgorithmHarness) -> str:
+    """Differential for a variable-length buffer transform (codec): fuzz an input byte buffer
+    and compare the two output byte vectors (Rust `(&[u8])->Vec<u8>` vs the C out[0..ret])."""
+    strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..512)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+                prop_assert_eq!({h.rust_call}, {h.c_call});
             }}
         }}
     """).rstrip()
