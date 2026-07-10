@@ -293,6 +293,40 @@ class DllBuildResult:
     command: list[str] = field(default_factory=list)
 
 
+_VIS_MACRO_RE = re.compile(
+    r'#\s*define\s+([A-Za-z_]\w*)\b[^\n]*'
+    r'__attribute__\s*\(\s*\(\s*visibility\s*\(\s*"(?:internal|hidden|protected)"',
+)
+
+
+def _visibility_neutralizers(dirs) -> list[str]:
+    """Scan header dirs for macros defined with hidden/internal visibility and
+    return `-D<MACRO>=extern` flags to force default visibility (exported), so a
+    library's INTERNAL functions become callable from the compiled oracle .so."""
+    seen: set[str] = set()
+    flags: list[str] = []
+    checked: set[Path] = set()
+    for d in dirs:
+        try:
+            d = Path(d)
+        except Exception:  # noqa: BLE001
+            continue
+        if d in checked or not d.is_dir():
+            continue
+        checked.add(d)
+        for hf in list(d.glob("*.h")) + list(d.glob("*.hpp")):
+            try:
+                txt = hf.read_text(errors="replace")
+            except OSError:
+                continue
+            for m in _VIS_MACRO_RE.finditer(txt):
+                name = m.group(1)
+                if name not in seen:
+                    seen.add(name)
+                    flags.append(f"-D{name}=extern")
+    return flags
+
+
 def build_c_dll(
     c_sources: list[Path],
     output_dll: Path,
@@ -317,7 +351,17 @@ def build_c_dll(
             stderr=f"compiler {compiler!r} not found on PATH",
         )
 
+    # Neutralize hidden-visibility macros so INTERNAL library functions are
+    # actually EXPORTED from the shared oracle. Libraries hide their internal
+    # API from the .so (Lua: `#define LUAI_FUNC __attribute__((visibility
+    # ("internal"))) extern`), so ctypes can't call them (undefined symbol) and
+    # the differential oracle produces no vectors. Scan headers for any macro
+    # defined with visibility internal/hidden and force it back to plain extern.
+    _vis_flags = _visibility_neutralizers(include_dirs + [p.parent for p in c_sources])
+
     cmd: list[str] = [compiler, "-shared", "-O2", "-fPIC"]
+    if _vis_flags:
+        cmd.extend(_vis_flags)
     if extra_cflags:
         cmd.extend(extra_cflags)
     for inc in include_dirs:
