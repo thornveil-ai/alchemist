@@ -324,6 +324,13 @@ def _visibility_neutralizers(dirs) -> list[str]:
                 if name not in seen:
                     seen.add(name)
                     flags.append(f"-D{name}=extern")
+    # The visibility macro is typically re-#defined inside the header itself,
+    # guarded by `defined(__ELF__)` (Lua's LUAI_FUNC, the standard idiom), so a
+    # command-line -D is overridden. Undefining __ELF__ makes the header pick its
+    # non-hidden (`extern`) branch -> internal symbols exported. Only when a
+    # hidden-visibility macro was actually found.
+    if flags:
+        flags.append("-U__ELF__")
     return flags
 
 
