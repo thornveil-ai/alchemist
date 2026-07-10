@@ -1602,6 +1602,16 @@ def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
     len_params = [pp for pp in (alg.inputs or [])
                   if pp.name != data_param and "usize" in (pp.rust_type or "")]
     len_param = len_params[0].name if len_params else None
+    # A seeded checksum keeps a seed param (u8..u64, NOT the usize length). The
+    # oracle bakes default_seed(); the emitted fill-test must pass that SAME seed
+    # value or the call won't match the C reference (and, for a trailing seed,
+    # the test would drop the arg entirely -> won't even compile).
+    _seed_val = default_seed(alg.name)
+    seed_params = [pp for pp in (alg.inputs or [])
+                   if pp.name not in (data_param, len_param)
+                   and re.fullmatch(r"[iu](8|16|32|64|128|size)", (pp.rust_type or "").strip())
+                   and "usize" not in (pp.rust_type or "")]
+    seed_param = seed_params[0] if (shape in ("seeded", "seeded_trailing") and seed_params) else None
     rng = _rng(_FUZZ_SEED)
     vectors = []
     for data in _gen_byte_inputs(rng, count):
@@ -1612,6 +1622,8 @@ def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
         _row = {data_param: _bytes_to_rust_literal(bytes(data))}
         if len_param:
             _row[len_param] = f"{len(data)}usize"
+        if seed_param is not None:
+            _row[seed_param.name] = f"{_seed_val}{(seed_param.rust_type or 'u32').strip()}"
         vectors.append(SpecTestVector(
             description=f"fuzz_input_len_{len(data)}",
             source=f"C reference (scalar): {sig.name}",

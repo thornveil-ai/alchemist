@@ -63,3 +63,35 @@ def test_adapter_c_seed_first_unchanged():
     h = SimpleNamespace(algorithm="adler32", category="checksum", seed=1, seed_trailing=False)
     body = _resolve_checksum_c(h, "cref", {"adler32": sig}, "u32")
     assert "1 as _, data.as_ptr(), data.len() as _" in body
+
+
+def test_fuzz_vectors_include_trailing_seed(tmp_path):
+    """The fill-loop unit tests must pass the seed arg too, or the emitted test
+    calls the fn with too few args (won't compile). Regression for the second
+    Lua-beachhead gap (lua_s_hash(str) — 1 arg, fn wants 2)."""
+    import ctypes
+    import shutil
+    if shutil.which("gcc") is None:
+        import pytest
+        pytest.skip("gcc not on PATH")
+    src = tmp_path / "h.c"
+    src.write_text(
+        "#include <stddef.h>\n"
+        "#define cast_uint(i) ((unsigned int)(i))\n"
+        "#define cast_byte(i) ((unsigned char)(i))\n"
+        "unsigned int luaS_hash(const char *str, size_t l, unsigned int seed){\n"
+        "  unsigned int h = seed ^ cast_uint(l);\n"
+        "  for (; l>0; l--) h ^= ((h<<5)+(h>>2)+cast_byte(str[l-1]));\n"
+        "  return h; }\n")
+    dll = tmp_path / ("h.dll" if __import__("os").name == "nt" else "h.so")
+    from alchemist.verifier.auto_ffi import build_c_dll
+    r = build_c_dll([src], dll)
+    assert r.success, r.stderr
+    from alchemist.verifier.auto_config import fuzz_checksum_vectors
+    sig = parse_header("unsigned int luaS_hash(const char *str, size_t l, unsigned int seed);")[0]
+    alg = SimpleNamespace(name="luaS_hash", inputs=[
+        SimpleNamespace(name="str", rust_type="&[u8]"),
+        SimpleNamespace(name="seed", rust_type="u32")])
+    vecs = fuzz_checksum_vectors(ctypes.CDLL(str(dll)), alg, sig, count=4)
+    assert vecs and all("seed" in v.inputs for v in vecs)
+    assert all(v.inputs["seed"].endswith("u32") for v in vecs)
