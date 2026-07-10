@@ -13,6 +13,7 @@ ephemeral; this archive is the record.
 |--------|--------|-----------:|-------------:|:------------:|-------|
 | **smaz** | variable-length codec | 194 LOC | 485 LOC | ✅ 2/2 @ 4000 cases | forward `goto`→goto-free, 254-entry hash codebook carried byte-exact, decoder round-trip oracle. Conquered 2026-07-10 (run9). 8 framework bugs fixed en route, zero model incapacity. |
 | **sha256** | crypto digest | 4.3 KB | 28 KB | ✅ 2/2 (CAVP-backed) | NIST CAVP KAT-verified digest, cold→safe Rust. The crypto credibility milestone (Phase 2.5). |
+| **lua_hash** (`luaS_hash`) | Lua string hash | 12 LOC | — | ✅ 2/2 @ 5000 cases | **FIRST Lua 5.4 function conquered** (2026-07-10). `(str,len,seed)→u32`, the hash every Lua table + string-intern depends on. Exposed + fixed 3 framework gaps: seed-as-trailing-arg checksum shape, seed missing from fill-vectors, `const char*` FFI ptr cast. Model translation was byte-identical to C throughout. |
 
 ## Other verified wins (working copies on box `/tmp`, not yet archived here)
 - `zlib` — deflate/inflate byte-exact round-trip, ~7.1k LOC core (Phase 2 moonshot; in `subjects/zlib-dll/`).

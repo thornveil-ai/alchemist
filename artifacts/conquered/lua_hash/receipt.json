@@ -1,0 +1,92 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-10T09:22:10.388171+00:00",
+  "workspace": "/tmp/lua_beach/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (2 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 2 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s [1/1 harnesses adapted (luaS_hash -> lua_hash_core::lua_s_hash)]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "luaS_hash",
+        "category": "checksum",
+        "cases": 5000,
+        "seed": 0,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "luaS_hash -> lua_hash_core::lua_s_hash"
+      }
+    ],
+    "cargo_summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s"
+  },
+  "oracle": {
+    "ffi_crate": "c_lua_beach_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/tmp/lua_beach/lua_hash.c",
+        "sha256": "7ec977a81ba82a4d7aaf8329adb01b86784a570d345530cca222098a72bc8964"
+      }
+    ],
+    "dll": {
+      "path": "/tmp/lua_beach/.alchemist/verify_gen/c_lua_beach_ref/libc_lua_beach_ref.so",
+      "sha256": "7a4d0769531c538eea13c96b99542a3c931a5907dd520eb38668c111899ca60a"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 1
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "7fba560ecc9ace2b5063c8864c82e8def9824348a85d2aef7f86cfe0b9610ef5",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}
