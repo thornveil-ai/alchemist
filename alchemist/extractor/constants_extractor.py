@@ -423,12 +423,25 @@ def _is_c_preprocessor_marker(value: str) -> bool:
     # A single Rust keyword used as a value expression — invalid
     if v in _RUST_RESERVED:
         return True
-    # A sequence of only reserved words (e.g., "const volatile")
+    # A sequence of only reserved words (e.g., "const volatile") or C
+    # storage-class / qualifier / calling-convention keywords used as macro
+    # bodies (`#define FORCE_INLINE inline`, `#define REG register`). These are
+    # qualifiers, not values — emitting `pub const X = inline` is E0423. This is
+    # universal across C codebases (murmur3's FORCE_INLINE, many others).
     parts = v.split()
-    if all(p in _RUST_RESERVED or p in {"volatile", "__far", "__near", "FAR"}
-           for p in parts):
+    if all(p in _RUST_RESERVED or p in _C_QUALIFIER_MARKERS for p in parts):
         return True
     return False
+
+
+# C storage-class specifiers, type qualifiers, and calling-convention markers
+# that appear as macro bodies but are NOT constant values.
+_C_QUALIFIER_MARKERS = frozenset({
+    "volatile", "inline", "register", "restrict", "auto", "extern", "static",
+    "__inline", "__inline__", "__forceinline", "__restrict", "__restrict__",
+    "__volatile__", "_Noreturn", "__attribute__", "__cdecl", "__stdcall",
+    "__fastcall", "__far", "__near", "FAR", "NEAR", "__declspec",
+})
 
 
 def extract_constants(
