@@ -1402,10 +1402,17 @@ def build_diff_config(
             # extractor labelled it checksum or hash (FNV, CRC-16, ...). A
             # true digest-returning hash fails classify_checksum_shape (its
             # return type isn't a scalar int), so it's excluded here.
-            if (alg.category or "") in ("cipher", "compression", "decompression"):
-                continue
             sig = by_name.get(alg.name)
             if sig is None:
+                continue
+            # A codec the extractor labelled compression/decompression is still a
+            # buf_transform whose byte-exact differential harness (with encoder
+            # round-trip for decoders) IS built below — do NOT skip it, or the
+            # final gate gets no config and refuses a fully-translated codec.
+            # Ciphers and any compression that is NOT a clean buf_transform have
+            # no scalar/checksum harness and are skipped as before.
+            if (alg.category or "") in ("cipher", "compression", "decompression") \
+                    and classify_buf_transform(sig) is None:
                 continue
             if _cs is not None and alg.name in (_cs['init'][0], _cs['gen'][0]):
                 continue
