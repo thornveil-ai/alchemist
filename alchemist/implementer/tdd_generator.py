@@ -906,10 +906,13 @@ class TDDGenerator:
                 return attempt
 
             attempt.last_error = _top_lines(terr, 5)
+            _combined_out = (tout or "") + chr(10) + (terr or "")
+            _divergence = _distill_vector_divergence(_combined_out)
             previous_failure = (
                 f"## Previous iteration compiled but FAILED tests.\n\n"
                 f"You wrote:\n```rust\n{new_fn[:2500]}\n```\n\n"
-                f"Test output:\n```\n{_top_lines((tout or '') + chr(10) + (terr or ''), 40)}\n```\n\n"
+                + (_divergence + "\n" if _divergence else "")
+                + f"Test output:\n```\n{_top_lines(_combined_out, 40)}\n```\n\n"
                 f"The code compiles but produces wrong output. Check the "
                 f"expected values in the test and fix the algorithm logic. "
                 f"Most likely causes: off-by-one, wrong initial state, "
@@ -2303,6 +2306,63 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
 
 def _top_lines(text: str, n: int) -> str:
     return "\n".join((text or "").splitlines()[:n])
+
+
+_ASSERT_LR_RE = re.compile(
+    r"left:\s*(\[[^\]]*\])\s*(?:\n|\r\n)?\s*right:\s*(\[[^\]]*\])", re.MULTILINE)
+
+
+def _distill_vector_divergence(test_output: str) -> str:
+    """Turn cargo's noisy `left: [...] / right: [...]` assertion dump into a
+    focused, actionable hint: the FIRST output index where the two byte vectors
+    diverge, plus a short window around it. A subtle emission-ORDER bug (e.g.
+    emitting a code byte before flushing a pending buffer) is invisible in 40
+    lines of raw cargo output but obvious as 'agree through index N, then you
+    put X where C put Y'. Generalizes to every byte-exact function — the model
+    can only fix what it can localize. Returns '' if no left/right pair found."""
+    m = _ASSERT_LR_RE.search(test_output or "")
+    if not m:
+        return ""
+
+    def _parse(arr: str) -> "list[int] | None":
+        try:
+            return [int(x.strip()) for x in arr.strip("[]").split(",") if x.strip() != ""]
+        except ValueError:
+            return None
+
+    got = _parse(m.group(1))       # left  = the Rust output under test
+    want = _parse(m.group(2))      # right = the C-reference expected output
+    if got is None or want is None:
+        return ""
+    n = min(len(got), len(want))
+    idx = next((i for i in range(n) if got[i] != want[i]), n)
+    if idx == n and len(got) == len(want):
+        return ""  # identical (a different assertion failed)
+
+    lo = max(0, idx - 3)
+    hi_g = min(len(got), idx + 5)
+    hi_w = min(len(want), idx + 5)
+    detail = (
+        f"## First divergence at OUTPUT byte index {idx}\n"
+        f"- your output length {len(got)}, expected length {len(want)}\n"
+    )
+    if idx < len(got) and idx < len(want):
+        detail += (
+            f"- at index {idx}: you emitted {got[idx]}, C emitted {want[idx]}\n")
+    elif idx >= len(got):
+        detail += f"- your output ends early; C continues with {want[idx]}\n"
+    else:
+        detail += f"- your output is too long; C stopped, you emitted {got[idx]}\n"
+    detail += (
+        f"- your bytes   [{lo}..]: {got[lo:hi_g]}\n"
+        f"- C ref bytes  [{lo}..]: {want[lo:hi_w]}\n"
+        f"The outputs AGREE through index {idx - 1 if idx > 0 else 0}, then diverge. "
+        f"If the same values appear in both but in a different ORDER around this "
+        f"index, you have an emission-ordering bug (e.g. emitting a token before "
+        f"flushing a pending buffer that C flushes first). Fix the order/condition "
+        f"at that exact step; do not rewrite the whole function.\n"
+    )
+    return detail
 
 
 def _normalize_filled_fn_name(code: str, spec_name: str) -> str:
