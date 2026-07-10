@@ -40,12 +40,14 @@ def test_flatten_drops_codec_traits_real_smaz():
     (work / "smaz.c").write_bytes((FIX / "smaz.c").read_bytes())
     (work / "smaz.h").write_bytes((FIX / "smaz.h").read_bytes())
 
+    # Trait methods carry the SHORT verb name (compress), while the C fn is
+    # prefixed (smaz_compress) — the mapping must still resolve.
     arch = _arch([
         _trait("Compressor", [_method(
-            "smaz_compress",
+            "compress",
             "fn compress(&self, input: &[u8], output: &mut [u8]) -> Result<usize, Self::Error>")]),
         _trait("Decompressor", [_method(
-            "smaz_decompress",
+            "decompress",
             "fn decompress(&self, input: &[u8], output: &mut [u8]) -> Result<usize, Self::Error>")]),
     ])
     specs = [SimpleNamespace(name="smaz", algorithms=[

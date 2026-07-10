@@ -198,7 +198,7 @@ class TDDGenerator:
         max_iter_per_fn: int = 5,
         holistic_after: int = 3,
         multi_sample_after: int = 2,
-        multi_sample_n: int = 4,
+        multi_sample_n: int = 6,
         multi_sample_temperature: float = 0.35,
     ):
         self.config = config or AlchemistConfig()
@@ -2356,12 +2356,31 @@ def _distill_vector_divergence(test_output: str) -> str:
     detail += (
         f"- your bytes   [{lo}..]: {got[lo:hi_g]}\n"
         f"- C ref bytes  [{lo}..]: {want[lo:hi_w]}\n"
-        f"The outputs AGREE through index {idx - 1 if idx > 0 else 0}, then diverge. "
-        f"If the same values appear in both but in a different ORDER around this "
-        f"index, you have an emission-ordering bug (e.g. emitting a token before "
-        f"flushing a pending buffer that C flushes first). Fix the order/condition "
-        f"at that exact step; do not rewrite the whole function.\n"
     )
+    # Same multiset, different order => it is DEFINITELY an emission-ORDER bug,
+    # not a wrong value. Say so unambiguously with the concrete fix, because a
+    # generic "check your logic" hint does not get the model to restructure the
+    # control flow (the smaz_compress flush-before-code case: the model pushes a
+    # freshly-matched token before flushing the pending verbatim buffer that C
+    # emits first).
+    if sorted(got) == sorted(want):
+        detail += (
+            f"IMPORTANT: your output and C's contain the EXACT SAME bytes, only in a "
+            f"DIFFERENT ORDER. This is not a wrong value — it is an EMISSION-ORDER bug. "
+            f"When you produce a new token (e.g. a match/code byte), you must FIRST emit "
+            f"any pending/buffered output (the verbatim-flush) that C writes before it, "
+            f"THEN the new token. Move the pending-buffer flush to run BEFORE you push the "
+            f"newly-computed byte at index {idx}. Do not defer the flush to the end of the "
+            f"loop iteration.\n"
+        )
+    else:
+        detail += (
+            f"The outputs AGREE through index {idx - 1 if idx > 0 else 0}, then diverge. "
+            f"If the same values appear in both but in a different ORDER around this "
+            f"index, you have an emission-ordering bug (e.g. emitting a token before "
+            f"flushing a pending buffer that C flushes first). Fix the order/condition "
+            f"at that exact step; do not rewrite the whole function.\n"
+        )
     return detail
 
 

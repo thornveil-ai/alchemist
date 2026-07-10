@@ -216,10 +216,18 @@ def _flatten_codec_traits(arch, specs, source) -> int:
         return 0
 
     def _is_codec_method(m) -> bool:
-        # Map a trait method to a C signature by name (method name or the fn it wraps).
-        sig = sigs.get(getattr(m, "name", ""))
+        # Map a trait method to a C signature. The method name is usually the
+        # short verb (`compress`) while the C fn is prefixed (`smaz_compress`),
+        # so try: exact name, C-fn-name-ends-with-method, then the fn name
+        # appearing in the method's signature text.
+        mname = getattr(m, "name", "") or ""
+        sig = sigs.get(mname)
+        if sig is None and mname:
+            for nm, s in sigs.items():
+                if nm == mname or nm.endswith("_" + mname) or nm.endswith(mname):
+                    sig = s
+                    break
         if sig is None:
-            # methods sometimes carry the C fn name inside the signature text
             for nm, s in sigs.items():
                 if nm in (getattr(m, "signature", "") or ""):
                     sig = s

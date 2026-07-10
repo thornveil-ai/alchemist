@@ -19,8 +19,22 @@ def test_distill_first_divergence_real_smaz_compress():
     hint = _distill_vector_divergence(out)
     assert "index 2" in hint                      # first differing byte is index 2
     assert "you emitted 38, C emitted 254" in hint
-    assert "ordering" in hint.lower()
-    assert "[72, 0, 38" in hint.replace(" ", "")[:40] or "38" in hint
+    # these vectors are a pure reordering -> sharp emission-order instruction
+    assert "EMISSION-ORDER" in hint
+    assert "38" in hint
+
+
+def test_distill_permutation_gives_sharp_ordering_instruction():
+    # Same bytes, reordered => must give the unambiguous "flush pending output
+    # BEFORE the new token" instruction (the smaz_compress flush-order case).
+    out = (
+        "  left: [109, 255, 5, 113, 204]\n"
+        " right: [255, 5, 113, 204, 109]\n"
+    )
+    hint = _distill_vector_divergence(out)
+    assert "EXACT SAME bytes" in hint
+    assert "EMISSION-ORDER" in hint
+    assert "FIRST emit" in hint or "BEFORE" in hint
 
 
 def test_distill_length_mismatch():
