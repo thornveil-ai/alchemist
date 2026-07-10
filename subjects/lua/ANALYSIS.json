@@ -1,0 +1,4003 @@
+{
+  "summary": "Parallel analysis of all Lua 5.4 modules -> translation DAG + oracle plan",
+  "agentCount": 32,
+  "logs": [
+    "analyzed 31/31 modules"
+  ],
+  "result": {
+    "analyzed": 31,
+    "synthesis": {
+      "translation_order": [
+        "lctype",
+        "lopcodes",
+        "lobject",
+        "lmem",
+        "lzio",
+        "lstring",
+        "ltm",
+        "lfunc",
+        "ltable",
+        "lstate",
+        "lgc",
+        "ldebug",
+        "ldo",
+        "lvm",
+        "lapi",
+        "lundump",
+        "ldump",
+        "llex",
+        "lcode",
+        "lparser",
+        "lauxlib",
+        "lbaselib",
+        "lmathlib",
+        "loslib",
+        "loadlib",
+        "ltablib",
+        "lutf8lib",
+        "lstrlib",
+        "ldblib",
+        "lcorolib",
+        "liolib"
+      ],
+      "first_batch": [
+        {
+          "module": "lctype",
+          "why": "True leaf: zero deps, exports NO functions - only the 257-byte const luai_ctype_ table plus header macros. A byte-for-byte const [u8;257] transcription with const-fn masks. Nothing blocks it and it is a hard prerequisite of llex.",
+          "first_functions": [
+            "luai_ctype_ (const table transcription)",
+            "lislalpha/lisdigit/lisspace/lisxdigit/ltolower as const fns",
+            "handle EOZ(-1) +1 index offset"
+          ]
+        },
+        {
+          "module": "lopcodes",
+          "why": "True leaf: zero deps, no functions - only luaP_opmodes[NUM_OPCODES] (83-entry lu_byte mask array). Straight static-array transcription, byte-verifiable vs compiled C; prerequisite of lvm/lcode/lundump. Keep OpCode enum ordering in lockstep (the ORDER OP invariant).",
+          "first_functions": [
+            "luaP_opmodes[83] (const array)",
+            "opmode()-derived per-row masks",
+            "testAMode/getarg bit macros as const fns"
+          ]
+        },
+        {
+          "module": "lobject",
+          "why": "Its five arg-only helpers are the richest immediately-oracle-able pure surface in the whole tree - no lua_State, no GC, byte-in/byte-out. This is the natural smaz-successor beachhead and unblocks number parsing everywhere.",
+          "first_functions": [
+            "luaO_ceillog2",
+            "luaO_hexavalue",
+            "luaO_utf8esc",
+            "luaO_str2num",
+            "luaO_chunkid"
+          ]
+        },
+        {
+          "module": "lstring",
+          "why": "luaS_hash is a fully self-contained (str,len,seed)->u32 hash - the ideal standalone differential oracle - and it must be bit-exact before any intern table works. luaS_eqlngstr/luaS_hashlongstr are pure reads over constructed TStrings.",
+          "first_functions": [
+            "luaS_hash",
+            "luaS_eqlngstr",
+            "luaS_hashlongstr"
+          ]
+        },
+        {
+          "module": "lvm",
+          "why": "A clean tier of pure numeric helpers whose lua_State arg is used ONLY for the divide-by-zero error path; on non-degenerate inputs they are output-determined by args and fuzzable standalone. Getting Lua integer/float semantics locked early de-risks the whole arithmetic surface.",
+          "first_functions": [
+            "luaV_shiftl",
+            "luaV_idiv",
+            "luaV_mod",
+            "luaV_flttointeger",
+            "luaV_tonumber_",
+            "luaV_tointegerns"
+          ]
+        },
+        {
+          "module": "lutf8lib",
+          "why": "utf8_decode + u_posrelat are fully arg-determined and fuzzable byte-exact over arbitrary byte buffers with no VM. Rated 'easy'; a fast confidence-building win that also feeds lobject's utf8esc validation.",
+          "first_functions": [
+            "utf8_decode",
+            "u_posrelat"
+          ]
+        },
+        {
+          "module": "lmathlib",
+          "why": "The xoshiro256** PRNG core (nextrand/rotl/project/I2d/setseed) is self-contained: fixed seed -> deterministic byte-exact math.random sequence. Must pin ONE Rand64 config (native 64-bit vs struct{h,l} 32-bit-pair) to match compiled C bit-for-bit.",
+          "first_functions": [
+            "nextrand",
+            "rotl",
+            "project",
+            "I2d",
+            "Int2I"
+          ]
+        },
+        {
+          "module": "lzio",
+          "why": "Tiny buffered reader; all three fns hold lua_State only to pass opaquely to a user reader callback (lua_lock is a no-op in default build). A harness over a fixed byte buffer with a mock reader verifies it standalone. Prerequisite of llex/lundump.",
+          "first_functions": [
+            "luaZ_read",
+            "luaZ_fill",
+            "luaZ_init"
+          ]
+        },
+        {
+          "module": "ldebug",
+          "why": "luaG_getfuncline (and private getbaseline) is a pure function of a Proto's lineinfo/abslineinfo arrays - fuzzable by constructing a Proto with synthetic debug info. Isolable now even though the rest of the module needs the live VM.",
+          "first_functions": [
+            "luaG_getfuncline",
+            "getbaseline (private)"
+          ]
+        }
+      ],
+      "oracle_strategy": "Build reference Lua 5.4 once as a static archive (liblua.a, -O2, frozen config: LUA_32BITS off, LUA_FLOAT_DOUBLE, LUA_INT_LONGLONG, native Rand64, C locale) and pin those exact macros in the Rust port so float/int/hash widths match. Three oracle tiers by function purity: (1) PURE fns (lobject helpers, luaS_hash, lvm numerics, utf8_decode, PRNG core) - compile a thin C harness that extern-declares the symbol and drives it with a shared corpus of inputs, capturing return value AND all out-params byte-for-byte; the Rust port replays the identical corpus. (2) STATE-FOR-ERROR-ONLY fns (luaV_idiv/mod, luaO_rawarith) - pass a real luaL_newstate() but restrict the fuzz domain to the non-error region for equality, and separately wrap the error branch in setjmp (lua_atpanic/pcall) to assert it as a distinct 'refused' outcome. (3) CONSTRUCTED-OBJECT fns (luaG_getfuncline over a Proto, luaH_get* over a Table, luaF_getlocalname) - build the object through the real API inside a live state to guarantee correct layout, mutate its fields to the test vector, call the target, and compare the FULL mutated struct state (not just the return), because several self-modify caching hints (t->alimit, TM flag cache). For everything in the core SCC that only means something against a running interpreter, defer differential testing until the whole core is stood up, then oracle end-to-end by loading identical bytecode/source chunks and diffing observable output (dump bytes, tostring, stack contents) against reference Lua. Emit every corpus from one generator so C oracle and Rust port consume byte-identical vectors.",
+      "new_walls_vs_smaz": [
+        "Tagged unions (TValue value_/tt_, Node key union, UpVal open/closed union): smaz was flat bytes; first bites at lobject/luaO_str2num which writes a discriminated TValue, then is pervasive - needs a Rust enum or repr(C) union with manual tag discipline.",
+        "setjmp/longjmp non-local error exit: no smaz analogue; first bites at lmem/luaM_toobig and ldo/luaD_throw (also luaL_error, luaX_syntaxerror never return). Must be modeled as Result/unwind, and every 'never-returns' branch re-typed as a refusal, not a value.",
+        "Computed-goto opcode dispatch (ljumptab.h): first and only bites at lvm/luaV_execute - a ~700-line jump-table interpreter loop with no safe-Rust idiom; the single extreme wall.",
+        "Raw stack-pointer arithmetic with save/restore across a REALLOCATING stack (savestack/restorestack, StkId aliasing): first bites at ldo (luaD_reallocstack/growstack) and lapi/index2value; pointers become invalid mid-call, hostile to the borrow checker - needs index-based relocation modeling.",
+        "Intrusive linked lists spliced via double-pointers (&(*p)->next, u.open.previous holding &prev->u.open.next): first bites at lfunc (UpVal list) and lgc (gray/allgc/finobj lists) - self-referential aliasing that safe Rust forbids without indices/arena.",
+        "GC tri-color write barriers and generational age bits: first bites at lgc/luaC_barrier_; every mutator (ltable set, lstring intern, lstate init) must reproduce barrier ORDER exactly, a cross-cutting invariant smaz never had.",
+        "Function pointers across the FFI boundary with identity semantics (lua_CFunction, lua_Reader, g->frealloc, lua_Hook compared by pointer in db_gethook): first bites at lzio/lmem, sharpened at ldblib - must round-trip identity, not just behavior.",
+        "va_list / C varargs formatting (luaO_pushvfstring, luaG_runerror, luaL_error): first bites at lobject - Rust has no va_list; needs a reimplemented format walker matching Lua's %-specifier subset byte-exact.",
+        "Flexible array members and combined-block memory layout (TString contents inline, LX/LG structs with LUA_EXTRASPACE prefix + fromstate() offsetof): first bites at lstring, sharpened at lstate/lua_newstate - byte-exact struct layout the port must reproduce.",
+        "Locale/libm bit-exact float formatting and hex-float parsing (%a via frexp/ldexp, lua_number2str, decimal-point handling): first bites at lobject (lua_strx2number), sharpened at lstrlib str_format/pack - must match libc output exactly.",
+        "A core that is one giant mutually-recursive SCC with NO valid topological order (lobject<->lvm<->lstate<->lgc<->ldo<->ltable<->lparser<->lcode): smaz was a single leaf; here the dependency graph has irreducible cycles, so large regions become verifiable only after the whole cluster co-exists.",
+        "Mid-instruction reentrancy / coroutine yield resumption (luaV_finishOp restarting a half-finished opcode, lua_yieldk continuations): first bites at lvm+ldo - control state must be reconstructable across a yield boundary."
+      ],
+      "risk_summary": "Three things most likely to block 100%: (1) The core is one irreducible mutually-recursive SCC (lobject<->lvm<->lstate<->lgc<->ldo<->ltable<->lparser<->lcode) with no valid topological order - unlike smaz's single leaf, a large fraction of functions cannot be verified in isolation and only become byte-exact-testable AFTER the entire core exists in Rust, so the project has a high, all-or-nothing bootstrap threshold rather than incremental green modules. (2) luaV_execute (rated extreme): computed-goto jump-table dispatch over the full opcode set + raw stack-pointer arithmetic + mid-opcode yield reentrancy (luaV_finishOp) - no safe-Rust idiom exists, and every runtime differential test flows through this single function, so it is the critical path to any end-to-end oracle. (3) The pervasive unsafe memory model that actively resists safe Rust: StkId save/restore across reallocating stacks, the UpVal open/closed pointer-aliasing union, intrusive GC lists spliced via double-pointers, and strict GC write-barrier/free-order invariants - reproducing all of these order- and byte-exact while deciding where to quarantine unsafe (vs. re-architecting to indices/arenas, which risks diverging from C's observable behavior) is the deepest and most cross-cutting threat to reaching byte-exact-or-refused across the whole library."
+    },
+    "per_module": [
+      {
+        "module": "lapi",
+        "loc": 1463,
+        "public_functions": [
+          {
+            "name": "lua_checkstack",
+            "signature": "LUA_API int lua_checkstack(lua_State *L, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_xmove",
+            "signature": "LUA_API void lua_xmove(lua_State *from, lua_State *to, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_atpanic",
+            "signature": "LUA_API lua_CFunction lua_atpanic(lua_State *L, lua_CFunction panicf)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_version",
+            "signature": "LUA_API lua_Number lua_version(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "lua_absindex",
+            "signature": "LUA_API int lua_absindex(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_gettop",
+            "signature": "LUA_API int lua_gettop(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_settop",
+            "signature": "LUA_API void lua_settop(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_closeslot",
+            "signature": "LUA_API void lua_closeslot(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rotate",
+            "signature": "LUA_API void lua_rotate(lua_State *L, int idx, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_copy",
+            "signature": "LUA_API void lua_copy(lua_State *L, int fromidx, int toidx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushvalue",
+            "signature": "LUA_API void lua_pushvalue(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_type",
+            "signature": "LUA_API int lua_type(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_typename",
+            "signature": "LUA_API const char *lua_typename(lua_State *L, int t)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "lua_iscfunction",
+            "signature": "LUA_API int lua_iscfunction(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_isinteger",
+            "signature": "LUA_API int lua_isinteger(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_isnumber",
+            "signature": "LUA_API int lua_isnumber(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_isstring",
+            "signature": "LUA_API int lua_isstring(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_isuserdata",
+            "signature": "LUA_API int lua_isuserdata(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawequal",
+            "signature": "LUA_API int lua_rawequal(lua_State *L, int index1, int index2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_arith",
+            "signature": "LUA_API void lua_arith(lua_State *L, int op)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_compare",
+            "signature": "LUA_API int lua_compare(lua_State *L, int index1, int index2, int op)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_stringtonumber",
+            "signature": "LUA_API size_t lua_stringtonumber(lua_State *L, const char *s)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_tonumberx",
+            "signature": "LUA_API lua_Number lua_tonumberx(lua_State *L, int idx, int *pisnum)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_tointegerx",
+            "signature": "LUA_API lua_Integer lua_tointegerx(lua_State *L, int idx, int *pisnum)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_toboolean",
+            "signature": "LUA_API int lua_toboolean(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_tolstring",
+            "signature": "LUA_API const char *lua_tolstring(lua_State *L, int idx, size_t *len)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawlen",
+            "signature": "LUA_API lua_Unsigned lua_rawlen(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_tocfunction",
+            "signature": "LUA_API lua_CFunction lua_tocfunction(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_touserdata",
+            "signature": "LUA_API void *lua_touserdata(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_tothread",
+            "signature": "LUA_API lua_State *lua_tothread(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_topointer",
+            "signature": "LUA_API const void *lua_topointer(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushnil",
+            "signature": "LUA_API void lua_pushnil(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushnumber",
+            "signature": "LUA_API void lua_pushnumber(lua_State *L, lua_Number n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushinteger",
+            "signature": "LUA_API void lua_pushinteger(lua_State *L, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushlstring",
+            "signature": "LUA_API const char *lua_pushlstring(lua_State *L, const char *s, size_t len)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushstring",
+            "signature": "LUA_API const char *lua_pushstring(lua_State *L, const char *s)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushvfstring",
+            "signature": "LUA_API const char *lua_pushvfstring(lua_State *L, const char *fmt, va_list argp)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushfstring",
+            "signature": "LUA_API const char *lua_pushfstring(lua_State *L, const char *fmt, ...)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushcclosure",
+            "signature": "LUA_API void lua_pushcclosure(lua_State *L, lua_CFunction fn, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushboolean",
+            "signature": "LUA_API void lua_pushboolean(lua_State *L, int b)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushlightuserdata",
+            "signature": "LUA_API void lua_pushlightuserdata(lua_State *L, void *p)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pushthread",
+            "signature": "LUA_API int lua_pushthread(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getglobal",
+            "signature": "LUA_API int lua_getglobal(lua_State *L, const char *name)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_gettable",
+            "signature": "LUA_API int lua_gettable(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getfield",
+            "signature": "LUA_API int lua_getfield(lua_State *L, int idx, const char *k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_geti",
+            "signature": "LUA_API int lua_geti(lua_State *L, int idx, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawget",
+            "signature": "LUA_API int lua_rawget(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawgeti",
+            "signature": "LUA_API int lua_rawgeti(lua_State *L, int idx, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawgetp",
+            "signature": "LUA_API int lua_rawgetp(lua_State *L, int idx, const void *p)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_createtable",
+            "signature": "LUA_API void lua_createtable(lua_State *L, int narray, int nrec)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getmetatable",
+            "signature": "LUA_API int lua_getmetatable(lua_State *L, int objindex)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getiuservalue",
+            "signature": "LUA_API int lua_getiuservalue(lua_State *L, int idx, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setglobal",
+            "signature": "LUA_API void lua_setglobal(lua_State *L, const char *name)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_settable",
+            "signature": "LUA_API void lua_settable(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setfield",
+            "signature": "LUA_API void lua_setfield(lua_State *L, int idx, const char *k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_seti",
+            "signature": "LUA_API void lua_seti(lua_State *L, int idx, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawset",
+            "signature": "LUA_API void lua_rawset(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawsetp",
+            "signature": "LUA_API void lua_rawsetp(lua_State *L, int idx, const void *p)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_rawseti",
+            "signature": "LUA_API void lua_rawseti(lua_State *L, int idx, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setmetatable",
+            "signature": "LUA_API int lua_setmetatable(lua_State *L, int objindex)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setiuservalue",
+            "signature": "LUA_API int lua_setiuservalue(lua_State *L, int idx, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_callk",
+            "signature": "LUA_API void lua_callk(lua_State *L, int nargs, int nresults, lua_KContext ctx, lua_KFunction k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_pcallk",
+            "signature": "LUA_API int lua_pcallk(lua_State *L, int nargs, int nresults, int errfunc, lua_KContext ctx, lua_KFunction k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_load",
+            "signature": "LUA_API int lua_load(lua_State *L, lua_Reader reader, void *data, const char *chunkname, const char *mode)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_dump",
+            "signature": "LUA_API int lua_dump(lua_State *L, lua_Writer writer, void *data, int strip)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_status",
+            "signature": "LUA_API int lua_status(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_gc",
+            "signature": "LUA_API int lua_gc(lua_State *L, int what, ...)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_error",
+            "signature": "LUA_API int lua_error(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_next",
+            "signature": "LUA_API int lua_next(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_toclose",
+            "signature": "LUA_API void lua_toclose(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_concat",
+            "signature": "LUA_API void lua_concat(lua_State *L, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_len",
+            "signature": "LUA_API void lua_len(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getallocf",
+            "signature": "LUA_API lua_Alloc lua_getallocf(lua_State *L, void **ud)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setallocf",
+            "signature": "LUA_API void lua_setallocf(lua_State *L, lua_Alloc f, void *ud)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setwarnf",
+            "signature": "void lua_setwarnf(lua_State *L, lua_WarnFunction f, void *ud)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_warning",
+            "signature": "void lua_warning(lua_State *L, const char *msg, int tocont)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_newuserdatauv",
+            "signature": "LUA_API void *lua_newuserdatauv(lua_State *L, size_t size, int nuvalue)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getupvalue",
+            "signature": "LUA_API const char *lua_getupvalue(lua_State *L, int funcindex, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setupvalue",
+            "signature": "LUA_API const char *lua_setupvalue(lua_State *L, int funcindex, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_upvalueid",
+            "signature": "LUA_API void *lua_upvalueid(lua_State *L, int fidx, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_upvaluejoin",
+            "signature": "LUA_API void lua_upvaluejoin(lua_State *L, int fidx1, int n1, int fidx2, int n2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lstate",
+          "ldo",
+          "lfunc",
+          "lgc",
+          "lmem",
+          "lstring",
+          "ltable",
+          "ltm",
+          "lvm",
+          "ldebug",
+          "lundump",
+          "lzio"
+        ],
+        "complexity_classes": [
+          "union",
+          "function_pointer",
+          "varargs",
+          "macro_heavy",
+          "unsafe_ptr_arith",
+          "float_math",
+          "setjmp_longjmp"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "Every function is a thin API veneer over the live VM: they read/write the lua_State stack via raw pointer arithmetic (L->top.p +/- idx, ci->func.p) on tagged-union TValues and delegate real work to lvm/ltable/ldo, so nothing is meaningfully verifiable without standing up a full lua_State plus GC and stack allocator. Sharpest translation risk is the stack-pointer/StkId aliasing model (index2value/index2stack, savestack across reallocating calls, GC write barriers) which resists a safe-Rust borrow model; lua_version and lua_typename are trivially pure but require the interpreter's type tables, so no standalone byte-exact oracle exists for this module in isolation."
+      },
+      {
+        "module": "lauxlib",
+        "loc": 1127,
+        "public_functions": [
+          {
+            "name": "luaL_traceback",
+            "signature": "void luaL_traceback(lua_State *L, lua_State *L1, const char *msg, int level)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_argerror",
+            "signature": "int luaL_argerror(lua_State *L, int arg, const char *extramsg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_typeerror",
+            "signature": "int luaL_typeerror(lua_State *L, int arg, const char *tname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_where",
+            "signature": "void luaL_where(lua_State *L, int level)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_error",
+            "signature": "int luaL_error(lua_State *L, const char *fmt, ...)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_fileresult",
+            "signature": "int luaL_fileresult(lua_State *L, int stat, const char *fname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_execresult",
+            "signature": "int luaL_execresult(lua_State *L, int stat)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_newmetatable",
+            "signature": "int luaL_newmetatable(lua_State *L, const char *tname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_setmetatable",
+            "signature": "void luaL_setmetatable(lua_State *L, const char *tname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_testudata",
+            "signature": "void *luaL_testudata(lua_State *L, int ud, const char *tname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checkudata",
+            "signature": "void *luaL_checkudata(lua_State *L, int ud, const char *tname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checkoption",
+            "signature": "int luaL_checkoption(lua_State *L, int arg, const char *def, const char *const lst[])",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checkstack",
+            "signature": "void luaL_checkstack(lua_State *L, int space, const char *msg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checktype",
+            "signature": "void luaL_checktype(lua_State *L, int arg, int t)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checkany",
+            "signature": "void luaL_checkany(lua_State *L, int arg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checklstring",
+            "signature": "const char *luaL_checklstring(lua_State *L, int arg, size_t *len)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_optlstring",
+            "signature": "const char *luaL_optlstring(lua_State *L, int arg, const char *def, size_t *len)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checknumber",
+            "signature": "lua_Number luaL_checknumber(lua_State *L, int arg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_optnumber",
+            "signature": "lua_Number luaL_optnumber(lua_State *L, int arg, lua_Number def)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checkinteger",
+            "signature": "lua_Integer luaL_checkinteger(lua_State *L, int arg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_optinteger",
+            "signature": "lua_Integer luaL_optinteger(lua_State *L, int arg, lua_Integer def)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_prepbuffsize",
+            "signature": "char *luaL_prepbuffsize(luaL_Buffer *B, size_t sz)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_addlstring",
+            "signature": "void luaL_addlstring(luaL_Buffer *B, const char *s, size_t l)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_addstring",
+            "signature": "void luaL_addstring(luaL_Buffer *B, const char *s)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_pushresult",
+            "signature": "void luaL_pushresult(luaL_Buffer *B)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_pushresultsize",
+            "signature": "void luaL_pushresultsize(luaL_Buffer *B, size_t sz)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_addvalue",
+            "signature": "void luaL_addvalue(luaL_Buffer *B)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_buffinit",
+            "signature": "void luaL_buffinit(lua_State *L, luaL_Buffer *B)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_buffinitsize",
+            "signature": "char *luaL_buffinitsize(lua_State *L, luaL_Buffer *B, size_t sz)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_ref",
+            "signature": "int luaL_ref(lua_State *L, int t)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_unref",
+            "signature": "void luaL_unref(lua_State *L, int t, int ref)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_loadfilex",
+            "signature": "int luaL_loadfilex(lua_State *L, const char *filename, const char *mode)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_loadbufferx",
+            "signature": "int luaL_loadbufferx(lua_State *L, const char *buff, size_t size, const char *name, const char *mode)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_loadstring",
+            "signature": "int luaL_loadstring(lua_State *L, const char *s)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_getmetafield",
+            "signature": "int luaL_getmetafield(lua_State *L, int obj, const char *event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_callmeta",
+            "signature": "int luaL_callmeta(lua_State *L, int obj, const char *event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_len",
+            "signature": "lua_Integer luaL_len(lua_State *L, int idx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_tolstring",
+            "signature": "const char *luaL_tolstring(lua_State *L, int idx, size_t *len)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_setfuncs",
+            "signature": "void luaL_setfuncs(lua_State *L, const luaL_Reg *l, int nup)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_getsubtable",
+            "signature": "int luaL_getsubtable(lua_State *L, int idx, const char *fname)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_requiref",
+            "signature": "void luaL_requiref(lua_State *L, const char *modname, lua_CFunction openf, int glb)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_addgsub",
+            "signature": "void luaL_addgsub(luaL_Buffer *b, const char *s, const char *p, const char *r)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_gsub",
+            "signature": "const char *luaL_gsub(lua_State *L, const char *s, const char *p, const char *r)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_newstate",
+            "signature": "lua_State *luaL_newstate(void)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaL_checkversion_",
+            "signature": "void luaL_checkversion_(lua_State *L, lua_Number ver, size_t sz)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lapi",
+          "ldo",
+          "ldebug",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "recursion",
+          "union",
+          "function_pointer",
+          "varargs",
+          "unsafe_ptr_arith",
+          "macro_heavy"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "By design this file uses only the official public Lua C API, so every public function is thin glue over the live lua_State stack — none is a pure arg->output function fuzzable standalone; verifying any of them requires standing up a real interpreter, and the sharpest risks are the longjmp-based error paths (luaL_error/argerror never return) and the buffer/box system whose growth path allocates a userdata box wired into GC and to-be-closed slots, so faithful Rust must reproduce the exact Lua-stack mutation protocol rather than just the byte output."
+      },
+      {
+        "module": "lbaselib",
+        "loc": 549,
+        "public_functions": [
+          {
+            "name": "luaopen_base",
+            "signature": "LUAMOD_API int luaopen_base (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "b_str2int",
+            "signature": "static const char *b_str2int (const char *s, int base, lua_Integer *pn)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaB_tonumber",
+            "signature": "static int luaB_tonumber (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_print",
+            "signature": "static int luaB_print (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_type",
+            "signature": "static int luaB_type (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_rawequal",
+            "signature": "static int luaB_rawequal (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_rawlen",
+            "signature": "static int luaB_rawlen (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_rawget",
+            "signature": "static int luaB_rawget (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_rawset",
+            "signature": "static int luaB_rawset (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_select",
+            "signature": "static int luaB_select (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_next",
+            "signature": "static int luaB_next (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_pairs",
+            "signature": "static int luaB_pairs (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_ipairs",
+            "signature": "static int luaB_ipairs (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_assert",
+            "signature": "static int luaB_assert (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_error",
+            "signature": "static int luaB_error (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_pcall",
+            "signature": "static int luaB_pcall (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_xpcall",
+            "signature": "static int luaB_xpcall (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_load",
+            "signature": "static int luaB_load (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_loadfile",
+            "signature": "static int luaB_loadfile (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_dofile",
+            "signature": "static int luaB_dofile (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_collectgarbage",
+            "signature": "static int luaB_collectgarbage (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_getmetatable",
+            "signature": "static int luaB_getmetatable (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_setmetatable",
+            "signature": "static int luaB_setmetatable (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_tostring",
+            "signature": "static int luaB_tostring (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaB_warn",
+            "signature": "static int luaB_warn (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi",
+          "lobject"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "float_math",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "Nearly every function is a thin dispatcher over the Lua C API (stack manipulation, GC control, protected calls, metatables) and is only meaningful with a live VM, so it cannot be fuzzed standalone. The one genuinely pure, differentially-verifiable unit is the static b_str2int number parser (string+base -> lua_Integer with wrapping unsigned overflow and ctype-driven digit handling); the sharpest translation risk is faithfully reproducing its unsigned wraparound (0u - n) and locale/ctype edge behavior byte-exact."
+      },
+      {
+        "module": "lcode",
+        "loc": 1875,
+        "public_functions": [
+          {
+            "name": "luaK_code",
+            "signature": "int luaK_code (FuncState *fs, Instruction i)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_codeABx",
+            "signature": "int luaK_codeABx (FuncState *fs, OpCode o, int A, unsigned int Bx)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_codeABCk",
+            "signature": "int luaK_codeABCk (FuncState *fs, OpCode o, int A, int B, int C, int k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_exp2const",
+            "signature": "int luaK_exp2const (FuncState *fs, const expdesc *e, TValue *v)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_fixline",
+            "signature": "void luaK_fixline (FuncState *fs, int line)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_nil",
+            "signature": "void luaK_nil (FuncState *fs, int from, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_reserveregs",
+            "signature": "void luaK_reserveregs (FuncState *fs, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_checkstack",
+            "signature": "void luaK_checkstack (FuncState *fs, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_int",
+            "signature": "void luaK_int (FuncState *fs, int reg, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_dischargevars",
+            "signature": "void luaK_dischargevars (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_exp2anyreg",
+            "signature": "int luaK_exp2anyreg (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_exp2anyregup",
+            "signature": "void luaK_exp2anyregup (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_exp2nextreg",
+            "signature": "void luaK_exp2nextreg (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_exp2val",
+            "signature": "void luaK_exp2val (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_self",
+            "signature": "void luaK_self (FuncState *fs, expdesc *e, expdesc *key)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_indexed",
+            "signature": "void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_goiftrue",
+            "signature": "void luaK_goiftrue (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_goiffalse",
+            "signature": "void luaK_goiffalse (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_storevar",
+            "signature": "void luaK_storevar (FuncState *fs, expdesc *var, expdesc *ex)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_setreturns",
+            "signature": "void luaK_setreturns (FuncState *fs, expdesc *e, int nresults)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_setoneret",
+            "signature": "void luaK_setoneret (FuncState *fs, expdesc *e)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_jump",
+            "signature": "int luaK_jump (FuncState *fs)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_ret",
+            "signature": "void luaK_ret (FuncState *fs, int first, int nret)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_patchlist",
+            "signature": "void luaK_patchlist (FuncState *fs, int list, int target)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_patchtohere",
+            "signature": "void luaK_patchtohere (FuncState *fs, int list)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_concat",
+            "signature": "void luaK_concat (FuncState *fs, int *l1, int l2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_getlabel",
+            "signature": "int luaK_getlabel (FuncState *fs)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_prefix",
+            "signature": "void luaK_prefix (FuncState *fs, UnOpr opr, expdesc *e, int line)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_infix",
+            "signature": "void luaK_infix (FuncState *fs, BinOpr op, expdesc *v)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_posfix",
+            "signature": "void luaK_posfix (FuncState *fs, BinOpr opr, expdesc *e1, expdesc *e2, int line)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_settablesize",
+            "signature": "void luaK_settablesize (FuncState *fs, int pc, int ra, int asize, int hsize)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_setlist",
+            "signature": "void luaK_setlist (FuncState *fs, int base, int nelems, int tostore)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_finish",
+            "signature": "void luaK_finish (FuncState *fs)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaK_semerror",
+            "signature": "l_noret luaK_semerror (LexState *ls, const char *msg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lmem",
+          "lgc",
+          "ltable",
+          "lvm",
+          "llex",
+          "lparser",
+          "lopcodes"
+        ],
+        "complexity_classes": [
+          "union",
+          "macro_heavy",
+          "float_math",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "Every exported function is a stateful mutator of the parser's FuncState/Proto (register allocator, jump-list patching, constant-table dedup, delta-encoded line info) and reaches lua_State for luaM_growvector/luaC_barrier, so nothing can be fuzzed standalone against a compiled-C oracle without standing up the whole parser+GC scaffold. Sharpest risk is byte-exact instruction emission: the bit-packed CREATE_ABCk/SETARG_* macros, constant-table reuse ordering (float keys use ldexp/mantissa tricks), and relative jump/line-info deltas must all match C exactly."
+      },
+      {
+        "module": "lcorolib",
+        "loc": 211,
+        "public_functions": [
+          {
+            "name": "luaopen_coroutine",
+            "signature": "LUAMOD_API int luaopen_coroutine (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lua",
+          "lauxlib",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "function_pointer"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "Every function is a thin Lua-C wrapper over the coroutine scheduler (lua_resume/lua_yield/lua_closethread/lua_newthread) and thread-status introspection, so nothing is meaningful or fuzzable without a live VM and the resume/yield machinery. The only true export is luaopen_coroutine, which just registers the co_funcs table via luaL_newlib; all the interesting logic is in static C functions reachable only through the Lua call boundary."
+      },
+      {
+        "module": "lctype",
+        "loc": 65,
+        "public_functions": [],
+        "depends_on_modules": [],
+        "complexity_classes": [
+          "macro_heavy"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "trivial",
+        "notes": "lctype.c exports NO functions — its only content is one 257-byte const lookup table `luai_ctype_[UCHAR_MAX+2]` (LUAI_DDEF). All the \"ctype\" behavior (lislalpha/lisdigit/lisspace/lisxdigit/lisprint/ltolower/testprop) lives as macros in lctype.h and is inlined at call sites, so there is nothing here with a C function signature to differentially fuzz. Translation is trivial: reproduce the byte-for-byte const table (a Rust `const [u8; 257]`) and the bit-mask macros as const fns; the only subtlety is the +1 index offset for EOZ (-1) and the LUA_UCID/NONA compile-time variant."
+      },
+      {
+        "module": "ldblib",
+        "loc": 483,
+        "public_functions": [
+          {
+            "name": "luaopen_debug",
+            "signature": "LUAMOD_API int luaopen_debug (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "makemask",
+            "signature": "static int makemask (const char *smask, int count)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "unmakemask",
+            "signature": "static char *unmakemask (int mask, char *smask)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "db_getregistry",
+            "signature": "static int db_getregistry (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_getmetatable",
+            "signature": "static int db_getmetatable (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_setmetatable",
+            "signature": "static int db_setmetatable (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_getinfo",
+            "signature": "static int db_getinfo (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_getlocal",
+            "signature": "static int db_getlocal (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_setlocal",
+            "signature": "static int db_setlocal (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_sethook",
+            "signature": "static int db_sethook (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_gethook",
+            "signature": "static int db_gethook (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_traceback",
+            "signature": "static int db_traceback (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "db_debug",
+            "signature": "static int db_debug (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "hookf",
+            "signature": "static void hookf (lua_State *L, lua_Debug *ar)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi",
+          "ldebug"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "varargs"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "Pure glue over the debug/introspection C-API: every db_* function is a lua_CFunction whose behavior is defined entirely by the live VM (stacks, threads, hook table in the registry, lua_getinfo/lua_getstack), so none can be differentially fuzzed standalone. The only VM-independent, byte-exact-testable units are the tiny static helpers makemask (string mask -> bitmask) and unmakemask (bitmask -> string), which are trivial to translate and oracle; the sharpest risk is the hookf callback stored as a lua_Hook function pointer and identity-compared in db_gethook, which must round-trip exactly across the FFI boundary."
+      },
+      {
+        "module": "ldebug",
+        "loc": 963,
+        "public_functions": [
+          {
+            "name": "luaG_getfuncline",
+            "signature": "int luaG_getfuncline (const Proto *f, int pc)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaG_findlocal",
+            "signature": "const char *luaG_findlocal (lua_State *L, CallInfo *ci, int n, StkId *pos)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_typeerror",
+            "signature": "l_noret luaG_typeerror (lua_State *L, const TValue *o, const char *op)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_callerror",
+            "signature": "l_noret luaG_callerror (lua_State *L, const TValue *o)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_forerror",
+            "signature": "l_noret luaG_forerror (lua_State *L, const TValue *o, const char *what)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_concaterror",
+            "signature": "l_noret luaG_concaterror (lua_State *L, const TValue *p1, const TValue *p2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_opinterror",
+            "signature": "l_noret luaG_opinterror (lua_State *L, const TValue *p1, const TValue *p2, const char *msg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_tointerror",
+            "signature": "l_noret luaG_tointerror (lua_State *L, const TValue *p1, const TValue *p2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_ordererror",
+            "signature": "l_noret luaG_ordererror (lua_State *L, const TValue *p1, const TValue *p2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_runerror",
+            "signature": "l_noret luaG_runerror (lua_State *L, const char *fmt, ...)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_addinfo",
+            "signature": "const char *luaG_addinfo (lua_State *L, const char *msg, TString *src, int line)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_errormsg",
+            "signature": "l_noret luaG_errormsg (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_traceexec",
+            "signature": "int luaG_traceexec (lua_State *L, const Instruction *pc)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaG_tracecall",
+            "signature": "int luaG_tracecall (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_sethook",
+            "signature": "void lua_sethook (lua_State *L, lua_Hook func, int mask, int count)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_gethook",
+            "signature": "lua_Hook lua_gethook (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_gethookmask",
+            "signature": "int lua_gethookmask (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_gethookcount",
+            "signature": "int lua_gethookcount (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getstack",
+            "signature": "int lua_getstack (lua_State *L, int level, lua_Debug *ar)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getlocal",
+            "signature": "const char *lua_getlocal (lua_State *L, const lua_Debug *ar, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_setlocal",
+            "signature": "const char *lua_setlocal (lua_State *L, const lua_Debug *ar, int n)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_getinfo",
+            "signature": "int lua_getinfo (lua_State *L, const char *what, lua_Debug *ar)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lfunc",
+          "ltable",
+          "ltm",
+          "lvm",
+          "ldo",
+          "lgc",
+          "lstring",
+          "lstate",
+          "lopcodes",
+          "lapi"
+        ],
+        "complexity_classes": [
+          "union",
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "varargs",
+          "setjmp_longjmp",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "Only luaG_getfuncline (and the private getbaseline it calls) is a pure function of a Proto's lineinfo/abslineinfo arrays and can be fuzzed standalone against compiled C by constructing a Proto with synthetic debug info; the sharpest risk there is faithfully reproducing the signed-byte ABSLINEINFO delta walk and the MAXIWTHABS base-line estimate/correction arithmetic. Everything else is either a longjmp-based error raiser or a live-VM debug/hook/symbolic-execution routine that reads CallInfo, unions, and the running stack, so it cannot be meaningfully differentially tested without standing up the interpreter."
+      },
+      {
+        "module": "ldo",
+        "loc": 1029,
+        "public_functions": [
+          {
+            "name": "luaD_seterrorobj",
+            "signature": "void luaD_seterrorobj (lua_State *L, int errcode, StkId oldtop)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_throw",
+            "signature": "l_noret luaD_throw (lua_State *L, int errcode)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_rawrunprotected",
+            "signature": "int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_reallocstack",
+            "signature": "int luaD_reallocstack (lua_State *L, int newsize, int raiseerror)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_growstack",
+            "signature": "int luaD_growstack (lua_State *L, int n, int raiseerror)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_shrinkstack",
+            "signature": "void luaD_shrinkstack (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_inctop",
+            "signature": "void luaD_inctop (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_hook",
+            "signature": "void luaD_hook (lua_State *L, int event, int line, int ftransfer, int ntransfer)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_hookcall",
+            "signature": "void luaD_hookcall (lua_State *L, CallInfo *ci)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_poscall",
+            "signature": "void luaD_poscall (lua_State *L, CallInfo *ci, int nres)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_pretailcall",
+            "signature": "int luaD_pretailcall (lua_State *L, CallInfo *ci, StkId func, int narg1, int delta)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_precall",
+            "signature": "CallInfo *luaD_precall (lua_State *L, StkId func, int nresults)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_call",
+            "signature": "void luaD_call (lua_State *L, StkId func, int nResults)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_callnoyield",
+            "signature": "void luaD_callnoyield (lua_State *L, StkId func, int nResults)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_resume",
+            "signature": "LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs, int *nresults)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_isyieldable",
+            "signature": "LUA_API int lua_isyieldable (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_yieldk",
+            "signature": "LUA_API int lua_yieldk (lua_State *L, int nresults, lua_KContext ctx, lua_KFunction k)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_closeprotected",
+            "signature": "int luaD_closeprotected (lua_State *L, ptrdiff_t level, int status)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_pcall",
+            "signature": "int luaD_pcall (lua_State *L, Pfunc func, void *u, ptrdiff_t old_top, ptrdiff_t ef)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaD_protectedparser",
+            "signature": "int luaD_protectedparser (lua_State *L, ZIO *z, const char *name, const char *mode)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lstate",
+          "lfunc",
+          "lmem",
+          "lgc",
+          "lobject",
+          "lstring",
+          "ltm",
+          "lvm",
+          "ldebug",
+          "lapi",
+          "lparser",
+          "lundump",
+          "lzio"
+        ],
+        "complexity_classes": [
+          "goto",
+          "setjmp_longjmp",
+          "union",
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "This is the call/stack/error-recovery core: every function mutates live lua_State (stack, CallInfo chain, coroutine status, GC) and cannot be fuzzed standalone against a compiled-C oracle. The sharpest translation risk is faithful reproduction of setjmp/longjmp non-local exit (luaD_throw/rawrunprotected) plus the save/restore-stack pointer-to-offset juggling around reallocation, which maps to no safe-Rust idiom and demands unwinding/relocation modeling instead."
+      },
+      {
+        "module": "ldump",
+        "loc": 231,
+        "public_functions": [
+          {
+            "name": "luaU_dump",
+            "signature": "int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data, int strip)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lstate",
+          "lundump"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "The only exported symbol, luaU_dump, serializes a fully-constructed Proto (bytecode, constant TValues with type tags, nested prototypes, debug info) through a lua_Writer callback, so it cannot be fuzzed standalone without building live VM objects and a GC-managed lua_State; all the real serialization logic lives in static helpers (dumpSize varint encoding, dumpString via tsslen/getstr, recursive dumpFunction). Sharpest risk is faithfully reproducing the 7-bit varint size encoding and the raw-byte layout of lua_Number/lua_Integer/Instruction (endianness and sizeof-dependent) so output is byte-exact."
+      },
+      {
+        "module": "lfunc",
+        "loc": 295,
+        "public_functions": [
+          {
+            "name": "luaF_newproto",
+            "signature": "Proto *luaF_newproto (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_newCclosure",
+            "signature": "CClosure *luaF_newCclosure (lua_State *L, int nupvals)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_newLclosure",
+            "signature": "LClosure *luaF_newLclosure (lua_State *L, int nupvals)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_initupvals",
+            "signature": "void luaF_initupvals (lua_State *L, LClosure *cl)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_findupval",
+            "signature": "UpVal *luaF_findupval (lua_State *L, StkId level)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_newtbcupval",
+            "signature": "void luaF_newtbcupval (lua_State *L, StkId level)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_closeupval",
+            "signature": "void luaF_closeupval (lua_State *L, StkId level)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_close",
+            "signature": "StkId luaF_close (lua_State *L, StkId level, int status, int yy)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_unlinkupval",
+            "signature": "void luaF_unlinkupval (UpVal *uv)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaF_freeproto",
+            "signature": "void luaF_freeproto (lua_State *L, Proto *f)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaF_getlocalname",
+            "signature": "const char *luaF_getlocalname (const Proto *f, int local_number, int pc)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lmem",
+          "lgc",
+          "ldo",
+          "ltm",
+          "ldebug",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "union",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "Most functions are GC/stack-lifecycle glue that only mean anything inside a live VM, so only luaF_getlocalname (pure read over a constructed Proto's locvars array) and, marginally, luaF_unlinkupval (pointer-to-pointer doubly-linked-list splice) are standalone-fuzzable. Sharpest risk is the UpVal open/closed union discriminated solely by the aliasing invariant v.p == &u.value plus the pointer-to-next-field back-links (u.open.previous holds &prevnode->u.open.next), which is hostile to safe-Rust ownership modeling."
+      },
+      {
+        "module": "lgc",
+        "loc": 1744,
+        "public_functions": [
+          {
+            "name": "luaC_fix",
+            "signature": "void luaC_fix (lua_State *L, GCObject *o)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_freeallobjects",
+            "signature": "void luaC_freeallobjects (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_step",
+            "signature": "void luaC_step (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_runtilstate",
+            "signature": "void luaC_runtilstate (lua_State *L, int statesmask)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_fullgc",
+            "signature": "void luaC_fullgc (lua_State *L, int isemergency)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_newobj",
+            "signature": "GCObject *luaC_newobj (lua_State *L, int tt, size_t sz)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_newobjdt",
+            "signature": "GCObject *luaC_newobjdt (lua_State *L, int tt, size_t sz, size_t offset)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_barrier_",
+            "signature": "void luaC_barrier_ (lua_State *L, GCObject *o, GCObject *v)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_barrierback_",
+            "signature": "void luaC_barrierback_ (lua_State *L, GCObject *o)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_checkfinalizer",
+            "signature": "void luaC_checkfinalizer (lua_State *L, GCObject *o, Table *mt)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaC_changemode",
+            "signature": "void luaC_changemode (lua_State *L, int newmode)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lmem",
+          "lfunc",
+          "lstring",
+          "ltable",
+          "lstate",
+          "ltm",
+          "ldo"
+        ],
+        "complexity_classes": [
+          "goto",
+          "union",
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "Every exported symbol is a mutator over the global_State GC object graph (tri-color marking, intrusive gclist/allgc/finobj/gray linked lists, weak/ephemeron tables, generational aging in the 'marked' byte) with no pure inputs, so nothing can be fuzzed standalone against a compiled-C oracle without standing up an entire lua_State and reconstructing an object heap. Sharpest risk is faithfully modeling the byte-level color/age bit manipulation and the many intrusive singly-linked-list splice/removal patterns (including &(*p)->next double-pointer walks and the setjmp-based luaD_pcall finalizer call) in safe Rust while preserving exact freeing order and mark counts."
+      },
+      {
+        "module": "liolib",
+        "loc": 841,
+        "public_functions": [
+          {
+            "name": "luaopen_io",
+            "signature": "LUAMOD_API int luaopen_io (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lbaselib"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "varargs",
+          "macro_heavy",
+          "float_math",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "Only one exported symbol (luaopen_io); every real function is a static lua_CFunction that performs live libc stdio (fopen/fread/fwrite/popen/fseek) with side effects and userdata/GC-managed FILE* handles, so nothing is byte-exact fuzzable standalone against an oracle — output depends on the filesystem, locale decimal point, and platform (POSIX/Windows) macro selection. Sharpest translation risk is faithfully reproducing the buffered read state machine (read_number/read_line ungetc look-ahead, locale-dependent numeral parsing) and the closef function-pointer close/GC protocol in safe Rust while keeping identical error/return conventions."
+      },
+      {
+        "module": "llex",
+        "loc": 582,
+        "public_functions": [
+          {
+            "name": "luaX_init",
+            "signature": "void luaX_init (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaX_setinput",
+            "signature": "void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source, int firstchar)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaX_newstring",
+            "signature": "TString *luaX_newstring (LexState *ls, const char *str, size_t l)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaX_next",
+            "signature": "void luaX_next (LexState *ls)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaX_lookahead",
+            "signature": "int luaX_lookahead (LexState *ls)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaX_syntaxerror",
+            "signature": "l_noret luaX_syntaxerror (LexState *ls, const char *msg)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaX_token2str",
+            "signature": "const char *luaX_token2str (LexState *ls, int token)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lzio",
+          "lstring",
+          "ltable",
+          "lgc",
+          "ldo",
+          "ldebug",
+          "lctype",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "goto",
+          "union",
+          "setjmp_longjmp",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "Every exported entry point takes a LexState carrying lua_State*, and the lexer's output only exists as interned TStrings pushed through string interning + GC + a ZIO input stream and error reporting via luaD_throw (longjmp), so no function can be fuzzed as a pure fn — a byte-exact oracle would need the string table, GC, and ZIO stood up. Sharpest risks: the goto-fallthrough escape-sequence state machine in read_string and the buffer pointer arithmetic (luaZ_buffer+sep, luaZ_buffremove) which must be reproduced exactly against a live intern table."
+      },
+      {
+        "module": "lmathlib",
+        "loc": 781,
+        "public_functions": [
+          {
+            "name": "luaopen_math",
+            "signature": "LUAMOD_API int luaopen_math (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "nextrand",
+            "signature": "static Rand64 nextrand (Rand64 *state)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "rotl",
+            "signature": "static Rand64 rotl (Rand64 x, int n)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "project",
+            "signature": "static lua_Unsigned project (lua_Unsigned ran, lua_Unsigned n, RanState *state)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "I2d",
+            "signature": "static lua_Number I2d (Rand64 x)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "I2UInt",
+            "signature": "static lua_Unsigned I2UInt (Rand64 x)  /* or #define in Rand64 path */",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "Int2I",
+            "signature": "static Rand64 Int2I (lua_Unsigned n)  /* or #define in Rand64 path */",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "setseed",
+            "signature": "static void setseed (lua_State *L, Rand64 *state, lua_Unsigned n1, lua_Unsigned n2)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "math_random",
+            "signature": "static int math_random (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "math_randomseed",
+            "signature": "static int math_randomseed (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "math_fmod",
+            "signature": "static int math_fmod (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "math_modf",
+            "signature": "static int math_modf (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "math_abs/floor/ceil/log/... (libm wrappers)",
+            "signature": "static int math_<fn> (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi"
+        ],
+        "complexity_classes": [
+          "union",
+          "function_pointer",
+          "macro_heavy",
+          "float_math"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "Nearly every public entry is a static lua_CFunction that reads/writes the Lua value stack (needs_lua_State), so they cannot be fuzzed as pure functions without the VM. The real differential-testing win is the self-contained xoshiro256** PRNG core (nextrand/rotl/project/I2d/setseed): given a fixed seed it deterministically reproduces math.random's byte-exact sequence. Sharpest risk is the two divergent Rand64 implementations selected by preprocessor (native 64-bit unsigned vs a struct{h,l} 32-bit-pair emulation) plus the FIGS-dependent I2d float-scaling macros — the translation must pick and reproduce exactly one config's bit-for-bit shift/rotate/scale behavior, and I listed \"union\" loosely for that struct-based dual representation (no true C union is present). Also note math_abs's 0u-(unsigned) INT_MIN trick and math_fmod's -1/0 special-case must be preserved for wraparound correctness."
+      },
+      {
+        "module": "lmem",
+        "loc": 216,
+        "public_functions": [
+          {
+            "name": "luaM_growaux_",
+            "signature": "void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize, int size_elems, int limit, const char *what)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaM_shrinkvector_",
+            "signature": "void *luaM_shrinkvector_ (lua_State *L, void *block, int *size, int final_n, int size_elem)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaM_toobig",
+            "signature": "l_noret luaM_toobig (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaM_free_",
+            "signature": "void luaM_free_ (lua_State *L, void *block, size_t osize)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaM_realloc_",
+            "signature": "void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaM_saferealloc_",
+            "signature": "void *luaM_saferealloc_ (lua_State *L, void *block, size_t osize, size_t nsize)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaM_malloc_",
+            "signature": "void *luaM_malloc_ (lua_State *L, size_t size, int tag)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lstate",
+          "lgc",
+          "ldo",
+          "ldebug"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "macro_heavy",
+          "setjmp_longjmp"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "Every function is the VM's allocator front-end: it dispatches through the g->frealloc function pointer, mutates global_State->GCdebt, triggers emergency GC (luaC_fullgc), and raises OOM/overflow via longjmp (luaD_throw / luaG_runerror). None can be fuzzed against a compiled-C oracle standalone since output is determined by allocator/GC state, not just args. Only genuinely pure logic is the size-doubling/limit arithmetic inside luaM_growaux_, but it's inseparable from the realloc+throw path as written; the sharpest translation risk is faithfully modeling the non-local error exit (longjmp) and the exact GCdebt bookkeeping order."
+      },
+      {
+        "module": "loadlib",
+        "loc": 758,
+        "public_functions": [
+          {
+            "name": "luaopen_package",
+            "signature": "LUAMOD_API int luaopen_package (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "The only exported symbol is luaopen_package; everything else (ll_require, searchpath, the searcher_* functions, lsys_load/sym via dlopen/LoadLibrary) is static and inseparable from the live VM, the OS dynamic loader, the filesystem, and getenv — none of it is a pure, byte-exact-fuzzable function against a compiled-C oracle. The sharpest translation risk is that this module is fundamentally I/O- and platform-bound (three #if-gated backends: dlfcn, Win32, stub) plus C-function-pointer casting through void* (cast_func/voidf), so a \"safe Rust\" port cannot reproduce the exact behavior without unsafe FFI and platform-conditional code; the only genuinely pure helper (getnextfilename, a semicolon-path tokenizer doing in-place pointer arithmetic) is static and unexported, so there is no clean standalone oracle target here."
+      },
+      {
+        "module": "lobject",
+        "loc": 603,
+        "public_functions": [
+          {
+            "name": "luaO_ceillog2",
+            "signature": "int luaO_ceillog2 (unsigned int x)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaO_utf8esc",
+            "signature": "int luaO_utf8esc (char *buff, unsigned long x)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaO_hexavalue",
+            "signature": "int luaO_hexavalue (int c)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaO_str2num",
+            "signature": "size_t luaO_str2num (const char *s, TValue *o)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaO_chunkid",
+            "signature": "void luaO_chunkid (char *out, const char *source, size_t srclen)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaO_rawarith",
+            "signature": "int luaO_rawarith (lua_State *L, int op, const TValue *p1, const TValue *p2, TValue *res)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaO_arith",
+            "signature": "void luaO_arith (lua_State *L, int op, const TValue *p1, const TValue *p2, StkId res)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaO_tostring",
+            "signature": "void luaO_tostring (lua_State *L, TValue *obj)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaO_pushvfstring",
+            "signature": "const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list argp)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaO_pushfstring",
+            "signature": "const char *luaO_pushfstring (lua_State *L, const char *fmt, ...)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lvm",
+          "lstring",
+          "ldebug",
+          "ltm",
+          "lctype"
+        ],
+        "complexity_classes": [
+          "union",
+          "macro_heavy",
+          "float_math",
+          "unsafe_ptr_arith",
+          "varargs"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "The sharpest risk is bit-exact float behavior: the hand-rolled hex-float parser (lua_strx2number with ldexp/MAXSIGDIG accumulation) plus locale-dependent decimal-point handling and float-to-string formatting (lua_number2str) must match compiled C exactly, and the string parsers (l_str2int/l_str2d) lean on unsafe pointer arithmetic over the input. The five arg-only functions (ceillog2, hexavalue, utf8esc, str2num, chunkid) are clean standalone oracle targets; luaO_rawarith is fuzzable with constructed TValues but takes lua_State for the div-by-zero/mod error path, while arith/tostring/pushfstring need the live VM, GC, and stack."
+      },
+      {
+        "module": "lopcodes",
+        "loc": 105,
+        "public_functions": [],
+        "depends_on_modules": [],
+        "complexity_classes": [],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "trivial",
+        "notes": "This module contains NO functions — only one exported const data table, luaP_opmodes[NUM_OPCODES], a 83-entry lu_byte array of per-opcode property masks built via the opmode() macro. It has no public C functions to differentially fuzz; the \"logic\" (GET_OPCODE, getarg, CREATE_*, testAMode, etc.) is all macros in lopcodes.h. Translation is a straight const-array transcription (Rust `static [u8; NUM_OPCODES]`); the only risk is transcribing the 83 rows without error and keeping the OpCode enum ordering (the \"ORDER OP\" invariant) in exact sync. The array values are trivially verifiable byte-for-byte against compiled C, but there is no function-level oracle target here."
+      },
+      {
+        "module": "loslib",
+        "loc": 430,
+        "public_functions": [
+          {
+            "name": "luaopen_os",
+            "signature": "LUAMOD_API int luaopen_os (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib"
+        ],
+        "complexity_classes": [
+          "float_math",
+          "macro_heavy"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "Only luaopen_os is exported; every other function is a static lua_CFunction registered in syslib. All are thin wrappers over libc OS/time facilities (system, remove, rename, getenv, clock, time/mktime, strftime, setlocale, exit) whose outputs are inherently nondeterministic or environment-dependent, so nothing here is cleanly differentially-fuzzable against a compiled-C oracle. The only pure-logic helper (checkoption, a strftime-specifier matcher) still takes lua_State* and raises via luaL_argerror. Sharpest translation risk is faithfully reproducing libc time/locale semantics (strftime buffer sizing, mktime normalization, time_t<->lua_Integer overflow checks) rather than any algorithmic complexity."
+      },
+      {
+        "module": "lparser",
+        "loc": 1968,
+        "public_functions": [
+          {
+            "name": "luaY_nvarstack",
+            "signature": "int luaY_nvarstack (FuncState *fs)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaY_parser",
+            "signature": "LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff, Dyndata *dyd, const char *name, int firstchar)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lcode",
+          "llex",
+          "lfunc",
+          "lmem",
+          "lobject",
+          "lstate",
+          "lstring",
+          "ltable",
+          "ldo",
+          "lgc",
+          "lopcodes",
+          "ldebug"
+        ],
+        "complexity_classes": [
+          "union",
+          "recursion",
+          "macro_heavy"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "Only two LUAI_FUNC symbols are exported; the entire rest of the file is 'static' recursive-descent grammar functions reachable only through luaY_parser, which needs the live VM (lexer, GC write-barriers, closure/proto allocation, longjmp-based error handling). The single cleanly-isolable function, luaY_nvarstack, just walks fs->ls->dyd->actvar.arr keyed by fs->nactvar and is deterministic from a constructed FuncState/Dyndata graph -- but it means nothing without those structs, so no useful standalone oracle exists without standing up the parser. Sharpest translation risk: the parser mutates a web of shared aliased state (LexState/FuncState/Dyndata/expdesc unions, Vardesc union with TValuefields) across mutually-recursive calls, which maps poorly onto Rust's borrow model and cannot be verified byte-exact in isolation; it must be translated and fuzzed as a whole subsystem alongside llex and lcode."
+      },
+      {
+        "module": "lstate",
+        "loc": 446,
+        "public_functions": [
+          {
+            "name": "luaE_setdebt",
+            "signature": "void luaE_setdebt(global_State *g, l_mem debt)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "lua_setcstacklimit",
+            "signature": "LUA_API int lua_setcstacklimit(lua_State *L, unsigned int limit)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaE_extendCI",
+            "signature": "CallInfo *luaE_extendCI(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_shrinkCI",
+            "signature": "void luaE_shrinkCI(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_checkcstack",
+            "signature": "void luaE_checkcstack(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_incCstack",
+            "signature": "LUAI_FUNC void luaE_incCstack(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_newthread",
+            "signature": "LUA_API lua_State *lua_newthread(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_freethread",
+            "signature": "void luaE_freethread(lua_State *L, lua_State *L1)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_resetthread",
+            "signature": "int luaE_resetthread(lua_State *L, int status)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_closethread",
+            "signature": "LUA_API int lua_closethread(lua_State *L, lua_State *from)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_resetthread",
+            "signature": "LUA_API int lua_resetthread(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_newstate",
+            "signature": "LUA_API lua_State *lua_newstate(lua_Alloc f, void *ud)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "lua_close",
+            "signature": "LUA_API void lua_close(lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_warning",
+            "signature": "void luaE_warning(lua_State *L, const char *msg, int tocont)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaE_warnerror",
+            "signature": "void luaE_warnerror(lua_State *L, const char *where)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lmem",
+          "lgc",
+          "ldo",
+          "lfunc",
+          "lstring",
+          "ltable",
+          "ltm",
+          "llex",
+          "ldebug",
+          "lapi",
+          "lobject"
+        ],
+        "complexity_classes": [
+          "union",
+          "function_pointer",
+          "macro_heavy",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "hard",
+        "notes": "This module is pure VM-lifecycle plumbing: nearly every function allocates/frees threads, walks the CallInfo list, or drives the GC, so almost none can be verified without standing up the full interpreter. The sharpest translation risk is the exact combined-block memory layout (LX/LG structs with LUA_EXTRASPACE prefix and the fromstate() offsetof pointer arithmetic) plus the global_State field-init ordering in lua_newstate, which must be reproduced byte-for-byte. Only luaE_setdebt (field arithmetic on a constructed global_State) and lua_setcstacklimit (returns a constant) are meaningfully fuzzable standalone."
+      },
+      {
+        "module": "lstring",
+        "loc": 275,
+        "public_functions": [
+          {
+            "name": "luaS_eqlngstr",
+            "signature": "int luaS_eqlngstr (TString *a, TString *b)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaS_hash",
+            "signature": "unsigned int luaS_hash (const char *str, size_t l, unsigned int seed)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaS_hashlongstr",
+            "signature": "unsigned int luaS_hashlongstr (TString *ts)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaS_resize",
+            "signature": "void luaS_resize (lua_State *L, int nsize)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_clearcache",
+            "signature": "void luaS_clearcache (global_State *g)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_init",
+            "signature": "void luaS_init (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_remove",
+            "signature": "void luaS_remove (lua_State *L, TString *ts)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_newudata",
+            "signature": "Udata *luaS_newudata (lua_State *L, size_t s, int nuvalue)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_newlstr",
+            "signature": "TString *luaS_newlstr (lua_State *L, const char *str, size_t l)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_new",
+            "signature": "TString *luaS_new (lua_State *L, const char *str)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaS_createlngstrobj",
+            "signature": "TString *luaS_createlngstrobj (lua_State *L, size_t l)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lmem",
+          "lgc",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "macro_heavy",
+          "unsafe_ptr_arith",
+          "union"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "moderate",
+        "notes": "luaS_hash is a clean, fully self-contained hash (str,len,seed -> uint) that is the ideal standalone differential oracle; the rest is a GC-managed intern table whose behavior depends on the live global_State (string table, strcache, GC white bits, seed) and the TString union layout (u.hnext vs u.lnglen, contents flexible array), making faithful pointer/memory-layout reproduction the sharpest risk."
+      },
+      {
+        "module": "lstrlib",
+        "loc": 1874,
+        "public_functions": [
+          {
+            "name": "luaopen_string",
+            "signature": "LUAMOD_API int luaopen_string (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "str_len",
+            "signature": "static int str_len (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_sub",
+            "signature": "static int str_sub (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_reverse",
+            "signature": "static int str_reverse (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_lower",
+            "signature": "static int str_lower (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_upper",
+            "signature": "static int str_upper (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_rep",
+            "signature": "static int str_rep (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_byte",
+            "signature": "static int str_byte (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_char",
+            "signature": "static int str_char (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_find",
+            "signature": "static int str_find (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_match",
+            "signature": "static int str_match (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "gmatch",
+            "signature": "static int gmatch (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "str_gsub",
+            "signature": "static int str_gsub (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_format",
+            "signature": "static int str_format (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_pack",
+            "signature": "static int str_pack (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_packsize",
+            "signature": "static int str_packsize (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_unpack",
+            "signature": "static int str_unpack (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "str_dump",
+            "signature": "static int str_dump (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi",
+          "lvm",
+          "lobject",
+          "ldump"
+        ],
+        "complexity_classes": [
+          "goto",
+          "setjmp_longjmp",
+          "union",
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "float_math",
+          "unsafe_ptr_arith",
+          "varargs"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "hard",
+        "notes": "Every entry point is a lua_State*-taking C-closure, but the semantics of most (byte/char/sub/rep/len/case, find/match/gsub over string patterns, format with non-VM specifiers, pack/packsize/unpack) are fully determined by pure string/integer stack args, so they can be driven through a minimal lua_State and oracle'd byte-exact against compiled C. Only str_dump (needs bytecode dumper), gmatch (returns a live closure iterator), and the VM-callback paths of gsub/format (function/table replacements, __tostring, string metamethod arith) require the real interpreter. Sharpest risks: the recursive `match` uses goto-based tail-recursion over raw pattern/subject pointers with a 200-deep C-stack guard and MatchState capture array; str_pack/str_unpack are endianness- and sizeof-dependent with sign-extension and pointer arithmetic; float paths (%a hex-float via num2straux/frexp, quotefloat, locale decimal point) must reproduce libc formatting exactly. luaL_error/luaL_argerror never return (longjmp), so error branches are non-returning and cannot be modeled as ordinary returns."
+      },
+      {
+        "module": "ltable",
+        "loc": 996,
+        "public_functions": [
+          {
+            "name": "luaH_realasize",
+            "signature": "unsigned int luaH_realasize (const Table *t)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_getint",
+            "signature": "const TValue *luaH_getint (Table *t, lua_Integer key)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_getshortstr",
+            "signature": "const TValue *luaH_getshortstr (Table *t, TString *key)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_getstr",
+            "signature": "const TValue *luaH_getstr (Table *t, TString *key)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_get",
+            "signature": "const TValue *luaH_get (Table *t, const TValue *key)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_getn",
+            "signature": "lua_Unsigned luaH_getn (Table *t)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_setint",
+            "signature": "void luaH_setint (lua_State *L, Table *t, lua_Integer key, TValue *value)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_set",
+            "signature": "void luaH_set (lua_State *L, Table *t, const TValue *key, TValue *value)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_finishset",
+            "signature": "void luaH_finishset (lua_State *L, Table *t, const TValue *key, const TValue *slot, TValue *value)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_new",
+            "signature": "Table *luaH_new (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaH_free",
+            "signature": "void luaH_free (lua_State *L, Table *t)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaH_resize",
+            "signature": "void luaH_resize (lua_State *L, Table *t, unsigned int newasize, unsigned int nhsize)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_resizearray",
+            "signature": "void luaH_resizearray (lua_State *L, Table *t, unsigned int nasize)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_next",
+            "signature": "int luaH_next (lua_State *L, Table *t, StkId key)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaH_mainposition",
+            "signature": "Node *luaH_mainposition (const Table *t, const TValue *key)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lmem",
+          "lgc",
+          "lstring",
+          "lvm",
+          "ldebug",
+          "lstate",
+          "ldo"
+        ],
+        "complexity_classes": [
+          "union",
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "float_math",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "hard",
+        "notes": "Sharpest risk is luaH_newkey's Brent-variation collision chaining: it does raw intra-array Node pointer arithmetic (othern += gnext(othern), gnext = f - mp) plus mutual recursion into luaH_set on rehash, and Node keys live in a tagged union — a Rust port must reproduce the exact free-slot/rechain byte layout. Read paths (luaH_get*, luaH_realasize, luaH_getn) are cleanly oracle-able on a constructed Table but self-modify t->alimit as a caching hint, so the oracle must compare the mutated table state, not just the return value. luaH_new/free are GC/allocator-bound and not meaningfully standalone-testable."
+      },
+      {
+        "module": "ltablib",
+        "loc": 430,
+        "public_functions": [
+          {
+            "name": "luaopen_table",
+            "signature": "LUAMOD_API int luaopen_table (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi"
+        ],
+        "complexity_classes": [
+          "recursion",
+          "macro_heavy",
+          "function_pointer",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "The only exported symbol is luaopen_table; all real logic (tinsert/tremove/tmove/tconcat/tpack/tunpack/sort) lives in static functions that read args and mutate tables purely through the Lua C API stack, so nothing is fuzzable against a compiled-C oracle without standing up the interpreter. Sharpest risks: the recursive quicksort (auxsort/partition) whose comparisons re-enter Lua via lua_call and whose l_randomizePivot uses clock()/time() (nondeterministic, VLA + memcpy over unknown-sized types), plus tconcat's luaL_Buffer usage."
+      },
+      {
+        "module": "ltm",
+        "loc": 272,
+        "public_functions": [
+          {
+            "name": "luaT_objtypename",
+            "signature": "const char *luaT_objtypename (lua_State *L, const TValue *o)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_gettm",
+            "signature": "const TValue *luaT_gettm (Table *events, TMS event, TString *ename)",
+            "needs_lua_State": false,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_gettmbyobj",
+            "signature": "const TValue *luaT_gettmbyobj (lua_State *L, const TValue *o, TMS event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_init",
+            "signature": "void luaT_init (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_callTM",
+            "signature": "void luaT_callTM (lua_State *L, const TValue *f, const TValue *p1, const TValue *p2, const TValue *p3)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_callTMres",
+            "signature": "void luaT_callTMres (lua_State *L, const TValue *f, const TValue *p1, const TValue *p2, StkId res)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_trybinTM",
+            "signature": "void luaT_trybinTM (lua_State *L, const TValue *p1, const TValue *p2, StkId res, TMS event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_tryconcatTM",
+            "signature": "void luaT_tryconcatTM (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_trybinassocTM",
+            "signature": "void luaT_trybinassocTM (lua_State *L, const TValue *p1, const TValue *p2, int flip, StkId res, TMS event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_trybiniTM",
+            "signature": "void luaT_trybiniTM (lua_State *L, const TValue *p1, lua_Integer i2, int flip, StkId res, TMS event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_callorderTM",
+            "signature": "int luaT_callorderTM (lua_State *L, const TValue *p1, const TValue *p2, TMS event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_callorderiTM",
+            "signature": "int luaT_callorderiTM (lua_State *L, const TValue *p1, int v2, int flip, int isfloat, TMS event)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_adjustvarargs",
+            "signature": "void luaT_adjustvarargs (lua_State *L, int nfixparams, CallInfo *ci, const Proto *p)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaT_getvarargs",
+            "signature": "void luaT_getvarargs (lua_State *L, CallInfo *ci, StkId where, int wanted)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lstate",
+          "lstring",
+          "lgc",
+          "ltable",
+          "ldo",
+          "ldebug"
+        ],
+        "complexity_classes": [
+          "union",
+          "macro_heavy",
+          "unsafe_ptr_arith",
+          "float_math"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "hard",
+        "notes": "Every function is a tag-method/metamethod dispatcher wired into live VM state: it reads metatables via G(L), pushes/pops the Lua value stack with raw StkId pointer arithmetic, and re-enters the interpreter through luaD_call. Nothing is a pure input->output function (even luaT_gettm mutates a GC-managed Table's flag cache and needs a constructed Table+TString), so there is no clean standalone oracle; the sharpest risk is faithfully modeling the stack-slot pointer math and the CIST_LEQ/yield-continuation semantics in luaT_callorderTM in safe Rust."
+      },
+      {
+        "module": "lundump",
+        "loc": 336,
+        "public_functions": [
+          {
+            "name": "luaU_undump",
+            "signature": "LClosure *luaU_undump(lua_State *L, ZIO *Z, const char *name)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "ldo",
+          "lfunc",
+          "lmem",
+          "lstring",
+          "lzio",
+          "lgc",
+          "ldebug",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "recursion",
+          "setjmp_longjmp",
+          "union",
+          "macro_heavy"
+        ],
+        "standalone_oracle_ready": false,
+        "translation_difficulty": "moderate",
+        "notes": "Only exported symbol is luaU_undump, a recursive bytecode-chunk deserializer that builds a live LClosure/Proto graph via GC-managed allocation (luaM_newvectorchecked), string interning (luaS_*), stack anchoring (L->top), and GC write barriers, with all error paths going through luaD_throw (longjmp). The self-contained varint decoder (loadUnsigned/loadSize/loadInt) is pure logic but is static and inseparable from the ZIO stream + longjmp error handling, so nothing here is fuzzable standalone against a compiled-C oracle without standing up the interpreter. Sharpest risk: faithfully reproducing the top-of-stack anchoring and emergency-GC ordering (loadUpvalues/loadDebug fill names-first) in safe Rust, since those exist purely to keep the object graph consistent for the collector."
+      },
+      {
+        "module": "lutf8lib",
+        "loc": 291,
+        "public_functions": [
+          {
+            "name": "luaopen_utf8",
+            "signature": "LUAMOD_API int luaopen_utf8 (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "utf8_decode",
+            "signature": "static const char *utf8_decode (const char *s, utfint *val, int strict)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "u_posrelat",
+            "signature": "static lua_Integer u_posrelat (lua_Integer pos, size_t len)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "utflen",
+            "signature": "static int utflen (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "codepoint",
+            "signature": "static int codepoint (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "utfchar",
+            "signature": "static int utfchar (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "byteoffset",
+            "signature": "static int byteoffset (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "iter_aux",
+            "signature": "static int iter_aux (lua_State *L, int strict)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "iter_codes",
+            "signature": "static int iter_codes (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lauxlib",
+          "lapi",
+          "lobject"
+        ],
+        "complexity_classes": [
+          "unsafe_ptr_arith",
+          "function_pointer",
+          "macro_heavy"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "easy",
+        "notes": "The only exported symbol is luaopen_utf8, but the real translation target is the static pure core utf8_decode (plus u_posrelat) — both are fully arg-determined and can be fuzzed byte-exact against compiled C over arbitrary byte buffers with no VM. Sharpest risk is the bit-manipulation decoder: the overlong/range checks (limits[] table, count*5 shift, MAXUTF vs MAXUNICODE + surrogate rejection under strict) and the unchecked pointer walk past the first byte must be reproduced exactly, including unsigned overflow semantics of utfint. The Lua-facing functions all need lua_State (arg fetching, luaL_Buffer, multi-return, luaL_error longjmp) so they are not standalone-testable."
+      },
+      {
+        "module": "lvm",
+        "loc": 1899,
+        "public_functions": [
+          {
+            "name": "luaV_tonumber_",
+            "signature": "int luaV_tonumber_ (const TValue *obj, lua_Number *n)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_flttointeger",
+            "signature": "int luaV_flttointeger (lua_Number n, lua_Integer *p, F2Imod mode)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_tointegerns",
+            "signature": "int luaV_tointegerns (const TValue *obj, lua_Integer *p, F2Imod mode)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_tointeger",
+            "signature": "int luaV_tointeger (const TValue *obj, lua_Integer *p, F2Imod mode)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_idiv",
+            "signature": "lua_Integer luaV_idiv (lua_State *L, lua_Integer m, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_mod",
+            "signature": "lua_Integer luaV_mod (lua_State *L, lua_Integer m, lua_Integer n)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_modf",
+            "signature": "lua_Number luaV_modf (lua_State *L, lua_Number m, lua_Number n)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_shiftl",
+            "signature": "lua_Integer luaV_shiftl (lua_Integer x, lua_Integer y)",
+            "needs_lua_State": false,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaV_equalobj",
+            "signature": "int luaV_equalobj (lua_State *L, const TValue *t1, const TValue *t2)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_lessthan",
+            "signature": "int luaV_lessthan (lua_State *L, const TValue *l, const TValue *r)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_lessequal",
+            "signature": "int luaV_lessequal (lua_State *L, const TValue *l, const TValue *r)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_finishget",
+            "signature": "void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val, const TValue *slot)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_finishset",
+            "signature": "void luaV_finishset (lua_State *L, const TValue *t, TValue *key, TValue *val, const TValue *slot)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_finishOp",
+            "signature": "void luaV_finishOp (lua_State *L)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_execute",
+            "signature": "void luaV_execute (lua_State *L, CallInfo *ci)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_concat",
+            "signature": "void luaV_concat (lua_State *L, int total)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          },
+          {
+            "name": "luaV_objlen",
+            "signature": "void luaV_objlen (lua_State *L, StkId ra, const TValue *rb)",
+            "needs_lua_State": true,
+            "differentially_testable": false
+          }
+        ],
+        "depends_on_modules": [
+          "lobject",
+          "lstring",
+          "ltable",
+          "ltm",
+          "ldo",
+          "lfunc",
+          "lgc",
+          "ldebug",
+          "lstate",
+          "lopcodes"
+        ],
+        "complexity_classes": [
+          "goto",
+          "computed_goto",
+          "union",
+          "function_pointer",
+          "recursion",
+          "macro_heavy",
+          "float_math",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "extreme",
+        "notes": "A clean tier of pure numeric helpers (luaV_idiv, luaV_mod, luaV_modf, luaV_shiftl, luaV_flttointeger, luaV_tonumber_/tointeger*) is directly fuzzable standalone against compiled C — their lua_State args are used only for divide-by-zero error paths, so non-degenerate inputs are output-determined by args. The sharp risk is luaV_execute: a ~700-line computed-goto jump-table dispatch (ljumptab.h) over the entire opcode set, driven by macro-generated arithmetic/comparison handlers, raw stack-pointer arithmetic (base+GETARG), and mid-opcode reentrancy for yields (luaV_finishOp) — it only has meaning against the live VM/GC and cannot be verified without standing up the interpreter."
+      },
+      {
+        "module": "lzio",
+        "loc": 69,
+        "public_functions": [
+          {
+            "name": "luaZ_fill",
+            "signature": "int luaZ_fill (ZIO *z)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaZ_init",
+            "signature": "void luaZ_init (lua_State *L, ZIO *z, lua_Reader reader, void *data)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          },
+          {
+            "name": "luaZ_read",
+            "signature": "size_t luaZ_read (ZIO *z, void *b, size_t n)",
+            "needs_lua_State": true,
+            "differentially_testable": true
+          }
+        ],
+        "depends_on_modules": [
+          "lmem",
+          "lstate"
+        ],
+        "complexity_classes": [
+          "function_pointer",
+          "unsafe_ptr_arith"
+        ],
+        "standalone_oracle_ready": true,
+        "translation_difficulty": "easy",
+        "notes": "A tiny buffered-stream reader. All three functions read/hold a lua_State but only pass it opaquely to a user-supplied lua_Reader callback (lua_lock/lua_unlock are no-ops in the default build), so a fuzz harness can construct a ZIO over a fixed byte buffer with a mock reader and verify luaZ_read/luaZ_fill byte-exact standalone. Sharpest risk is faithfully modeling the reader function-pointer contract and the raw pointer arithmetic on z->p / buffer (the +1/-1 \"put the first byte back\" dance in luaZ_read) in safe Rust."
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Analyze"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Synthesize"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "analyze:lapi",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ac495313b36fd57a3",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670805497,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lapi",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lapi.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lapi.h if it exists).\n\nReport, as structured output:\n- module: \"lapi\"\n- loc: line coun…",
+      "lastProgressAt": 1783670900354,
+      "tokens": 48939,
+      "toolCalls": 3,
+      "durationMs": 94857,
+      "resultPreview": "{\"module\":\"lapi\",\"loc\":1463,\"public_functions\":[{\"name\":\"lua_checkstack\",\"signature\":\"LUA_API int lua_checkstack(lua_State *L, int n)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"lua_xmove\",\"signature\":\"LUA_API void lua_xmove(lua_State *from, lua_State *to, int n)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"lua_atpanic\",\"signature\":\"LUA_API lua_CFunction …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "analyze:lauxlib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ac505b9901db81da6",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670805501,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lauxlib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lauxlib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lauxlib.h if it exists).\n\nReport, as structured output:\n- module: \"lauxlib\"\n- loc: …",
+      "lastProgressAt": 1783670874302,
+      "tokens": 49507,
+      "toolCalls": 3,
+      "durationMs": 68801,
+      "resultPreview": "{\"module\":\"lauxlib\",\"loc\":1127,\"public_functions\":[{\"name\":\"luaL_traceback\",\"signature\":\"void luaL_traceback(lua_State *L, lua_State *L1, const char *msg, int level)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaL_argerror\",\"signature\":\"int luaL_argerror(lua_State *L, int arg, const char *extramsg)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaL_typeer…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "analyze:lbaselib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a77ac9d948174f73a",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670805501,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lbaselib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lbaselib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lbaselib.h if it exists).\n\nReport, as structured output:\n- module: \"lbaselib\"\n- lo…",
+      "lastProgressAt": 1783670844229,
+      "tokens": 35557,
+      "toolCalls": 3,
+      "durationMs": 38728,
+      "resultPreview": "{\"module\":\"lbaselib\",\"loc\":549,\"public_functions\":[{\"name\":\"luaopen_base\",\"signature\":\"LUAMOD_API int luaopen_base (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"b_str2int\",\"signature\":\"static const char *b_str2int (const char *s, int base, lua_Integer *pn)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaB_tonumber\",\"signature\":\"static int lua…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "analyze:lcode",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a682a59aee2565c31",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670805502,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lcode",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lcode.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lcode.h if it exists).\n\nReport, as structured output:\n- module: \"lcode\"\n- loc: line c…",
+      "lastProgressAt": 1783670870924,
+      "tokens": 59780,
+      "toolCalls": 4,
+      "durationMs": 65422,
+      "resultPreview": "{\"module\":\"lcode\",\"loc\":1875,\"public_functions\":[{\"name\":\"luaK_code\",\"signature\":\"int luaK_code (FuncState *fs, Instruction i)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaK_codeABx\",\"signature\":\"int luaK_codeABx (FuncState *fs, OpCode o, int A, unsigned int Bx)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaK_codeABCk\",\"signature\":\"int luaK_codeABCk (…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "analyze:lcorolib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ac09212de1a4e07fe",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670805502,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lcorolib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lcorolib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lcorolib.h if it exists).\n\nReport, as structured output:\n- module: \"lcorolib\"\n- lo…",
+      "lastProgressAt": 1783670816231,
+      "tokens": 29442,
+      "toolCalls": 3,
+      "durationMs": 10729,
+      "resultPreview": "{\"module\":\"lcorolib\",\"loc\":211,\"public_functions\":[{\"name\":\"luaopen_coroutine\",\"signature\":\"LUAMOD_API int luaopen_coroutine (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lua\",\"lauxlib\",\"lstate\"],\"complexity_classes\":[\"function_pointer\"],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"hard\",\"notes\":\"Every function is a thin Lua-C wrapper …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "analyze:lctype",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ac081f6efe4afd116",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670805503,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lctype",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lctype.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lctype.h if it exists).\n\nReport, as structured output:\n- module: \"lctype\"\n- loc: lin…",
+      "lastProgressAt": 1783670818882,
+      "tokens": 29818,
+      "toolCalls": 3,
+      "durationMs": 13379,
+      "resultPreview": "{\"module\":\"lctype\",\"loc\":65,\"public_functions\":[],\"depends_on_modules\":[],\"complexity_classes\":[\"macro_heavy\"],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"trivial\",\"notes\":\"lctype.c exports NO functions — its only content is one 257-byte const lookup table `luai_ctype_[UCHAR_MAX+2]` (LUAI_DDEF). All the \\\"ctype\\\" behavior (lislalpha/lisdigit/lisspace/lisxdigit/lisprint/ltolower/testp…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "analyze:ldblib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a21c5981f05758c0c",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670816232,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ldblib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ldblib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ldblib.h if it exists).\n\nReport, as structured output:\n- module: \"ldblib\"\n- loc: lin…",
+      "lastProgressAt": 1783670846618,
+      "tokens": 34463,
+      "toolCalls": 3,
+      "durationMs": 30386,
+      "resultPreview": "{\"module\":\"ldblib\",\"loc\":483,\"public_functions\":[{\"name\":\"luaopen_debug\",\"signature\":\"LUAMOD_API int luaopen_debug (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"makemask\",\"signature\":\"static int makemask (const char *smask, int count)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"unmakemask\",\"signature\":\"static char *unmakemask (int mask, char…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "analyze:ldebug",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a45cb65924093e3e7",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670818883,
+      "queuedAt": 1783670805470,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ldebug",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ldebug.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ldebug.h if it exists).\n\nReport, as structured output:\n- module: \"ldebug\"\n- loc: lin…",
+      "lastProgressAt": 1783670857107,
+      "tokens": 43064,
+      "toolCalls": 3,
+      "durationMs": 38224,
+      "resultPreview": "{\"module\":\"ldebug\",\"loc\":963,\"public_functions\":[{\"name\":\"luaG_getfuncline\",\"signature\":\"int luaG_getfuncline (const Proto *f, int pc)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaG_findlocal\",\"signature\":\"const char *luaG_findlocal (lua_State *L, CallInfo *ci, int n, StkId *pos)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaG_typeerror\",\"signature\":\"…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 9,
+      "label": "analyze:ldo",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a596ab9fd77353b79",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670844230,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ldo",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ldo.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ldo.h if it exists).\n\nReport, as structured output:\n- module: \"ldo\"\n- loc: line count o…",
+      "lastProgressAt": 1783670874260,
+      "tokens": 46512,
+      "toolCalls": 3,
+      "durationMs": 30030,
+      "resultPreview": "{\"module\":\"ldo\",\"loc\":1029,\"public_functions\":[{\"name\":\"luaD_seterrorobj\",\"signature\":\"void luaD_seterrorobj (lua_State *L, int errcode, StkId oldtop)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaD_throw\",\"signature\":\"l_noret luaD_throw (lua_State *L, int errcode)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaD_rawrunprotected\",\"signature\":\"int luaD_r…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 10,
+      "label": "analyze:ldump",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a266ea556f4fbf23a",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670846618,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ldump",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ldump.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ldump.h if it exists).\n\nReport, as structured output:\n- module: \"ldump\"\n- loc: line c…",
+      "lastProgressAt": 1783670860124,
+      "tokens": 29794,
+      "toolCalls": 3,
+      "durationMs": 13505,
+      "resultPreview": "{\"module\":\"ldump\",\"loc\":231,\"public_functions\":[{\"name\":\"luaU_dump\",\"signature\":\"int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data, int strip)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lobject\",\"lstate\",\"lundump\"],\"complexity_classes\":[\"function_pointer\",\"recursion\",\"macro_heavy\",\"unsafe_ptr_arith\"],\"standalone_oracle_ready\":false,\"translat…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 11,
+      "label": "analyze:lfunc",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "aa724fe63a1a78f90",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670857109,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lfunc",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lfunc.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lfunc.h if it exists).\n\nReport, as structured output:\n- module: \"lfunc\"\n- loc: line c…",
+      "lastProgressAt": 1783670888104,
+      "tokens": 32422,
+      "toolCalls": 3,
+      "durationMs": 30995,
+      "resultPreview": "{\"module\":\"lfunc\",\"loc\":295,\"public_functions\":[{\"name\":\"luaF_newproto\",\"signature\":\"Proto *luaF_newproto (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaF_newCclosure\",\"signature\":\"CClosure *luaF_newCclosure (lua_State *L, int nupvals)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaF_newLclosure\",\"signature\":\"LClosure *luaF_newLclosure (lu…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 12,
+      "label": "analyze:lgc",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "aa6ff2fe56e0ee73f",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670860126,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lgc",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lgc.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lgc.h if it exists).\n\nReport, as structured output:\n- module: \"lgc\"\n- loc: line count o…",
+      "lastProgressAt": 1783670884740,
+      "tokens": 59304,
+      "toolCalls": 3,
+      "durationMs": 24613,
+      "resultPreview": "{\"module\":\"lgc\",\"loc\":1744,\"public_functions\":[{\"name\":\"luaC_fix\",\"signature\":\"void luaC_fix (lua_State *L, GCObject *o)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaC_freeallobjects\",\"signature\":\"void luaC_freeallobjects (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaC_step\",\"signature\":\"void luaC_step (lua_State *L)\",\"needs_lua_State\":…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 13,
+      "label": "analyze:liolib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a7ac1bccaac7cacc6",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670870926,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "liolib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/liolib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/liolib.h if it exists).\n\nReport, as structured output:\n- module: \"liolib\"\n- loc: lin…",
+      "lastProgressAt": 1783670895737,
+      "tokens": 39192,
+      "toolCalls": 3,
+      "durationMs": 24811,
+      "resultPreview": "{\"module\":\"liolib\",\"loc\":841,\"public_functions\":[{\"name\":\"luaopen_io\",\"signature\":\"LUAMOD_API int luaopen_io (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lauxlib\",\"lbaselib\"],\"complexity_classes\":[\"function_pointer\",\"varargs\",\"macro_heavy\",\"float_math\",\"unsafe_ptr_arith\"],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"moderate\",\"notes\":…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 14,
+      "label": "analyze:llex",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a017864db21e77254",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670874261,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "llex",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/llex.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/llex.h if it exists).\n\nReport, as structured output:\n- module: \"llex\"\n- loc: line coun…",
+      "lastProgressAt": 1783670910619,
+      "tokens": 37013,
+      "toolCalls": 3,
+      "durationMs": 36357,
+      "resultPreview": "{\"module\":\"llex\",\"loc\":582,\"public_functions\":[{\"name\":\"luaX_init\",\"signature\":\"void luaX_init (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaX_setinput\",\"signature\":\"void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source, int firstchar)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaX_newstring\",\"signature\":\"TString *luaX…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 15,
+      "label": "analyze:lmathlib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a44d9d4fa7375dfb1",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670874303,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lmathlib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lmathlib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lmathlib.h if it exists).\n\nReport, as structured output:\n- module: \"lmathlib\"\n- lo…",
+      "lastProgressAt": 1783670917776,
+      "tokens": 38357,
+      "toolCalls": 3,
+      "durationMs": 43473,
+      "resultPreview": "{\"module\":\"lmathlib\",\"loc\":781,\"public_functions\":[{\"name\":\"luaopen_math\",\"signature\":\"LUAMOD_API int luaopen_math (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"nextrand\",\"signature\":\"static Rand64 nextrand (Rand64 *state)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"rotl\",\"signature\":\"static Rand64 rotl (Rand64 x, int n)\",\"needs_lua_State\":f…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 16,
+      "label": "analyze:lmem",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a96561554cb547c1e",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670884741,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lmem",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lmem.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lmem.h if it exists).\n\nReport, as structured output:\n- module: \"lmem\"\n- loc: line coun…",
+      "lastProgressAt": 1783670912136,
+      "tokens": 31567,
+      "toolCalls": 3,
+      "durationMs": 27395,
+      "resultPreview": "{\"module\":\"lmem\",\"loc\":216,\"public_functions\":[{\"name\":\"luaM_growaux_\",\"signature\":\"void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize, int size_elems, int limit, const char *what)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaM_shrinkvector_\",\"signature\":\"void *luaM_shrinkvector_ (lua_State *L, void *block, int *size, int final_n, int size_elem)\",\"needs_…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 17,
+      "label": "analyze:loadlib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "aa797ec2e61a5b8b0",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670888105,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "loadlib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/loadlib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/loadlib.h if it exists).\n\nReport, as structured output:\n- module: \"loadlib\"\n- loc: …",
+      "lastProgressAt": 1783670929260,
+      "tokens": 38765,
+      "toolCalls": 3,
+      "durationMs": 41155,
+      "resultPreview": "{\"module\":\"loadlib\",\"loc\":758,\"public_functions\":[{\"name\":\"luaopen_package\",\"signature\":\"LUAMOD_API int luaopen_package (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lauxlib\",\"lapi\"],\"complexity_classes\":[\"function_pointer\",\"unsafe_ptr_arith\"],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"hard\",\"notes\":\"The only exported symbol is luaop…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 18,
+      "label": "analyze:lobject",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a17f1221ed5900f49",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670895738,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lobject",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lobject.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lobject.h if it exists).\n\nReport, as structured output:\n- module: \"lobject\"\n- loc: …",
+      "lastProgressAt": 1783670933712,
+      "tokens": 38646,
+      "toolCalls": 4,
+      "durationMs": 37974,
+      "resultPreview": "{\"module\":\"lobject\",\"loc\":603,\"public_functions\":[{\"name\":\"luaO_ceillog2\",\"signature\":\"int luaO_ceillog2 (unsigned int x)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaO_utf8esc\",\"signature\":\"int luaO_utf8esc (char *buff, unsigned long x)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaO_hexavalue\",\"signature\":\"int luaO_hexavalue (int c)\",\"needs_lua_Stat…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 19,
+      "label": "analyze:lopcodes",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "aeb02c08641ebcc8a",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670900354,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lopcodes",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lopcodes.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lopcodes.h if it exists).\n\nReport, as structured output:\n- module: \"lopcodes\"\n- lo…",
+      "lastProgressAt": 1783670914809,
+      "tokens": 38829,
+      "toolCalls": 3,
+      "durationMs": 14455,
+      "resultPreview": "{\"module\":\"lopcodes\",\"loc\":105,\"public_functions\":[],\"depends_on_modules\":[],\"complexity_classes\":[],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"trivial\",\"notes\":\"This module contains NO functions — only one exported const data table, luaP_opmodes[NUM_OPCODES], a 83-entry lu_byte array of per-opcode property masks built via the opmode() macro. It has no public C functions to differen…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 20,
+      "label": "analyze:loslib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ae289b552d05331a0",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670910621,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "loslib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/loslib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/loslib.h if it exists).\n\nReport, as structured output:\n- module: \"loslib\"\n- loc: lin…",
+      "lastProgressAt": 1783670939117,
+      "tokens": 33310,
+      "toolCalls": 3,
+      "durationMs": 28496,
+      "resultPreview": "{\"module\":\"loslib\",\"loc\":430,\"public_functions\":[{\"name\":\"luaopen_os\",\"signature\":\"LUAMOD_API int luaopen_os (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lauxlib\"],\"complexity_classes\":[\"float_math\",\"macro_heavy\"],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"moderate\",\"notes\":\"Only luaopen_os is exported; every other function is a sta…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 21,
+      "label": "analyze:lparser",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a9ed6a7f4475c3b84",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670912137,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lparser",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lparser.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lparser.h if it exists).\n\nReport, as structured output:\n- module: \"lparser\"\n- loc: …",
+      "lastProgressAt": 1783670951744,
+      "tokens": 61977,
+      "toolCalls": 4,
+      "durationMs": 39607,
+      "resultPreview": "{\"module\":\"lparser\",\"loc\":1968,\"public_functions\":[{\"name\":\"luaY_nvarstack\",\"signature\":\"int luaY_nvarstack (FuncState *fs)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaY_parser\",\"signature\":\"LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff, Dyndata *dyd, const char *name, int firstchar)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 22,
+      "label": "analyze:lstate",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a31f9f01e7b72bd78",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670914810,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lstate",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lstate.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lstate.h if it exists).\n\nReport, as structured output:\n- module: \"lstate\"\n- loc: lin…",
+      "lastProgressAt": 1783670946964,
+      "tokens": 40888,
+      "toolCalls": 3,
+      "durationMs": 32153,
+      "resultPreview": "{\"module\":\"lstate\",\"loc\":446,\"public_functions\":[{\"name\":\"luaE_setdebt\",\"signature\":\"void luaE_setdebt(global_State *g, l_mem debt)\",\"needs_lua_State\":true,\"differentially_testable\":true},{\"name\":\"lua_setcstacklimit\",\"signature\":\"LUA_API int lua_setcstacklimit(lua_State *L, unsigned int limit)\",\"needs_lua_State\":true,\"differentially_testable\":true},{\"name\":\"luaE_extendCI\",\"signature\":\"CallInfo *lu…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 23,
+      "label": "analyze:lstring",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "aa07eb9fbd8dfa97b",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670917778,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lstring",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lstring.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lstring.h if it exists).\n\nReport, as structured output:\n- module: \"lstring\"\n- loc: …",
+      "lastProgressAt": 1783670934914,
+      "tokens": 31902,
+      "toolCalls": 3,
+      "durationMs": 17136,
+      "resultPreview": "{\"module\":\"lstring\",\"loc\":275,\"public_functions\":[{\"name\":\"luaS_eqlngstr\",\"signature\":\"int luaS_eqlngstr (TString *a, TString *b)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaS_hash\",\"signature\":\"unsigned int luaS_hash (const char *str, size_t l, unsigned int seed)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaS_hashlongstr\",\"signature\":\"unsigned int …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 24,
+      "label": "analyze:lstrlib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "aad793c067dc160e9",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670929261,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lstrlib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lstrlib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lstrlib.h if it exists).\n\nReport, as structured output:\n- module: \"lstrlib\"\n- loc: …",
+      "lastProgressAt": 1783670996448,
+      "tokens": 57295,
+      "toolCalls": 4,
+      "durationMs": 67186,
+      "resultPreview": "{\"module\":\"lstrlib\",\"loc\":1874,\"public_functions\":[{\"name\":\"luaopen_string\",\"signature\":\"LUAMOD_API int luaopen_string (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"str_len\",\"signature\":\"static int str_len (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":true},{\"name\":\"str_sub\",\"signature\":\"static int str_sub (lua_State *L)\",\"needs_lua_State\":true…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 25,
+      "label": "analyze:ltable",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ab6b612d5884723f1",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670933713,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ltable",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ltable.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ltable.h if it exists).\n\nReport, as structured output:\n- module: \"ltable\"\n- loc: lin…",
+      "lastProgressAt": 1783670972921,
+      "tokens": 44108,
+      "toolCalls": 3,
+      "durationMs": 39208,
+      "resultPreview": "{\"module\":\"ltable\",\"loc\":996,\"public_functions\":[{\"name\":\"luaH_realasize\",\"signature\":\"unsigned int luaH_realasize (const Table *t)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaH_getint\",\"signature\":\"const TValue *luaH_getint (Table *t, lua_Integer key)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaH_getshortstr\",\"signature\":\"const TValue *luaH_getsho…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 26,
+      "label": "analyze:ltablib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a78b149ff5b124fba",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670934915,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ltablib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ltablib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ltablib.h if it exists).\n\nReport, as structured output:\n- module: \"ltablib\"\n- loc: …",
+      "lastProgressAt": 1783670964686,
+      "tokens": 34105,
+      "toolCalls": 3,
+      "durationMs": 29771,
+      "resultPreview": "{\"module\":\"ltablib\",\"loc\":430,\"public_functions\":[{\"name\":\"luaopen_table\",\"signature\":\"LUAMOD_API int luaopen_table (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lauxlib\",\"lapi\"],\"complexity_classes\":[\"recursion\",\"macro_heavy\",\"function_pointer\",\"unsafe_ptr_arith\"],\"standalone_oracle_ready\":false,\"translation_difficulty\":\"moderate\",\"notes\":\"The onl…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 27,
+      "label": "analyze:ltm",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "ae061106001b679ac",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670939119,
+      "queuedAt": 1783670805471,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "ltm",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/ltm.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/ltm.h if it exists).\n\nReport, as structured output:\n- module: \"ltm\"\n- loc: line count o…",
+      "lastProgressAt": 1783670976486,
+      "tokens": 32890,
+      "toolCalls": 3,
+      "durationMs": 37367,
+      "resultPreview": "{\"module\":\"ltm\",\"loc\":272,\"public_functions\":[{\"name\":\"luaT_objtypename\",\"signature\":\"const char *luaT_objtypename (lua_State *L, const TValue *o)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"luaT_gettm\",\"signature\":\"const TValue *luaT_gettm (Table *events, TMS event, TString *ename)\",\"needs_lua_State\":false,\"differentially_testable\":false},{\"name\":\"luaT_gettmbyobj\",\"signature…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 28,
+      "label": "analyze:lundump",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "adaf7a30b1ca7b669",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670946965,
+      "queuedAt": 1783670805472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lundump",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lundump.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lundump.h if it exists).\n\nReport, as structured output:\n- module: \"lundump\"\n- loc: …",
+      "lastProgressAt": 1783670970857,
+      "tokens": 31874,
+      "toolCalls": 3,
+      "durationMs": 23892,
+      "resultPreview": "{\"module\":\"lundump\",\"loc\":336,\"public_functions\":[{\"name\":\"luaU_undump\",\"signature\":\"LClosure *luaU_undump(lua_State *L, ZIO *Z, const char *name)\",\"needs_lua_State\":true,\"differentially_testable\":false}],\"depends_on_modules\":[\"lobject\",\"ldo\",\"lfunc\",\"lmem\",\"lstring\",\"lzio\",\"lgc\",\"ldebug\",\"lstate\"],\"complexity_classes\":[\"recursion\",\"setjmp_longjmp\",\"union\",\"macro_heavy\"],\"standalone_oracle_ready\":…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 29,
+      "label": "analyze:lutf8lib",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a567e1d61fbbaf4dd",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670951745,
+      "queuedAt": 1783670805472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lutf8lib",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lutf8lib.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lutf8lib.h if it exists).\n\nReport, as structured output:\n- module: \"lutf8lib\"\n- lo…",
+      "lastProgressAt": 1783670979577,
+      "tokens": 31272,
+      "toolCalls": 3,
+      "durationMs": 27832,
+      "resultPreview": "{\"module\":\"lutf8lib\",\"loc\":291,\"public_functions\":[{\"name\":\"luaopen_utf8\",\"signature\":\"LUAMOD_API int luaopen_utf8 (lua_State *L)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"utf8_decode\",\"signature\":\"static const char *utf8_decode (const char *s, utfint *val, int strict)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"u_posrelat\",\"signature\":\"static lua_Inte…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 30,
+      "label": "analyze:lvm",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a5ca820cf0e61ba69",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670964688,
+      "queuedAt": 1783670805472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lvm",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lvm.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lvm.h if it exists).\n\nReport, as structured output:\n- module: \"lvm\"\n- loc: line count o…",
+      "lastProgressAt": 1783671011946,
+      "tokens": 54245,
+      "toolCalls": 4,
+      "durationMs": 47258,
+      "resultPreview": "{\"module\":\"lvm\",\"loc\":1899,\"public_functions\":[{\"name\":\"luaV_tonumber_\",\"signature\":\"int luaV_tonumber_ (const TValue *obj, lua_Number *n)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaV_flttointeger\",\"signature\":\"int luaV_flttointeger (lua_Number n, lua_Integer *p, F2Imod mode)\",\"needs_lua_State\":false,\"differentially_testable\":true},{\"name\":\"luaV_tointegerns\",\"signature\":\"…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 31,
+      "label": "analyze:lzio",
+      "phaseIndex": 1,
+      "phaseTitle": "Analyze",
+      "agentId": "a68bb7a3c81a27554",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783670970859,
+      "queuedAt": 1783670805472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "lzio",
+      "promptPreview": "You are analyzing one C module of the Lua 5.4 interpreter for an automated C->safe-Rust translator that verifies each function byte-exact against the compiled C (differential fuzzing).\n\nRead the file C:/Users/jesse/projects/alchemist/subjects/lua/lzio.c (and peek at C:/Users/jesse/projects/alchemist/subjects/lua/lzio.h if it exists).\n\nReport, as structured output:\n- module: \"lzio\"\n- loc: line coun…",
+      "lastProgressAt": 1783670995503,
+      "tokens": 28341,
+      "toolCalls": 3,
+      "durationMs": 24644,
+      "resultPreview": "{\"module\":\"lzio\",\"loc\":69,\"public_functions\":[{\"name\":\"luaZ_fill\",\"signature\":\"int luaZ_fill (ZIO *z)\",\"needs_lua_State\":true,\"differentially_testable\":true},{\"name\":\"luaZ_init\",\"signature\":\"void luaZ_init (lua_State *L, ZIO *z, lua_Reader reader, void *data)\",\"needs_lua_State\":true,\"differentially_testable\":true},{\"name\":\"luaZ_read\",\"signature\":\"size_t luaZ_read (ZIO *z, void *b, size_t n)\",\"need…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 32,
+      "label": "synthesize:dag",
+      "phaseIndex": 2,
+      "phaseTitle": "Synthesize",
+      "agentId": "a2f94ba313c1af3c2",
+      "model": "claude-opus-4-8[1m]",
+      "state": "done",
+      "startedAt": 1783671011967,
+      "queuedAt": 1783671011952,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Build reference Lua 5.4 once as a static archive (liblua.a,…",
+      "promptPreview": "You are planning the bottom-up translation of the ENTIRE Lua 5.4 interpreter to safe Rust, verified byte-exact-or-refused. Here are structured analyses of all 31 library modules (JSON):\n\n[{\"module\":\"lapi\",\"loc\":1463,\"public_functions\":[{\"name\":\"lua_checkstack\",\"signature\":\"LUA_API int lua_checkstack(lua_State *L, int n)\",\"needs_lua_State\":true,\"differentially_testable\":false},{\"name\":\"lua_xmove\",\"…",
+      "lastProgressAt": 1783671153647,
+      "tokens": 63903,
+      "toolCalls": 1,
+      "durationMs": 141680,
+      "resultPreview": "{\"translation_order\":[\"lctype\",\"lopcodes\",\"lobject\",\"lmem\",\"lzio\",\"lstring\",\"ltm\",\"lfunc\",\"ltable\",\"lstate\",\"lgc\",\"ldebug\",\"ldo\",\"lvm\",\"lapi\",\"lundump\",\"ldump\",\"llex\",\"lcode\",\"lparser\",\"lauxlib\",\"lbaselib\",\"lmathlib\",\"loslib\",\"loadlib\",\"ltablib\",\"lutf8lib\",\"lstrlib\",\"ldblib\",\"lcorolib\",\"liolib\"],\"first_batch\":[{\"module\":\"lctype\",\"why\":\"True leaf: zero deps, exports NO functions - only the 257-byte…"
+    }
+  ],
+  "totalTokens": 1307081,
+  "totalToolCalls": 99
+}
