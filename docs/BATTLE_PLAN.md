@@ -270,3 +270,32 @@ funding, not the source itself. So value tracks what we point it at next and who
 3. **One external user** — Phase 7, pulled forward. Someone else's C, their run. Kills the
    founder-demo discount.
 4. **WALL 3 — `goto` → safe Rust** — Phase 3. Turns "algorithmic functions" into "real programs."
+
+---
+
+## Phase 3 progress log
+
+### ✅ smaz CONQUERED (2026-07-10, run9 OVERALL PASS)
+First real third-party codec, byte-exact-or-refused, fully autonomous, zero hand-edits.
+Both `smaz_compress` + `smaz_decompress` verified against compiled C at 4000 fuzz cases each
+(differential gate PASS, 2/2 buf_transform harnesses). Exercised: variable-length codec,
+real forward `goto` (model produced goto-free structured Rust), hash-indexed 254-entry codebook
+(carried byte-exact), decoder round-trip oracle. **8 framework bugs fixed en route — zero were
+model incapacity:** (1) caps-only const regex→hallucinated codebook; (2) Rust-keyword param `in`;
+(3) JSON-escape corruption in fill parser; (4) decoder fuzzed with random bytes hit C UB →
+decoder round-trip oracle (paired encoder mints valid streams); (5) phantom `out` param arity
+mismatch; (6) no first-divergence hint in repair loop → added, sharpened to detect pure
+reorderings; (7) build_diff_config skipped compression/decompression before buf_transform harness;
+(8) architect non-determinism rolled a broken trait crate → `_flatten_codec_traits` forces free
+`fn(&[u8])->Vec<u8>`. Every fix generalizes to Lua.
+
+### ▶ Lua 5.4.7 — IN PROGRESS (onboarded 2026-07-10)
+Target: ALL of it, byte-exact, complete. 63 files / 26,044 LOC C, vendored at `subjects/lua/`.
+Complexity-class map (the walls): `goto` in 6 files (ldo/lgc/llex/lparser/lstrlib/lvm — WALL-3,
+proven on smaz); **computed goto** in lvm.c/ljumptab.h (the VM dispatch, 86 vmcase — hardest core);
+**setjmp/longjmp** in 7 files (error handling — new wall); **unions** (TValue in lobject.h — new
+wall); pattern matcher in lstrlib.c (35 match/class helpers). Strategy: bottom-up the dependency
+DAG. First "hello world" = lctype.c (pure classification table — proves toolchain). First real
+FUNCTION targets = lobject.c standalone numeric helpers (luaO_str2int, luaO_hexavalue, luaO_utf8esc,
+luaO_ceillog2) — pure, clean oracles, integer-overflow semantics. Then climb: lzio → lmem → lobject
+→ lopcodes → llex → lparser → ltable → lfunc → lstring → ltm → lgc → ldo → lvm → stdlib.
