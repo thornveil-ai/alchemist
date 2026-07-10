@@ -22,3 +22,18 @@ unsigned long long nextrand (XState *st) {
   state[3] = rotl(state3, 45);
   return res;
 }
+
+/* Simple deterministic seeder (splitmix64-style) so the state-sequence oracle
+ * has an init+op pair: seed -> state, then nextrand steps produce the sequence.
+ * Any u64[4] state is valid for xoshiro256**, so this is a legitimate init. */
+void seedstate (XState *st, unsigned long long seed) {
+  unsigned long long z = seed;
+  for (int i = 0; i < 4; i++) {
+    z += 0x9E3779B97F4A7C15ull;
+    unsigned long long x = z;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    x = x ^ (x >> 31);
+    st->s[i] = x;
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-10T11:35:35.676675+00:00",
+  "workspace": "/tmp/lua_hexa/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (2 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 2 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s [1/1 harnesses adapted (luaO_hexavalue -> lua_hexa_core::lua_o_hexavalue (scalar))]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "luaO_hexavalue",
+        "category": "scalar",
+        "cases": 4000,
+        "seed": null,
+        "boundary_lengths": [],
+        "binding": "luaO_hexavalue -> lua_hexa_core::lua_o_hexavalue (scalar)"
+      }
+    ],
+    "cargo_summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  },
+  "oracle": {
+    "ffi_crate": "c_lua_hexa_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/tmp/lua_hexa/hexa.c",
+        "sha256": "62ea25b3770aac3c77c542b07276dd7c9db87b74217e00ddb63a19647e5c833a"
+      }
+    ],
+    "dll": {
+      "path": "/tmp/lua_hexa/.alchemist/verify_gen/c_lua_hexa_ref/libc_lua_hexa_ref.so",
+      "sha256": "d54a8b88c67fbf0fcad59f9685a46fa0acb125b483200dc0f71a2dd49c7d7960"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 1
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "240359ebd2bf73e07f8d1a216d25c12e3676b753fc938780da9044b82d492279",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}
