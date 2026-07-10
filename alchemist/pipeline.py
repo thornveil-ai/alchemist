@@ -665,11 +665,24 @@ def run_implement_stage(
     # whole class of "undefined identifier" compile failures from LLM
     # referencing C constants it can't reproduce.
     try:
-        from alchemist.extractor.constants_extractor import extract_from_path
+        from alchemist.extractor.constants_extractor import (
+            extract_from_path, build_typedef_map,
+        )
         c_sources: dict[str, Path] = {
             p.stem: p for p in source.rglob("*.c")
             if "test" not in p.name.lower() and "example" not in p.name.lower()
         }
+        # Build ONE typedef map over the whole subject (all .c + .h) so a
+        # carried table typed `lu_byte`/`Bytef`/`hrt_abstime` resolves through
+        # the codebase's own aliases -> C primitive -> Rust. No hardcoded
+        # per-library type tables; the harness learns types from the source.
+        _subj_texts: list[str] = []
+        for _p in list(source.rglob("*.h")) + list(source.rglob("*.c")):
+            try:
+                _subj_texts.append(_p.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+        subject_typedefs = build_typedef_map(_subj_texts)
         total_consts = 0
         for module in specs:
             if module.constants:
@@ -678,7 +691,7 @@ def run_implement_stage(
             if c_file is None:
                 continue
             try:
-                report = extract_from_path(c_file)
+                report = extract_from_path(c_file, typedef_map=subject_typedefs)
                 module.constants = report.extracted
                 total_consts += report.count
             except Exception:  # noqa: BLE001

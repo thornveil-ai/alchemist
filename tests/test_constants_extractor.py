@@ -64,13 +64,29 @@ def test_u_suffix_forces_u32() -> None:
 
 
 def test_c_type_name_mapping() -> None:
+    # Genuine C primitives resolve with no typedef map.
     assert _rust_type_for("unsigned int") == "u32"
     assert _rust_type_for("int") == "i32"
     assert _rust_type_for("size_t") == "usize"
-    assert _rust_type_for("uInt") == "u32"
-    assert _rust_type_for("uLong") == "u64"
     assert _rust_type_for("unsigned char") == "u8"
     assert _rust_type_for("const int") == "i32"
+
+
+def test_codebase_aliases_resolve_from_source_not_a_table() -> None:
+    # zlib's aliases (uInt/uLong/Bytef) are learned from zlib's OWN typedefs,
+    # not a hardcoded map. Without the source they don't resolve.
+    from alchemist.extractor.constants_extractor import build_typedef_map
+    zconf = (
+        "typedef unsigned int uInt;\n"
+        "typedef unsigned long uLong;\n"
+        "typedef unsigned char Bytef;\n"
+    )
+    tm = build_typedef_map([zconf])
+    assert _rust_type_for("uInt", tm) == "u32"
+    assert _rust_type_for("uLong", tm) == "u64"
+    assert _rust_type_for("Bytef", tm) == "u8"
+    # No source map => unresolved alias passes through (never faked).
+    assert _rust_type_for("uInt") == "uInt"
 
 
 # ---------------------------------------------------------------------------

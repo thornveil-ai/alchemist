@@ -61,23 +61,42 @@ _STATIC_CONST_RE = re.compile(
 )
 
 
-# Map common C type names to Rust type names.
+# Map GENUINE C-LANGUAGE PRIMITIVES to Rust. These are the C standard and
+# stdint.h — universal across every codebase, NOT codebase-specific. Any
+# codebase-specific alias (zlib's `Bytef`, Lua's `lu_byte`, PX4's `hrt_abstime`)
+# is resolved dynamically from the subject's own `typedef` / type-macro
+# declarations via `build_typedef_map()` — never hardcoded. This keeps the
+# harness general: the model's translation transfers to unseen code because
+# type resolution reads the code, it doesn't look names up in a curated table.
 _C_TYPE_TO_RUST: dict[str, str] = {
     "char": "u8",
     "unsigned char": "u8",
     "signed char": "i8",
     "short": "i16",
+    "short int": "i16",
     "unsigned short": "u16",
+    "unsigned short int": "u16",
     "signed short": "i16",
     "int": "i32",
+    "unsigned": "u32",
     "unsigned int": "u32",
     "signed int": "i32",
     "long": "i64",
+    "long int": "i64",
     "unsigned long": "u64",
+    "unsigned long int": "u64",
     "signed long": "i64",
     "long long": "i64",
+    "long long int": "i64",
     "unsigned long long": "u64",
+    "unsigned long long int": "u64",
+    "float": "f32",
+    "double": "f64",
+    "long double": "f64",
+    "_Bool": "bool",
     "size_t": "usize",
+    "ssize_t": "isize",
+    "ptrdiff_t": "isize",
     "uintptr_t": "usize",
     "intptr_t": "isize",
     "uint8_t": "u8",
@@ -88,63 +107,124 @@ _C_TYPE_TO_RUST: dict[str, str] = {
     "int16_t": "i16",
     "int32_t": "i32",
     "int64_t": "i64",
-    # zlib typedefs
-    "uInt": "u32",
-    "uLong": "u64",
-    "ulg": "u64",
-    "ush": "u16",
-    "uch": "u8",
-    "Bytef": "u8",
-    "Byte": "u8",
-    "Pos": "u16",
-    "IPos": "u32",
-    "z_size_t": "usize",
-    "z_off_t": "i64",
-    "z_crc_t": "u32",
-    "z_word_t": "u64",
-    "ct_data": "HuffmanNode",
-    # Lua 5.4 typedefs (llimits.h / lua.h / luaconf.h). Lua names its scalar
-    # types, so a carried table like `static const lu_byte log_2[256]` would
-    # otherwise emit `[lu_byte; N]` — an undefined Rust type (E0425).
-    "lu_byte": "u8",
-    "ls_byte": "i8",
-    "lu_mem": "usize",
-    "l_mem": "isize",
-    "l_uint32": "u32",
-    "l_int32": "i32",
-    "Instruction": "u32",
-    "lua_Integer": "i64",
-    "lua_Unsigned": "u64",
-    "lua_Number": "f64",
-    "LUAI_UACINT": "i64",
-    "LUAI_UACNUMBER": "f64",
-    "lua_KContext": "isize",
-    "TValue": "TValue",
+    "uint_fast8_t": "u8",
+    "uint_fast16_t": "u32",
+    "uint_fast32_t": "u32",
+    "uint_fast64_t": "u64",
+    "uint_least8_t": "u8",
+    "uint_least16_t": "u16",
+    "uint_least32_t": "u32",
+    "uint_least64_t": "u64",
+    "intmax_t": "i64",
+    "uintmax_t": "u64",
 }
 
+# A typedef base made only of these keywords is a scalar we can resolve to a
+# Rust primitive. Anything else (struct/union/enum/function-pointer/array/
+# pointer aggregate) is deliberately NOT resolved as a scalar alias.
+_SCALAR_KEYWORDS = frozenset({
+    "unsigned", "signed", "long", "short", "int", "char",
+    "double", "float", "void", "_Bool",
+})
 
-def _rust_type_for(c_type: str) -> str:
-    """Best-effort translation of a C type name to Rust."""
+# `typedef <base> <alias>;` where base is a plain (possibly multi-word) type
+# name and alias is a single identifier. Excludes struct/union/enum/pointer/
+# array/function-pointer forms because the char class stops at `*({[`.
+_TYPEDEF_RE = re.compile(
+    r"\btypedef\s+([A-Za-z_][\w ]*?)\s+([A-Za-z_]\w*)\s*;",
+    re.MULTILINE,
+)
+# `#define ALIAS <scalar-type-keywords>` — some libraries alias scalar types
+# with a macro instead of a typedef (Lua's `#define LUAI_UACINT long long`).
+_TYPE_MACRO_RE = re.compile(
+    r"^\s*#\s*define\s+([A-Za-z_]\w*)\s+"
+    r"((?:unsigned|signed|long|short|int|char|double|float|void|_Bool)"
+    r"(?:\s+(?:unsigned|signed|long|short|int|char|double|float))*)\s*$",
+    re.MULTILINE,
+)
+
+
+def build_typedef_map(texts) -> dict[str, str]:
+    """Read a subject's own `typedef` and scalar type-macro declarations from
+    its source/header texts and return an {alias -> base-type} map.
+
+    This is what makes type resolution GENERAL: instead of a hardcoded table of
+    one library's type names, the harness learns each codebase's aliases from
+    the codebase itself. `typedef unsigned char lu_byte;` teaches `lu_byte`;
+    `typedef LUAI_UACINT lua_Integer;` chains through the macro map.
+
+    `texts` is any iterable of C source/header strings (the subject's `.c`+`.h`).
+    """
+    tmap: dict[str, str] = {}
+    for text in texts:
+        if not text:
+            continue
+        for m in _TYPEDEF_RE.finditer(text):
+            base = re.sub(r"\s+", " ", m.group(1).strip())
+            alias = m.group(2).strip()
+            # Skip aggregate bases — only scalar aliases resolve to primitives.
+            if any(k in base.split() for k in ("struct", "union", "enum")):
+                continue
+            if alias and alias != base:
+                tmap.setdefault(alias, base)
+        for m in _TYPE_MACRO_RE.finditer(text):
+            alias = m.group(1).strip()
+            base = re.sub(r"\s+", " ", m.group(2).strip())
+            if alias and alias != base:
+                tmap.setdefault(alias, base)
+    return tmap
+
+
+def _resolve_typedef_chain(c: str, typedef_map: dict[str, str]) -> str:
+    """Walk alias -> base through the subject's typedef map until a C primitive
+    (or a name the map doesn't know). Cycle- and depth-guarded."""
+    seen: set[str] = set()
+    depth = 0
+    while (
+        c not in _C_TYPE_TO_RUST
+        and c in typedef_map
+        and c not in seen
+        and depth < 32
+    ):
+        seen.add(c)
+        c = re.sub(r"\s+", " ", typedef_map[c].replace("*", "").strip())
+        depth += 1
+    return c
+
+
+def _rust_type_for(c_type: str, typedef_map: dict[str, str] | None = None) -> str:
+    """Best-effort translation of a C type name to Rust.
+
+    Resolution order: normalize -> walk the subject's own typedef chain to a
+    base type -> map that primitive to Rust. `typedef_map` comes from
+    `build_typedef_map()` over the subject's sources; when absent we still map
+    genuine C primitives.
+    """
     c = c_type.strip()
     # Collapse whitespace
     c = re.sub(r"\s+", " ", c)
     # Drop pointer-asterisks — we don't emit pointer consts
     c = c.replace("*", "").strip()
+    # Strip cv-qualifiers that don't affect the representation.
+    c = re.sub(r"\b(?:const|volatile)\b", "", c).strip()
+    c = re.sub(r"\s+", " ", c)
+    # Resolve the subject's own aliases (Bytef, lu_byte, hrt_abstime, ...).
+    if typedef_map:
+        c = _resolve_typedef_chain(c, typedef_map)
     if c in _C_TYPE_TO_RUST:
         return _C_TYPE_TO_RUST[c]
-    # Sometimes C uses `const uLong` or `unsigned long int` — try stripping
-    # the first word and retrying.
+    # Sometimes C uses `unsigned long int` — try normalized joins.
     parts = c.split()
     if len(parts) >= 2:
         joined = " ".join(parts)
         if joined in _C_TYPE_TO_RUST:
             return _C_TYPE_TO_RUST[joined]
-        # Try without the first keyword (const/unsigned/signed)
+        # Try without a leading qualifier keyword.
         if parts[0] in ("const", "unsigned", "signed"):
             rest = " ".join(parts[1:])
             if rest in _C_TYPE_TO_RUST:
                 return _C_TYPE_TO_RUST[rest]
-    # Fallback: pass through (may be a user type extractor knows about)
+    # Fallback: pass through (may be a struct type the caller knows about).
     return c or "u32"
 
 
@@ -351,15 +431,32 @@ def _is_c_preprocessor_marker(value: str) -> bool:
     return False
 
 
-def extract_constants(c_source: str, c_file: str = "") -> ExtractionReport:
+def extract_constants(
+    c_source: str,
+    c_file: str = "",
+    typedef_map: dict[str, str] | None = None,
+) -> ExtractionReport:
     """Extract all constants from a C translation unit.
 
     Does NOT run the C preprocessor — works on the raw source. This means
     conditional compilation blocks inside `#if 0` etc. are still visible
     (acceptable: they'd be dead Rust consts but don't break anything).
+
+    `typedef_map` (from `build_typedef_map()` over the whole subject) lets
+    carried-table element types resolve through the subject's own aliases.
+    Typedefs declared in THIS unit are always folded in as a baseline, so a
+    self-contained single file still resolves its own aliases with no caller
+    help.
     """
     extracted: list[ConstantSpec] = []
     skipped: list[tuple[str, str]] = []
+
+    # Always self-scan this unit's typedefs; merge any caller-supplied
+    # cross-file map on top (caller map wins on conflict).
+    local_types = build_typedef_map([c_source])
+    if typedef_map:
+        local_types.update(typedef_map)
+    typedef_map = local_types
 
     # Already-seen names (later definitions win, matching C semantics).
     seen: dict[str, int] = {}
@@ -395,6 +492,13 @@ def extract_constants(c_source: str, c_file: str = "") -> ExtractionReport:
         # that don't translate to Rust constants.
         if _is_c_preprocessor_marker(value):
             skipped.append((name, f"c preprocessor marker: {value!r}"))
+            continue
+        # Skip scalar TYPE-alias macros (`#define LUAI_UACINT long long`) — the
+        # value is a type, not a constant. build_typedef_map() already absorbed
+        # it for type resolution; emitting it as `pub const = long long` is bad
+        # Rust. A value made only of C scalar-type keywords is a type alias.
+        if all(tok in _SCALAR_KEYWORDS for tok in value.split()):
+            skipped.append((name, f"type-alias macro: {value!r}"))
             continue
         rust_type = _infer_type_from_literal(value)
         rust_expr = _c_literal_to_rust(value, rust_type)
@@ -448,7 +552,7 @@ def extract_constants(c_source: str, c_file: str = "") -> ExtractionReport:
             ))
 
     # 3. static const TYPE NAME[N] = { ... }
-    for spec in _extract_static_const_tables(c_source, c_file):
+    for spec in _extract_static_const_tables(c_source, c_file, typedef_map):
         extracted.append(spec)
 
     return ExtractionReport(extracted=extracted, skipped=skipped)
@@ -474,7 +578,11 @@ def _infer_type_from_literal(value: str) -> str:
     return "u32"
 
 
-def _extract_static_const_tables(c_source: str, c_file: str) -> list[ConstantSpec]:
+def _extract_static_const_tables(
+    c_source: str,
+    c_file: str,
+    typedef_map: dict[str, str] | None = None,
+) -> list[ConstantSpec]:
     """Find `static const TYPE NAME[DIM] = { ... };` and extract."""
     out: list[ConstantSpec] = []
     for m in _STATIC_CONST_RE.finditer(c_source):
@@ -509,7 +617,7 @@ def _extract_static_const_tables(c_source: str, c_file: str) -> list[ConstantSpe
             e = e.strip()
             if not e:
                 continue
-            rust_expr = _c_literal_to_rust(e, _rust_type_for(ctype))
+            rust_expr = _c_literal_to_rust(e, _rust_type_for(ctype, typedef_map))
             if rust_expr is None:
                 skip = True
                 break
@@ -517,7 +625,7 @@ def _extract_static_const_tables(c_source: str, c_file: str) -> list[ConstantSpe
         if skip or not rust_elems:
             continue
         # Rust type: [T; N]
-        elem_rust = _rust_type_for(ctype)
+        elem_rust = _rust_type_for(ctype, typedef_map)
         n = len(rust_elems)
         rust_type = f"[{elem_rust}; {n}]"
         rust_expr = "[" + ", ".join(rust_elems) + "]"
@@ -617,7 +725,12 @@ def render_constants_block(consts: list[ConstantSpec]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def extract_from_path(path: Path) -> ExtractionReport:
-    """Convenience: extract from a single C file."""
+def extract_from_path(
+    path: Path,
+    typedef_map: dict[str, str] | None = None,
+) -> ExtractionReport:
+    """Convenience: extract from a single C file. Pass a `typedef_map` built
+    over the whole subject (via `build_typedef_map`) so cross-header aliases
+    resolve; otherwise only this file's own typedefs are seen."""
     text = path.read_text(encoding="utf-8", errors="replace")
-    return extract_constants(text, c_file=str(path))
+    return extract_constants(text, c_file=str(path), typedef_map=typedef_map)
