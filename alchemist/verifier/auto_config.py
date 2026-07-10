@@ -1635,10 +1635,65 @@ def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
 
 
 def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
-    """Auto-oracle: for every algorithm with a differentiable shape but NO test vectors,
-    mint vectors by running the compiled C reference, and attach them to alg.test_vectors.
-    Returns how many algorithms were augmented. This is what lets the fill loop verify
-    arbitrary cold C that has no standards KATs -- the C itself is the oracle."""
+    """Auto-oracle: mint fuzz vectors by running the compiled C reference in-process.
+
+    CRASH ISOLATION: the oracle calls arbitrary C via ctypes with fuzzed inputs, and
+    real C is full of undefined behavior on out-of-domain inputs (e.g. glibc
+    `isdigit(c)`/`tolower(c)` index `__ctype_b_loc()[c]` out of bounds and SEGFAULT
+    for c outside [-1,255]; div-by-zero; bad pointers). An in-process segfault would
+    take down the whole translator. On POSIX we run the fuzzing in a FORKED child:
+    if it crashes (killed by a signal), the parent catches it and returns 0 — the
+    subject simply gets no auto-oracle vectors (fail-closed: those functions can't be
+    verified and are refused, never falsely passed). Windows (no fork, forgiving
+    ctype) runs in-process."""
+    import os as _os
+    if _os.name != "posix" or not hasattr(_os, "fork"):
+        return _synthesize_c_vectors_impl(c_source_dir, specs, compiler=compiler)
+    import pickle as _pickle
+    import tempfile as _tf
+    _tmp = _tf.NamedTemporaryFile(delete=False, suffix=".alchvec.pkl")
+    _tmp.close()
+    _pid = _os.fork()
+    if _pid == 0:  # ---- child: isolated so a UB segfault can't kill the parent ----
+        try:
+            n = _synthesize_c_vectors_impl(c_source_dir, specs, compiler=compiler)
+            out = {}
+            for mi, m in enumerate(specs):
+                for ai, alg in enumerate(getattr(m, "algorithms", None) or []):
+                    tv = getattr(alg, "test_vectors", None)
+                    if tv:
+                        out[(mi, ai)] = tv
+            with open(_tmp.name, "wb") as fh:
+                _pickle.dump((n, out), fh)
+            _os._exit(0)
+        except BaseException:  # noqa: BLE001
+            _os._exit(70)
+    # ---- parent ----
+    _, status = _os.waitpid(_pid, 0)
+    crashed = _os.WIFSIGNALED(status) or (
+        _os.WIFEXITED(status) and _os.WEXITSTATUS(status) != 0)
+    try:
+        if crashed:
+            return 0  # C oracle crashed on a fuzzed input — no vectors, fail-closed
+        with open(_tmp.name, "rb") as fh:
+            n, out = _pickle.load(fh)
+    except Exception:  # noqa: BLE001
+        return 0
+    finally:
+        try:
+            _os.unlink(_tmp.name)
+        except OSError:
+            pass
+    for (mi, ai), tv in out.items():
+        try:
+            specs[mi].algorithms[ai].test_vectors = tv
+        except Exception:  # noqa: BLE001
+            pass
+    return n
+
+
+def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") -> int:
+    """In-process auto-oracle (see synthesize_c_vectors for the crash-isolation wrapper)."""
     import os as _os, ctypes
     from alchemist.verifier.auto_ffi import build_c_dll
     cdir = Path(c_source_dir)
