@@ -53,6 +53,7 @@ from alchemist.implementer.skeleton import (
     generate_workspace_skeleton,
     _topo_sort,
     _run_cargo_check,
+    _sanitize_param_name,
 )
 from alchemist.implementer.test_generator import generate_tests_for_workspace
 from alchemist.llm.client import AlchemistLLM, CachedContext
@@ -155,6 +156,13 @@ Referenced standards: {standards}
 
 ## Module-level constants/statics IN SCOPE (you may reference these by name)
 {available_consts}
+
+If a lookup table / dictionary / codebook is listed above as in scope, you
+MUST reference it by that exact name. Do NOT redefine it, do NOT fabricate
+your own version of it, and do NOT invent placeholder entries — the real
+table is already declared for you and any hand-written substitute WILL be
+wrong. (The most common failure here is re-typing a translation dictionary
+from memory; never do that when the const is already in scope.)
 
 Any lookup table, precomputed array, or cached value the C code kept in a
 file-scope `static` that is NOT listed above does NOT exist in this
@@ -762,7 +770,9 @@ class TDDGenerator:
             if _sig_m is not None and _exp_arity > 0:
                 _got_arity = len([x for x in _sig_m.group(1).split(",") if x.strip()])
                 if _got_arity != _exp_arity:
-                    _want = ", ".join(f"{i.name}: {i.rust_type}" for i in (alg.inputs or []))
+                    _want = ", ".join(
+                        f"{_sanitize_param_name(i.name, k)}: {i.rust_type}"
+                        for k, i in enumerate(alg.inputs or []))
                     previous_failure = (
                         "## Previous iteration CHANGED the function signature (rejected).\n\n"
                         f"You wrote a signature with {_got_arity} parameter(s); the required "
@@ -979,8 +989,12 @@ class TDDGenerator:
         if not module_source:
             return "(none — compute any lookup data inside your function)"
         names: list[str] = []
+        # Match ANY const/static identifier, not just SCREAMING_CASE. Carried
+        # C tables keep their source name (e.g. `Smaz_cb`, `Smaz_rcb`), which
+        # is mixed-case; a caps-only pattern misses them, so the model is told
+        # nothing is in scope and HALLUCINATES its own (wrong) lookup table.
         for m in re.finditer(
-            r"^\s*(?:pub\s+)?(?:const|static)\s+([A-Z_][A-Z0-9_]*)\s*:",
+            r"^\s*(?:pub\s+)?(?:const|static)\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:",
             module_source, re.MULTILINE,
         ):
             if m.group(1) not in names:
@@ -1004,8 +1018,8 @@ class TDDGenerator:
             "required": ["content"],
         }
         params = "\n".join(
-            f"- {p.name}: {p.rust_type}  — {p.description}"
-            for p in alg.inputs
+            f"- {_sanitize_param_name(p.name, k)}: {p.rust_type}  — {p.description}"
+            for k, p in enumerate(alg.inputs)
         ) or "(no inputs)"
         # Render extracted vectors compactly. `rust_body` vectors ARE whole
         # Rust test functions (with large state literals — a single
@@ -1507,7 +1521,9 @@ class TDDGenerator:
         return header + "\n\n".join(snippets)
 
     def _signature_for(self, alg: AlgorithmSpec) -> str:
-        params: list[str] = [f"{p.name}: {p.rust_type}" for p in alg.inputs]
+        params: list[str] = [
+            f"{_sanitize_param_name(p.name, k)}: {p.rust_type}"
+            for k, p in enumerate(alg.inputs)]
         ret = alg.return_type or "()"
         if ret in ("", "()"):
             return f"pub fn {alg.name}({', '.join(params)})"
@@ -2342,9 +2358,70 @@ def _unwrap_llm_schema_leak(s: str) -> str:
                 v = obj.get(key)
                 if isinstance(v, str) and "pub fn" in v:
                     return v.strip()
-    # Last resort: regex-extract the first `pub fn ...` block.
+    # The whole-blob json.loads above can fail (trailing prose, an unescaped
+    # control char, truncation) even when a `content` string IS present and
+    # recoverable. Pull the field value out by hand and JSON-decode just that
+    # string — this is the correct inverse of the model's encoding and, unlike
+    # a raw regex slice, does NOT leave literal `\n` / `\"` in the emitted Rust.
+    for key in ("content", "impl", "fn"):
+        v = _extract_json_string_field(s, key)
+        if isinstance(v, str) and "pub fn" in v:
+            return v.strip()
+    # Last resort: regex-extract the first `pub fn ...` block, then repair any
+    # JSON string escapes that survived (the historical smaz corruption:
+    # `pub fn f(){\n    ...` written with a literal backslash-n).
     import re as _re
     m = _re.search(r"pub\s+fn\s+\w+", s)
     if m:
-        return s[m.start():].strip()
+        code = s[m.start():].strip()
+        if "\\n" in code or '\\"' in code:
+            code = _json_unescape_lenient(code)
+        return code
     return s
+
+
+def _extract_json_string_field(s: str, key: str) -> "str | None":
+    """Extract and JSON-decode the string value of `"key": "..."` from a blob
+    that failed whole-document json.loads. Scans to the first UNescaped closing
+    quote, then json.loads the isolated string literal so every escape (\\n,
+    \\", \\\\, \\uXXXX, and a Rust `\\xNN` that was encoded as `\\\\xNN`) is
+    decoded exactly as the model intended. Returns None if not found/decodable.
+    """
+    import json as _json
+    import re as _re
+    m = _re.search(r'"' + _re.escape(key) + r'"\s*:\s*"', s)
+    if not m:
+        return None
+    i = m.end()
+    buf: list[str] = []
+    while i < len(s):
+        c = s[i]
+        if c == "\\":
+            if i + 1 < len(s):
+                buf.append(s[i]); buf.append(s[i + 1]); i += 2; continue
+            buf.append(c); i += 1; continue
+        if c == '"':
+            break
+        buf.append(c); i += 1
+    try:
+        return _json.loads('"' + "".join(buf) + '"')
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _json_unescape_lenient(t: str) -> str:
+    """Best-effort repair of JSON string escapes that leaked into emitted Rust
+    when json.loads failed outright. Left-to-right so an escaped backslash is
+    consumed as a pair: a validly-encoded Rust byte literal `\\\\xNN` becomes
+    `\\xNN` (preserved), while a stray JSON `\\n` becomes a real newline.
+    Unknown escapes (e.g. a lone `\\x`) keep their backslash untouched, so Rust
+    `b"\\x02"` literals are never corrupted."""
+    out: list[str] = []
+    i = 0
+    simple = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}
+    while i < len(t):
+        c = t[i]
+        if c == "\\" and i + 1 < len(t) and t[i + 1] in simple:
+            out.append(simple[t[i + 1]]); i += 2; continue
+        out.append(c); i += 1
+    return "".join(out)
