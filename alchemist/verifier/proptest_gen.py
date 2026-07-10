@@ -63,6 +63,10 @@ class AlgorithmHarness:
     # CRC-32 at 0). adapter_gen bakes this into both the C and Rust wrappers
     # so the two sides are seeded identically.
     seed: int | None = None
+    # True when the seed is the TRAILING arg (`hash(data, len, seed)`, e.g. Lua
+    # luaS_hash / FNV / murmur) rather than the leading one (adler32). adapter_gen
+    # places the baked seed accordingly on both sides.
+    seed_trailing: bool = False
     # Byte-digest hash (SipHash / SHA / HMAC family): output is a Vec<u8>
     # digest, not a scalar. adapter_gen emits Vec<u8>-returning wrappers and
     # the harness compares digest bytes. `key` (canonical, or None if

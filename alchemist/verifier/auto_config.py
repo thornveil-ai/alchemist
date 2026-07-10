@@ -112,6 +112,12 @@ def classify_checksum_shape(sig: CSignature) -> str | None:
     if (len(params) == 3 and _INT_C_TYPES.match(params[0])
             and _BYTE_PTR.match(params[1]) and _INT_C_TYPES.match(params[2])):
         return "seeded"
+    # Seed as the TRAILING arg: `hash(const char* data, size_t len, unsigned seed)`.
+    # Very common (Lua luaS_hash, FNV/murmur variants). Same info as "seeded",
+    # only the seed position differs — handled by seed_trailing downstream.
+    if (len(params) == 3 and _BYTE_PTR.match(params[0])
+            and _INT_C_TYPES.match(params[1]) and _INT_C_TYPES.match(params[2])):
+        return "seeded_trailing"
     if (len(params) == 2 and _BYTE_PTR.match(params[0])
             and _INT_C_TYPES.match(params[1])):
         return "unseeded"
@@ -237,6 +243,15 @@ def _binding_for(sig: CSignature, shape: str, seed: int) -> CFunctionBinding:
             buf = ((ctypes.c_ubyte * len(data))(*data) if data
                    else ctypes.POINTER(ctypes.c_ubyte)())
             return int(fn(_seed, buf, len(data)))
+    elif shape == "seeded_trailing":
+        len_ct = _ctype(sig.params[1][1]) or ctypes.c_size_t
+        seed_ct = _ctype(sig.params[2][1]) or ctypes.c_uint
+        argtypes = (ctypes.POINTER(ctypes.c_ubyte), len_ct, seed_ct)
+
+        def adapter(fn, data: bytes, _seed=seed):
+            buf = ((ctypes.c_ubyte * len(data))(*data) if data
+                   else ctypes.POINTER(ctypes.c_ubyte)())
+            return int(fn(buf, len(data), _seed))
     else:
         len_ct = _ctype(sig.params[1][1]) or ctypes.c_size_t
         argtypes = (ctypes.POINTER(ctypes.c_ubyte), len_ct)
@@ -1498,7 +1513,9 @@ def build_diff_config(
                     category="checksum",
                     rust_call=f"rust_{alg.name}(&input)",
                     c_call=f"c_{alg.name}(&input)",
-                    seed=default_seed(alg.name) if shape == "seeded" else None,
+                    seed=(default_seed(alg.name)
+                          if shape in ("seeded", "seeded_trailing") else None),
+                    seed_trailing=(shape == "seeded_trailing"),
                     boundary_lengths=list(boundaries),
                     cases=5000,
                 ))

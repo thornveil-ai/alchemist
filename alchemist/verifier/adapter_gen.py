@@ -222,6 +222,12 @@ def _resolve_checksum_rust(
             return f"{path}({seed}{tys[0]}, data, data.len())", fn.ret, fn
         if len(tys) == 2 and tys[0] in _SEED_TYPES and tys[1] == _BYTESLICE:
             return f"{path}({seed}{tys[0]}, data)", fn.ret, fn
+        # Seed TRAILING (Lua luaS_hash, FNV, murmur): (data, [len,] seed).
+        if (len(tys) == 3 and tys[0] == _BYTESLICE and tys[1] == "usize"
+                and tys[2] in _SEED_TYPES):
+            return f"{path}(data, data.len(), {seed}{tys[2]})", fn.ret, fn
+        if len(tys) == 2 and tys[0] == _BYTESLICE and tys[1] in _SEED_TYPES:
+            return f"{path}(data, {seed}{tys[1]})", fn.ret, fn
         if len(tys) == 2 and tys[0] == _BYTESLICE and tys[1] == "usize":
             return f"{path}(data, data.len())", fn.ret, fn
         if len(tys) == 1 and tys[0] == _BYTESLICE:
@@ -251,6 +257,11 @@ def _resolve_checksum_c(
     # result is cast to the SAME width the rust wrapper returns so the
     # comparison is width-identical on both sides.
     if nparams == 3:
+        if getattr(h, "seed_trailing", False):
+            return (
+                f"unsafe {{ {ffi_crate}::{h.algorithm}(data.as_ptr(), "
+                f"data.len() as _, {seed} as _) as {ret} }}"
+            )
         return (
             f"unsafe {{ {ffi_crate}::{h.algorithm}({seed} as _, data.as_ptr(), "
             f"data.len() as _) as {ret} }}"
