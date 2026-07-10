@@ -103,6 +103,23 @@ _C_TYPE_TO_RUST: dict[str, str] = {
     "z_crc_t": "u32",
     "z_word_t": "u64",
     "ct_data": "HuffmanNode",
+    # Lua 5.4 typedefs (llimits.h / lua.h / luaconf.h). Lua names its scalar
+    # types, so a carried table like `static const lu_byte log_2[256]` would
+    # otherwise emit `[lu_byte; N]` — an undefined Rust type (E0425).
+    "lu_byte": "u8",
+    "ls_byte": "i8",
+    "lu_mem": "usize",
+    "l_mem": "isize",
+    "l_uint32": "u32",
+    "l_int32": "i32",
+    "Instruction": "u32",
+    "lua_Integer": "i64",
+    "lua_Unsigned": "u64",
+    "lua_Number": "f64",
+    "LUAI_UACINT": "i64",
+    "LUAI_UACNUMBER": "f64",
+    "lua_KContext": "isize",
+    "TValue": "TValue",
 }
 
 
