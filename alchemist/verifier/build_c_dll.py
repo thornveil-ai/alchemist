@@ -33,6 +33,9 @@ _NONLIB_DIRS = {
     "precalc", "precompute", "gen", "tools", "tool", "scripts", "bin", "util", "utils",
 }
 _MAIN_RE = re.compile(r"\bint\s+main\s*\(")
+# An amalgamation/unity build: a .c that #includes other .c files (onelua.c,
+# sqlite3.c). Linking it with the real .c files duplicates every symbol.
+_AMALGAM_RE = re.compile(r'#\s*include\s+"[^"]+\.c"')
 
 
 def prepare_native_build(root, *, timeout: int = 180) -> str | None:
@@ -98,6 +101,12 @@ def discover_c_build(root, *, max_files: int = 300) -> tuple[list[Path], list[Pa
         except OSError:
             continue
         if _MAIN_RE.search(txt):
+            continue
+        # Skip amalgamation / unity-build files that #include OTHER .c files
+        # (Lua's onelua.c, sqlite3.c-style). Compiling them alongside the real
+        # .c files defines every symbol twice -> duplicate-symbol link failure,
+        # which silently kills the differential oracle build.
+        if _AMALGAM_RE.search(txt):
             continue
         sources.append(cf)
         if len(sources) >= max_files:
