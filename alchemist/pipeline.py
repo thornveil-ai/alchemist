@@ -128,9 +128,13 @@ def run_analyze(
     _onlyfns = (_os.environ.get("ALCHEMIST_ONLY_FNS") or "").strip()
     if _onlyfns:
         _wf = [w.strip() for w in _onlyfns.split(",") if w.strip()]
+        _wfl = {w.lower() for w in _wf}
 
         def _keepfn(fn):
-            return any(w == fn or w.lower() in fn.lower() for w in _wf)
+            # EXACT match only. Substring matching drags in siblings (luaS_hash
+            # would pull luaS_hashlongstr, which needs TString and breaks the
+            # crate skeleton -> 0/0). List each wanted fn explicitly.
+            return fn in _wf or fn.lower() in _wfl
         _tot = 0
         for m in modules:
             fns = m.get("functions", []) if isinstance(m, dict) else []
