@@ -496,6 +496,9 @@ def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
     binding = _scalar_binding(sig)
     fn = binding.load(dll)
 
+    import os as _os
+    _safe_scalar = bool(_os.environ.get("ALCHEMIST_SAFE_SCALAR"))
+
     def _range(rust_type):
         rt = (rust_type or "u64").strip()
         signed = rt.startswith("i")
@@ -503,9 +506,18 @@ def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
         mm = re.search(r"(8|16|32|64|128)", rt)
         if mm and mm.group(1) != "128":
             w = int(mm.group(1))
-        if signed:
-            return -(1 << (w - 1)), (1 << (w - 1)) - 1, w
-        return 0, (1 << w) - 1, w
+        lo = -(1 << (w - 1)) if signed else 0
+        hi = (1 << (w - 1)) - 1 if signed else (1 << w) - 1
+        if _safe_scalar:
+            # Contract-domain functions (glibc ctype: isdigit/tolower index
+            # __ctype_b_loc()[c] and SEGFAULT outside [-1,255]; codepoint/char
+            # helpers) are UB out of domain. When flagged, restrict int inputs
+            # to the safe char domain [-1,255] so the oracle produces valid
+            # vectors instead of crashing. Verification is then honest over that
+            # tested domain (byte-exact on chars), not the full type width.
+            lo = max(lo, -1)
+            hi = min(hi, 255)
+        return lo, hi, w
 
     # per-param value pools: boundaries + spread across the FULL width so the fill
     # loop catches edge bugs (overflow, high bits) rather than letting them reach verify.
@@ -1474,11 +1486,24 @@ def build_diff_config(
             if classify_scalar_shape(sig) is not None:
                 _sargs = [(i.rust_type or "u64").strip() for i in (alg.inputs or [])] or ["u64"]
                 _snames = [f"a{_i}" for _i in range(len(_sargs))]
+                # Match the differential's fuzz domain to the fill oracle: when
+                # ALCHEMIST_SAFE_SCALAR is set (contract-domain / ctype fns), bound
+                # each int arg to the safe char domain instead of any::<T>() so the
+                # proptest doesn't drive the C reference into UB (a segfault would
+                # abort the test binary). Both sides then test the same [-1,255].
+                import os as _os2
+                _safe = bool(_os2.environ.get("ALCHEMIST_SAFE_SCALAR"))
+
+                def _one_strat(t):
+                    if _safe:
+                        _lo = "-1" if t.startswith("i") else "0"
+                        return f"({_lo}{t}..=255{t})"
+                    return f"any::<{t}>()"
                 if len(_sargs) == 1:
-                    _sstrat = f"any::<{_sargs[0]}>()"
+                    _sstrat = _one_strat(_sargs[0])
                     _sbind = _snames[0]
                 else:
-                    _sstrat = "(" + ", ".join(f"any::<{t}>()" for t in _sargs) + ")"
+                    _sstrat = "(" + ", ".join(_one_strat(t) for t in _sargs) + ")"
                     _sbind = "(" + ", ".join(_snames) + ")"
                 harnesses.append(AlgorithmHarness(
                     algorithm=alg.name,
