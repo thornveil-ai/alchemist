@@ -132,3 +132,30 @@ def test_extract_referenced_macros_empty_when_none_referenced():
     from alchemist.implementer.reference_probe import extract_referenced_macros
     src = "#define FOO 1\n#define BAR(x) (x)\n"
     assert extract_referenced_macros(src, "int f() { return 0; }") == ""
+
+
+def test_c_string_array_carry_byte_exact():
+    """String-table carry (codec codebooks) must be byte-exact: octal, hex, embedded NUL,
+    \r\n, empty entries, and adjacent-literal concatenation."""
+    from alchemist.implementer.reference_probe import (
+        c_string_array_to_rust_const, _parse_c_string_array,
+    )
+    cdef = (
+        'static char *T[6] = {"\002s,\266", "\xff\x00A", "\r\n", "",'
+        ' "ab" "cd", "the"};'
+    )
+    name, rust = c_string_array_to_rust_const(cdef)
+    assert name == "T"
+    assert rust.startswith("pub const T: [&[u8]; 6] = [")
+    body = cdef[cdef.index("{") + 1:cdef.rindex("}")]
+    elems = _parse_c_string_array(body)
+    assert elems == [
+        bytes([2, ord("s"), ord(","), 0o266 & 0xFF]),  # octal \002 s , \266
+        bytes([0xFF, 0x00, ord("A")]),                  # hex \xff, embedded NUL, A
+        b"\r\n",                                          # \r \n
+        b"",                                              # empty entry
+        b"abcd",                                          # adjacent-literal concatenation
+        b"the",
+    ]
+    # non-UTF-8 / control bytes render as \xNN in a byte-string literal
+    assert 'b"\\x02s,\\xb6"' in rust and 'b"\\xff\\x00A"' in rust and 'b"\\x0d\\x0a"' in rust

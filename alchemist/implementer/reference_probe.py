@@ -270,6 +270,142 @@ def c_array_to_rust_const(c_def: str) -> tuple[str, str] | None:
     return name, rust
 
 
+# ---- string-pointer lookup tables (char* NAME[N] = {"...", ...}) -----------------------
+# Real table-driven codecs (smaz's 241/254-entry codebook) index arrays of BYTE strings. The
+# integer-array carry can't express them; without carrying them the model must retype ~500
+# escape-laden entries and always diverges. Parse them byte-exactly (octal/hex/embedded-NUL
+# escapes) and emit a Rust `[&[u8]; N]` const so the fill REFERENCES the codebook by name.
+
+def _read_c_str_escape(s: str, i: int) -> tuple[int, int]:
+    """`s[i]` is a backslash. Return (byte_value, chars_consumed_incl_backslash)."""
+    if i + 1 >= len(s):
+        return (0x5C, 1)
+    e = s[i + 1]
+    if e == "x":  # \xNN — one or more hex digits
+        j, h = i + 2, ""
+        while j < len(s) and s[j] in "0123456789abcdefABCDEF":
+            h += s[j]
+            j += 1
+        return (int(h, 16) & 0xFF if h else ord("x"), j - i)
+    if e in "01234567":  # \NNN — up to 3 octal digits (covers \0)
+        j, o = i + 1, ""
+        while j < len(s) and len(o) < 3 and s[j] in "01234567":
+            o += s[j]
+            j += 1
+        return (int(o, 8) & 0xFF, j - i)
+    simple = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11,
+              "\\": 92, '"': 34, "'": 39, "?": 63}
+    if e in simple:
+        return (simple[e], 2)
+    return (ord(e) & 0xFF, 2)  # unknown escape -> the char itself (C behaviour)
+
+
+def _parse_c_string_array(body: str) -> list[bytes]:
+    """Parse the `{ "lit", "lit", ... }` body of a char* array into per-element byte strings.
+    Handles C escapes, embedded NUL, and adjacent-literal concatenation (`"a" "b"` == "ab")."""
+    elements: list[bytes] = []
+    cur = bytearray()
+    started = False   # has the current element seen a string literal since the last comma?
+    in_str = False
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if in_str:
+            if c == "\\":
+                b, consumed = _read_c_str_escape(body, i)
+                cur.append(b)
+                i += consumed
+            elif c == '"':
+                in_str = False
+                i += 1
+            else:
+                cur.append(ord(c) & 0xFF)
+                i += 1
+        elif c == '"':
+            in_str = True
+            started = True
+            i += 1
+        elif c == ",":
+            elements.append(bytes(cur))
+            cur = bytearray()
+            started = False
+            i += 1
+        else:
+            i += 1
+    if started or not elements:   # final element (no trailing comma); a trailing `,` is dropped
+        elements.append(bytes(cur))
+    return elements
+
+
+def _bytes_to_rust_bstr(b: bytes) -> str:
+    out = ['b"']
+    for x in b:
+        if x == 0x5C:
+            out.append("\\\\")
+        elif x == 0x22:
+            out.append('\\"')
+        elif 0x20 <= x < 0x7F:
+            out.append(chr(x))
+        else:
+            out.append(f"\\x{x:02x}")
+    out.append('"')
+    return "".join(out)
+
+
+_STR_ARR_HEAD = re.compile(
+    r"^\s*(?:static\s+)?(?:const\s+)?char\s*\*\s*(?:const\s+)?([A-Za-z_]\w*)\s*"
+    r"\[[^\]]*\]\s*=\s*\{(.*)\}\s*;\s*$", re.DOTALL)
+
+_STR_ARRAY_DEF_RE = re.compile(
+    r"(?:^|\n)[ \t]*(?:static\s+)?(?:const\s+)?char\s*\*\s*(?:const\s+)?([A-Za-z_]\w*)\s*"
+    r"\[[^\]]*\]\s*=\s*\{", re.MULTILINE)
+
+
+def c_string_array_to_rust_const(c_def: str) -> tuple[str, str] | None:
+    """`char* NAME[N] = {"...", ...}` -> Rust `pub const NAME: [&[u8]; N] = [b"...", ...];`,
+    byte-exact. Returns (name, rust_const) or None if it isn't a string-pointer table."""
+    m = _STR_ARR_HEAD.match(c_def.strip())
+    if not m:
+        return None
+    name, body = m.group(1), m.group(2)
+    elems = _parse_c_string_array(body)
+    if not elems:
+        return None
+    lits = ", ".join(_bytes_to_rust_bstr(e) for e in elems)
+    return name, f"pub const {name}: [&[u8]; {len(elems)}] = [{lits}];"
+
+
+def extract_referenced_string_arrays(source_path: Path, fn_body: str,
+                                     *, include_dirs=None, max_chars: int = 200000) -> list[str]:
+    """Return file-level `char* NAME[N] = {...}` string-table DEFINITIONS whose name is
+    referenced in `fn_body` (a codec's codebook). Same brace-matched slicing as the integer
+    version, but for string-pointer tables."""
+    text = _read_with_includes(source_path, include_dirs=include_dirs)
+    if not text:
+        return []
+    out: list[str] = []
+    for m in _STR_ARRAY_DEF_RE.finditer(text):
+        name = m.group(1)
+        if re.search(r"\b" + re.escape(name) + r"\b", fn_body) is None:
+            continue
+        brace = text.index("{", m.start())
+        depth, j = 0, brace
+        while j < len(text):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        semi = text.find(";", j)
+        end = semi + 1 if semi != -1 else j + 1
+        snippet = text[m.start():end].strip()
+        if 0 < len(snippet) <= max_chars:
+            out.append(snippet)
+    return out
+
+
 # Two-group form: NAME + VALUE. Named _DEFINE_KV_RE to avoid colliding with the
 # name-only _DEFINE_RE defined later in this module (extract_referenced_macros).
 _DEFINE_KV_RE = re.compile(

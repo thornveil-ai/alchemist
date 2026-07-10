@@ -615,19 +615,28 @@ class TDDGenerator:
             if _src_root:
                 from alchemist.implementer.reference_probe import (
                     extract_c_function_body, extract_referenced_arrays,
-                    c_array_to_rust_const,
+                    extract_referenced_string_arrays,
+                    c_array_to_rust_const, c_string_array_to_rust_const,
                 )
                 from alchemist.verifier.build_c_dll import discover_c_build as _disc2
+                _cf_all, _cf_inc = _disc2(_src_root)
                 _cur = module_path.read_text(encoding="utf-8")
                 _consts = []
-                for _cf in _disc2(_src_root)[0]:
+                for _cf in _cf_all:
                     _b = extract_c_function_body(_cf, alg.name)
                     if not _b:
                         continue
-                    for _arr in extract_referenced_arrays(_cf, _b):
+                    for _arr in extract_referenced_arrays(_cf, _b, include_dirs=_cf_inc):
                         _conv = c_array_to_rust_const(_arr)
                         if _conv and f"const {_conv[0]}:" not in _cur:
                             _consts.append(_conv[1])
+                    # Byte-string lookup tables (a codec's codebook: char* NAME[N] = {"...", ...})
+                    # -> Rust `[&[u8]; N]`, so the model references it instead of retyping
+                    # hundreds of escape-laden entries. Byte-exact; the differential re-checks it.
+                    for _sarr in extract_referenced_string_arrays(_cf, _b, include_dirs=_cf_inc):
+                        _sconv = c_string_array_to_rust_const(_sarr)
+                        if _sconv and f"const {_sconv[0]}:" not in _cur:
+                            _consts.append(_sconv[1])
                     break
                 if _consts:
                     module_path.write_text(
