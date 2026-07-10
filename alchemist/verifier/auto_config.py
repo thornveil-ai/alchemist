@@ -282,6 +282,38 @@ _C_DEF_RE = re.compile(
 )
 _C_KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof", "do", "else"}
 
+# C storage-class / qualifier / calling-convention keywords that can prefix a
+# return type but are not part of it.
+_RET_QUAL_KEYWORDS = {
+    "static", "inline", "extern", "register", "auto", "_Noreturn",
+    "__inline", "__inline__", "__forceinline", "__attribute__",
+    "__cdecl", "__stdcall", "__fastcall", "__declspec",
+}
+
+
+def _strip_return_qualifiers(ret: str) -> str:
+    """Drop leading qualifier keywords AND all-caps macro tokens from a C return
+    type. Real APIs prefix return types with export/inline macros — zlib's
+    `ZEXPORT`, murmur3's `FORCE_INLINE`, Lua's `LUAI_FUNC`, `ZLIB_INTERNAL`.
+    These are conventionally ALL_CAPS identifiers (or known keywords); the actual
+    type tokens (uint32_t/size_t/void/struct names) are not. Strip leading
+    junk while keeping at least the final type token(s). No hardcoded macro
+    names — the all-caps convention generalizes to any codebase."""
+    toks = ret.replace("*", " * ").split()
+    i = 0
+    while i < len(toks) - 1:  # always keep the last token as the type
+        t = toks[i]
+        is_kw = t in _RET_QUAL_KEYWORDS
+        # ALL-CAPS identifier (len>1, letters/digits/_) that isn't a pure number
+        core = t.replace("_", "")
+        is_macro = (len(t) > 1 and t.isupper() and core.isalnum()
+                    and not core.isdigit())
+        if is_kw or is_macro:
+            i += 1
+            continue
+        break
+    return " ".join(toks[i:]).replace(" *", "*").strip() or ret
+
 
 def _parse_c_definitions(c_text: str):
     from alchemist.verifier.auto_ffi import _strip_comments, _parse_params
@@ -291,11 +323,7 @@ def _parse_c_definitions(c_text: str):
         name = m.group("name")
         if name in _C_KEYWORDS:
             continue
-        ret = m.group("ret").strip()
-        for kw in ("static", "inline", "extern", "ZEXTERN", "ZEXPORT"):
-            ret = re.sub(rf"\b{kw}\b", "", ret).strip()
-        if not ret or name.startswith("_"):
-            pass
+        ret = _strip_return_qualifiers(m.group("ret").strip())
         params = _parse_params(m.group("params").strip())
         out.append(CSignature(name=name, return_type=ret, params=params))
     return out
