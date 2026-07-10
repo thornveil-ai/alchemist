@@ -15,6 +15,7 @@ ephemeral; this archive is the record.
 | **sha256** | crypto digest | 4.3 KB | 28 KB | ✅ 2/2 (CAVP-backed) | NIST CAVP KAT-verified digest, cold→safe Rust. The crypto credibility milestone (Phase 2.5). |
 | **lua_hash** (`luaS_hash`) | Lua string hash | 12 LOC | — | ✅ 2/2 @ 5000 cases | **FIRST Lua 5.4 function conquered** (2026-07-10). `(str,len,seed)→u32`, the hash every Lua table + string-intern depends on. Exposed + fixed 3 framework gaps: seed-as-trailing-arg checksum shape, seed missing from fill-vectors, `const char*` FFI ptr cast. Model translation was byte-identical to C throughout. |
 | **lua_ceillog2** (`luaO_ceillog2`) | Lua ceil-log2 | 20 LOC | — | ✅ 1/1 differential | **2nd Lua fn** (2026-07-10). `unsigned→int` with a carried 256-byte log2 table. Exposed + fixed the Lua-typedef-carry gap (`lu_byte`→`u8`) that blocks every table-carrying Lua fn. |
+| **lua_shiftl** (`luaV_shiftl`) | Lua VM int shift | 20 LOC | — | ✅ 1/1 differential | **3rd Lua fn** (2026-07-10). Pure `(i64,i64)→i64` wraparound bit-shift — the first of Lua's VM integer-overflow numerics. Exact `l_castS2U`/`l_castU2S` wrap semantics preserved. |
 
 ## Other verified wins (working copies on box `/tmp`, not yet archived here)
 - `zlib` — deflate/inflate byte-exact round-trip, ~7.1k LOC core (Phase 2 moonshot; in `subjects/zlib-dll/`).
