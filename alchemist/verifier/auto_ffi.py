@@ -334,6 +334,95 @@ def _visibility_neutralizers(dirs) -> list[str]:
     return flags
 
 
+# A top-level C function DEFINITION: `<ret> name(params) {` anchored at column 0.
+# Same shape auto_config uses to parse .c definitions. We only ever touch the
+# return/storage portion, never bodies, static locals, or static file globals.
+_TOPLEVEL_FN_DEF = re.compile(
+    r"(?m)^(?P<ret>(?:[A-Za-z_]\w*[\s\*]+)+?)(?P<name>[A-Za-z_]\w*)\s*"
+    r"\((?P<params>[^;{}]*)\)\s*(?P<attrs>(?:__attribute__\s*\(\([^)]*\)\)\s*)*)\{"
+)
+# A full `#define NAME <body>` line whose body is an inline/always_inline marker
+# (`#define FORCE_INLINE __attribute__((always_inline)) inline`). Such a macro
+# on a function makes it inline -> no out-of-line symbol in C99, so the oracle
+# can't call it. We blank the macro BODY (keep the name defined-but-empty).
+_INLINE_MACRO_DEF_RE = re.compile(
+    r"(?m)^([ \t]*#\s*define[ \t]+[A-Za-z_]\w*)\b[ \t]+"
+    r"[^\n]*\b(?:inline|__inline__?|__forceinline|always_inline)\b[^\n]*$"
+)
+_INLINE_MACRO_HDR_RE = re.compile(
+    r"#\s*define\s+([A-Za-z_]\w*)\b[^\n]*\b(?:inline|__inline__?|__forceinline|always_inline)\b"
+)
+_STORAGE_SPEC_RE = re.compile(r"\b(static|inline|__inline|__inline__|__forceinline)\b")
+
+
+def _inline_macro_neutralizers(dirs) -> list[str]:
+    """`-D<MACRO>=` for inline-marker macros defined in HEADERS (murmur3-style
+    macros living in .c are handled by rewriting the .c copy instead, so we scan
+    headers only here to avoid a command-line-vs-source redefinition clash)."""
+    seen: set[str] = set()
+    flags: list[str] = []
+    checked: set[Path] = set()
+    for d in dirs:
+        try:
+            d = Path(d)
+        except Exception:  # noqa: BLE001
+            continue
+        if d in checked or not d.is_dir():
+            continue
+        checked.add(d)
+        for hf in list(d.glob("*.h")) + list(d.glob("*.hpp")):
+            try:
+                txt = hf.read_text(errors="replace")
+            except OSError:
+                continue
+            for m in _INLINE_MACRO_HDR_RE.finditer(txt):
+                name = m.group(1)
+                if name not in seen:
+                    seen.add(name)
+                    flags.append(f"-D{name}=")
+    return flags
+
+
+def _expose_internal_functions(c_sources: list[Path], work_dir: Path) -> list[Path]:
+    """Rewrite copies of the oracle sources with `static`/`inline` stripped from
+    TOP-LEVEL FUNCTION DEFINITIONS, so a library's internal functions get external
+    linkage and are callable from the compiled oracle .so.
+
+    This is the general answer to "differentially verify an internal function":
+    most real libraries make their internals `static` (murmur3's rotl32/fmix32)
+    or hidden (`LUAI_FUNC`) so they never appear in the .so symbol table, which
+    otherwise makes the whole function class unverifiable. We touch ONLY the
+    storage/inline specifiers on function-definition signatures — static locals
+    and static file-scope globals keep their semantics untouched. The caller uses
+    these copies only if they still build (fallback preserves the originals)."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out: list[Path] = []
+    for src in c_sources:
+        try:
+            txt = src.read_text(errors="replace")
+        except OSError:
+            out.append(src)
+            continue
+
+        # Blank inline-marker macro BODIES defined in this .c (FORCE_INLINE etc.)
+        # so they expand to nothing and don't re-introduce `inline` after the
+        # storage strip. Keep the name defined (empty) so usages still compile.
+        txt = _INLINE_MACRO_DEF_RE.sub(r"\1", txt)
+
+        def _repl(m: "re.Match") -> str:
+            ret = _STORAGE_SPEC_RE.sub(" ", m.group("ret"))
+            return f"{ret}{m.group('name')}({m.group('params')}) {m.group('attrs')}{{"
+
+        new = _TOPLEVEL_FN_DEF.sub(_repl, txt)
+        dst = work_dir / src.name
+        try:
+            dst.write_text(new)
+            out.append(dst)
+        except OSError:
+            out.append(src)
+    return out
+
+
 def build_c_dll(
     c_sources: list[Path],
     output_dll: Path,
@@ -364,17 +453,33 @@ def build_c_dll(
     # ("internal"))) extern`), so ctypes can't call them (undefined symbol) and
     # the differential oracle produces no vectors. Scan headers for any macro
     # defined with visibility internal/hidden and force it back to plain extern.
-    _vis_flags = _visibility_neutralizers(include_dirs + [p.parent for p in c_sources])
+    _src_dirs = include_dirs + [p.parent for p in c_sources]
+    _vis_flags = _visibility_neutralizers(_src_dirs)
+    # Expose `static`/`inline` internal functions so the oracle can call them
+    # (rotl32/fmix32 in murmur3, the bulk of any real library). Compile the
+    # rewritten copies; if they fail to build (e.g. cross-file static-name
+    # collisions in a multi-file subject), fall back to the untouched sources so
+    # the oracle never regresses — those functions just stay unverifiable.
+    _inline_flags = _inline_macro_neutralizers(_src_dirs)
+    _expose_dir = output_dll.parent / "_exposed_src"
+    _exposed = _expose_internal_functions(c_sources, _expose_dir)
 
-    cmd: list[str] = [compiler, "-shared", "-O2", "-fPIC"]
-    if _vis_flags:
-        cmd.extend(_vis_flags)
-    if extra_cflags:
-        cmd.extend(extra_cflags)
-    for inc in include_dirs:
-        cmd.extend(["-I", str(inc)])
-    cmd.extend(str(s) for s in c_sources)
-    cmd.extend(["-o", str(output_dll)])
+    def _mk_cmd(sources: list[Path]) -> list[str]:
+        c: list[str] = [compiler, "-shared", "-O2", "-fPIC"]
+        c.extend(_vis_flags)
+        c.extend(_inline_flags)
+        if extra_cflags:
+            c.extend(extra_cflags)
+        for inc in include_dirs:
+            c.extend(["-I", str(inc)])
+        # Let the rewritten copies still find the subject's own headers.
+        for p in {s.parent for s in c_sources}:
+            c.extend(["-I", str(p)])
+        c.extend(str(s) for s in sources)
+        c.extend(["-o", str(output_dll)])
+        return c
+
+    cmd = _mk_cmd(_exposed)
 
     # Request an import library on Windows. gcc ignores this flag on non-Windows.
     # Name it lib<name>.dll.a — the MinGW convention `-l<name>` resolves, and
@@ -387,12 +492,17 @@ def build_c_dll(
 
     try:
         result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            cmd, capture_output=True, text=True, timeout=timeout,
         )
         success = result.returncode == 0 and output_dll.exists()
+        # Fallback: if exposing internals broke the build (multi-file static-name
+        # collisions, etc.), rebuild from the untouched sources. Never regress.
+        if not success and _exposed != list(c_sources):
+            cmd = _mk_cmd(list(c_sources))
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+            )
+            success = result.returncode == 0 and output_dll.exists()
         return DllBuildResult(
             success=success,
             dll_path=output_dll if success else None,
