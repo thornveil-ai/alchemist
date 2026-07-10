@@ -2127,19 +2127,22 @@ class TDDGenerator:
         """Compile the subject's .c files into a cached reference library."""
         import sys as _sys
         from alchemist.verifier.auto_ffi import build_c_dll
-        c_sources = sorted(
-            f for f in src.glob("*.c")
-            if "test" not in f.name.lower() and "example" not in f.name.lower()
-        )
+        # Use the hardened source discovery (skips amalgamation onelua.c, test
+        # harnesses ltests.c, and int-main drivers) so a large real library
+        # (Lua: 60 files, whole-lib oracle) links without duplicate symbols.
+        # A local glob would re-include those and the oracle build would fail.
+        from alchemist.verifier.build_c_dll import discover_c_build
+        c_sources, _inc = discover_c_build(src)
         if not c_sources:
             return None
+        _inc_dirs = list(_inc) if _inc else [src]
         oracle_dir = src / ".alchemist" / "oracle"
         ext = ".dll" if _sys.platform == "win32" else ".so"
         out = oracle_dir / f"lib{src.name}_ref{ext}"
         newest_src = max(f.stat().st_mtime for f in c_sources)
         if out.exists() and out.stat().st_mtime >= newest_src:
             return out.resolve()
-        result = build_c_dll(c_sources, out, include_dirs=[src])
+        result = build_c_dll(c_sources, out, include_dirs=_inc_dirs)
         if not result.success:
             console.print(
                 f"  [yellow]subject oracle build failed: "
