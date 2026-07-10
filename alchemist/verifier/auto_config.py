@@ -188,6 +188,118 @@ def classify_digest_shape(sig: CSignature) -> "DigestShape | None":
     return None
 
 
+# A writable OUTPUT pointer that may be opaque (`void *`) — hash APIs like
+# MurmurHash write the digest through a `void *out`.
+_ANY_OUT_PTR = re.compile(r"^(unsigned char|uint8_t|u_char|char|void)\s*\*$")
+# A read-only INPUT pointer that may be opaque (`const void *key`).
+_ANY_IN_PTR = re.compile(r"^(const\s+)?(unsigned char|uint8_t|Bytef|u_char|char|void)\s*\*$")
+
+
+@dataclass
+class HashOutShape:
+    """A seeded hash that writes a FIXED-size digest to an output buffer and
+    returns void: `void f(const void* in, int len, SCALAR seed, void* out)`.
+    The out size is fixed by the function variant (MurmurHash x86_32 -> 4 bytes,
+    x64_128 -> 16), inferred from the trailing bit-width in the name.
+    Rust shape: `fn f(inp: &[u8], seed: u32) -> Vec<u8>` (the out buffer)."""
+    in_idx: int
+    inlen_idx: int
+    seed_idx: int
+    out_idx: int
+    out_len: int
+
+
+def _hash_out_len_for(name: str) -> int:
+    """Digest byte-width from the trailing numeric token of a hash name:
+    `MurmurHash3_x86_32` -> 32 bits -> 4 bytes; `..._x64_128` -> 16 bytes."""
+    toks = re.findall(r"\d+", name or "")
+    if toks:
+        bits = int(toks[-1])
+        if bits in (32, 64, 128, 160, 224, 256, 384, 512):
+            return bits // 8
+    return 4
+
+
+def classify_hash_out_shape(sig: CSignature) -> "HashOutShape | None":
+    """Recognize `void f(in_ptr, int len, scalar seed, out_ptr)` — a seeded hash
+    writing a fixed digest through an output pointer (MurmurHash family)."""
+    if (sig.return_type or "").strip() != "void":
+        return None
+    types = [t.strip() for _, t in sig.params]
+    if (len(types) == 4 and _ANY_IN_PTR.match(types[0]) and _INT_C_TYPES.match(types[1])
+            and _SCALAR_ARG.match(types[2]) and _ANY_OUT_PTR.match(types[3])):
+        return HashOutShape(in_idx=0, inlen_idx=1, seed_idx=2, out_idx=3,
+                            out_len=_hash_out_len_for(sig.name))
+    return None
+
+
+def _hash_out_binding(sig: CSignature, desc: HashOutShape) -> CFunctionBinding:
+    """Binding whose adapter(fn, data, seed) returns the digest BYTES the C wrote
+    to the output buffer."""
+    argtypes: list = [None] * len(sig.params)
+    argtypes[desc.in_idx] = ctypes.POINTER(ctypes.c_ubyte)
+    argtypes[desc.inlen_idx] = _ctype(sig.params[desc.inlen_idx][1]) or ctypes.c_int
+    argtypes[desc.seed_idx] = _ctype(sig.params[desc.seed_idx][1]) or ctypes.c_uint
+    argtypes[desc.out_idx] = ctypes.POINTER(ctypes.c_ubyte)
+    olen = desc.out_len
+
+    def adapter(fn, data: bytes, seed: int = 0):
+        in_buf = ((ctypes.c_ubyte * len(data))(*data) if data
+                  else ctypes.POINTER(ctypes.c_ubyte)())
+        out_buf = (ctypes.c_ubyte * olen)()
+        args: list = [None] * len(sig.params)
+        args[desc.in_idx] = in_buf
+        args[desc.inlen_idx] = len(data)
+        args[desc.seed_idx] = seed
+        args[desc.out_idx] = out_buf
+        fn(*args)
+        return bytes(out_buf)
+
+    return CFunctionBinding(c_name=sig.name, restype=None, argtypes=argtypes, adapter=adapter)
+
+
+def fuzz_hash_out_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint {in_bytes, seed} -> digest-bytes vectors for a seeded hash-to-outbuf
+    fn from the compiled C oracle. Rust target returns Vec<u8>."""
+    from alchemist.extractor.fuzz_vectors import _bytes_to_rust_literal, _gen_byte_inputs, _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    desc = classify_hash_out_shape(sig)
+    if desc is None:
+        return []
+    binding = _hash_out_binding(sig, desc)
+    fn = binding.load(dll)
+    # Map spec params by Rust type: the byte slice is the message, the u32/scalar is the seed.
+    slice_params = [p for p in (alg.inputs or [])
+                    if "[u8]" in (p.rust_type or "") or "Vec<u8>" in (p.rust_type or "")]
+    scalar_params = [p for p in (alg.inputs or [])
+                     if p not in slice_params and any(x in (p.rust_type or "")
+                     for x in ("u32", "u64", "i32", "i64", "usize"))]
+    if not slice_params:
+        return []
+    msg_param = slice_params[0].name
+    seed_param = scalar_params[0].name if scalar_params else None
+    rng = _rng(_FUZZ_SEED)
+    inputs = _gen_byte_inputs(rng, count)
+    seeds = [0, 1, 0x9747b28c] + [rng.randint(0, 2**32 - 1) for _ in range(count)]
+    vectors = []
+    for i, data in enumerate(inputs):
+        seed = seeds[i % len(seeds)]
+        try:
+            digest = binding.adapter(fn, bytes(data), seed)
+        except Exception:  # noqa: BLE001
+            continue
+        row = {msg_param: _bytes_to_rust_literal(bytes(data))}
+        if seed_param:
+            row[seed_param] = f"{seed}u32"
+        digest_lit = "vec![" + ", ".join(f"0x{b:02x}" for b in digest) + "]"
+        vectors.append(SpecTestVector(
+            description=f"fuzz_in{len(data)}_seed{seed}",
+            source=f"C reference (hash-out): {sig.name}",
+            inputs=row, expected_output=digest_lit, tolerance="exact",
+        ))
+    return vectors
+
+
 def canonical_key(key_len: int) -> bytes:
     """Deterministic canonical key: bytes 0x00..0x(len-1). Matches the
     SipHash reference test key and is stable for reproducible oracles."""
@@ -905,13 +1017,22 @@ def normalize_digest_specs(c_source_dir, specs) -> int:
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
             is_buf_transform = classify_buf_transform(sig) is not None if sig else False
+            hash_out = classify_hash_out_shape(sig) if sig else None
             if sig is None or (classify_digest_shape(sig) is None
-                               and not is_buf_transform):
+                               and not is_buf_transform and hash_out is None):
                 continue
             # Keep the read-only byte-slice input(s) (message [+ key]); drop the out buffer
             # and any length param — the returned Vec IS the written output.
             byte_slices = [p for p in (alg.inputs or []) if "[u8]" in (p.rust_type or "")]
-            if is_buf_transform:
+            if hash_out is not None:
+                # Seeded hash-to-outbuf (MurmurHash): keep the message slice + the seed
+                # scalar (by its C name), drop the length param and the out buffer. The
+                # returned Vec is the fixed-size digest.
+                seed_name = sig.params[hash_out.seed_idx][0]
+                seeds = [p for p in (alg.inputs or [])
+                         if p not in byte_slices and p.name == seed_name]
+                keep = byte_slices[:1] + seeds
+            elif is_buf_transform:
                 # A codec is exactly `(in, inlen, out, outlen)`: ONE input slice, ONE output
                 # slice. The output `char *out` is NOT const, so it lifts to `&[u8]` (no `mut`)
                 # and the mut-heuristic below would wrongly keep it as a phantom second param —
@@ -1798,6 +1919,8 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 continue
             if classify_checksum_shape(sig) is not None:
                 vecs = fuzz_checksum_vectors(dll, alg, sig)
+            elif classify_hash_out_shape(sig) is not None:
+                vecs = fuzz_hash_out_vectors(dll, alg, sig)
             elif classify_digest_shape(sig) is not None:
                 vecs = fuzz_digest_vectors(dll, alg, sig)
                 # Second, independent proof: attach the NIST/FIPS catalog KATs, but only the
