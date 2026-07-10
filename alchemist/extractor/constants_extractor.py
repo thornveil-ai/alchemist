@@ -175,6 +175,28 @@ def build_typedef_map(texts) -> dict[str, str]:
     return tmap
 
 
+def resolve_scalar_alias(c_type: str, typedef_map: dict[str, str]) -> str:
+    """If `c_type` is a BARE (non-pointer) scalar typedef alias, resolve it to its
+    base C primitive via the subject's typedefs; otherwise return it unchanged.
+
+    Lets shape classifiers that match on primitive C type names recognize a
+    library's aliased scalars — `lua_Integer`/`lua_Unsigned`/`Instruction`/`uInt`
+    -> `long long`/`unsigned int`/... — read from the subject's OWN typedefs, not
+    a hardcoded table. Pointer and struct/aggregate types are left intact (their
+    shapes are handled by the pointer-shape classifiers, and structs must stay
+    named). Multi-word primitives (`unsigned int`) pass through untouched."""
+    if not typedef_map or "*" in c_type:
+        return c_type
+    core = re.sub(r"\b(?:const|volatile)\b", "", c_type).strip()
+    core = re.sub(r"\s+", " ", core)
+    if not core or core in _C_TYPE_TO_RUST:
+        return c_type
+    resolved = _resolve_typedef_chain(core, typedef_map)
+    if resolved != core and resolved in _C_TYPE_TO_RUST:
+        return resolved
+    return c_type
+
+
 def _resolve_typedef_chain(c: str, typedef_map: dict[str, str]) -> str:
     """Walk alias -> base through the subject's typedef map until a C primitive
     (or a name the map doesn't know). Cycle- and depth-guarded."""

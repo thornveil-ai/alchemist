@@ -331,13 +331,19 @@ def _parse_c_definitions(c_text: str):
 
 def collect_subject_signatures(c_source_dir: Path) -> list[CSignature]:
     from alchemist.verifier.build_c_dll import discover_c_build, _NONLIB_DIRS
+    from alchemist.extractor.constants_extractor import (
+        build_typedef_map, resolve_scalar_alias,
+    )
     sigs: list[CSignature] = []
     seen: set[str] = set()
     src = Path(c_source_dir)
+    _texts: list[str] = []
     for header in sorted(src.rglob("*.h")):
         if {p.lower() for p in header.relative_to(src).parts[:-1]} & _NONLIB_DIRS:
             continue
-        for sig in parse_header(header.read_text(encoding="utf-8", errors="replace")):
+        _txt = header.read_text(encoding="utf-8", errors="replace")
+        _texts.append(_txt)
+        for sig in parse_header(_txt):
             if sig.name not in seen:
                 seen.add(sig.name)
                 sigs.append(sig)
@@ -345,10 +351,20 @@ def collect_subject_signatures(c_source_dir: Path) -> list[CSignature]:
     # DEFINITIONS from library .c files (recursively; test/example/main drivers excluded).
     c_files, _ = discover_c_build(src)
     for cfile in c_files:
-        for sig in _parse_c_definitions(cfile.read_text(encoding="utf-8", errors="replace")):
+        _txt = cfile.read_text(encoding="utf-8", errors="replace")
+        _texts.append(_txt)
+        for sig in _parse_c_definitions(_txt):
             if sig.name not in seen:
                 seen.add(sig.name)
                 sigs.append(sig)
+    # Resolve the subject's OWN scalar typedef aliases (lua_Integer/Instruction/
+    # uInt/...) to base C primitives so the shape classifiers recognize them.
+    # Read from the subject's typedefs — no hardcoded per-library type table.
+    tmap = build_typedef_map(_texts)
+    if tmap:
+        for sig in sigs:
+            sig.return_type = resolve_scalar_alias(sig.return_type or "", tmap)
+            sig.params = [(n, resolve_scalar_alias(t, tmap)) for n, t in sig.params]
     return sigs
 
 
