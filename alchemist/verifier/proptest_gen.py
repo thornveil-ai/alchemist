@@ -88,6 +88,10 @@ class AlgorithmHarness:
     boundary_lengths: list[int] = field(default_factory=list)
     # Override input strategy — defaults per category
     input_strategy: str | None = None
+    # For DECODERS: a C-encoder call (e.g. "c_smaz_compress(&pt)") used to mint
+    # a VALID stream from random plaintext `pt` before decoding, so the C
+    # decoder never walks off a malformed frame (UB) that safe Rust can't match.
+    encoder_c_call: str | None = None
     # Additional imports required in the emitted harness
     extra_imports: list[str] = field(default_factory=list)
     # Upper proptest case count
@@ -285,8 +289,26 @@ def _boundary_block(h: AlgorithmHarness) -> str:
 
 def _proptest_buf_transform_block(h: AlgorithmHarness) -> str:
     """Differential for a variable-length buffer transform (codec): fuzz an input byte buffer
-    and compare the two output byte vectors (Rust `(&[u8])->Vec<u8>` vs the C out[0..ret])."""
+    and compare the two output byte vectors (Rust `(&[u8])->Vec<u8>` vs the C out[0..ret]).
+
+    For a DECODER (h.encoder_c_call set), the fuzzed bytes are random PLAINTEXT
+    that we first run through the C encoder to obtain a valid stream — decoding
+    random bytes would exercise the C decoder's undefined behavior on malformed
+    input, which a memory-safe Rust translation cannot (and must not) replicate."""
     strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..512)"
+    if h.encoder_c_call:
+        return dedent(f"""\
+            proptest! {{
+                #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+                #[test]
+                fn {h.algorithm}_matches_c_reference(pt in {strategy}) {{
+                    // Mint a VALID encoded stream from random plaintext, then decode it.
+                    let input = {h.encoder_c_call};
+                    prop_assert_eq!({h.rust_call}, {h.c_call});
+                }}
+            }}
+        """).rstrip()
     return dedent(f"""\
         proptest! {{
             #![proptest_config(ProptestConfig::with_cases({h.cases}))]

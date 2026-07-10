@@ -603,10 +603,44 @@ def classify_buf_transform(sig) -> str | None:
     return None
 
 
+# Decoder -> its paired encoder. A DECODER fuzzed with random bytes is a trap:
+# random input is almost never a valid encoded stream, so the C decoder walks
+# off the end of a truncated frame (undefined behavior — reads past the buffer),
+# while a memory-safe Rust translation bounds-checks and stops. They then
+# diverge on inputs no correct translation could ever match. The fix is to feed
+# the decoder VALID streams minted by running its encoder first (round-trip
+# fuzzing), so C never takes a UB path and byte-exact agreement is achievable.
+_DECODER_ENCODER_PAIRS = (
+    ("decompress", "compress"),
+    ("uncompress", "compress"),
+    ("decode", "encode"),
+    ("inflate", "deflate"),
+    ("unpack", "pack"),
+    ("expand", "compress"),
+)
+
+
+def _paired_encoder_name(decoder_name: str) -> "str | None":
+    """If `decoder_name` looks like a decoder, return the name of its likely
+    encoder (same casing/prefix, verb swapped). e.g. smaz_decompress ->
+    smaz_compress, tinf_uncompress -> tinf_compress. None if not a decoder."""
+    lo = decoder_name.lower()
+    for dec, enc in _DECODER_ENCODER_PAIRS:
+        idx = lo.rfind(dec)
+        if idx != -1:
+            return decoder_name[:idx] + enc + decoder_name[idx + len(dec):]
+    return None
+
+
 def fuzz_buf_transform_vectors(dll, alg, sig, *, count: int = 24):
     """Mint fill-loop vectors for a variable-length buffer transform: run the compiled C on a
     fuzzed input buffer, capture `out[0..return_value]`. Emits `&[u8] -> Vec<u8>` vectors the
-    generic (exact) test-emitter already understands."""
+    generic (exact) test-emitter already understands.
+
+    For DECODERS (decompress/decode/inflate/...), inputs are minted by running
+    the paired ENCODER on random plaintext (round-trip fuzzing) so the decoder
+    only ever sees valid streams — otherwise the C decoder's undefined behavior
+    on malformed input makes byte-exact verification impossible."""
     import ctypes
     from alchemist.extractor.fuzz_vectors import (
         _bytes_to_rust_literal, _gen_byte_inputs, _rng, _FUZZ_SEED,
@@ -623,11 +657,31 @@ def fuzz_buf_transform_vectors(dll, alg, sig, *, count: int = 24):
     _lenct = _ctype(sig.params[1][1]) or ctypes.c_int
     fn.argtypes = (ctypes.POINTER(ctypes.c_ubyte), _lenct,
                    ctypes.POINTER(ctypes.c_ubyte), _lenct)
+    # Round-trip fuzzing for decoders: bind the paired encoder if the subject
+    # exports one, so we can mint valid streams instead of random garbage.
+    encoder = None
+    _enc_name = _paired_encoder_name(sig.name)
+    if _enc_name and hasattr(dll, _enc_name):
+        encoder = getattr(dll, _enc_name)
+        encoder.restype = ctypes.c_int
+        encoder.argtypes = fn.argtypes
     rng = _rng(_FUZZ_SEED)
     _ret = (getattr(alg, "return_type", "") or "").strip()
     vectors = []
     for data in _gen_byte_inputs(rng, count):
         data = bytes(data)
+        if encoder is not None:
+            # `data` is random plaintext; encode it to a valid stream for the decoder.
+            _pbuf = (ctypes.c_ubyte * len(data))(*data) if data else (ctypes.c_ubyte * 1)()
+            _ecap = len(data) * 4 + 512
+            _ebuf = (ctypes.c_ubyte * _ecap)()
+            try:
+                _er = int(encoder(_pbuf, len(data), _ebuf, _ecap))
+            except Exception:  # noqa: BLE001
+                continue
+            if _er < 0 or _er > _ecap:
+                continue
+            data = bytes(_ebuf[i] for i in range(_er))
         inbuf = (ctypes.c_ubyte * len(data))(*data) if data else (ctypes.c_ubyte * 1)()
         cap = len(data) * 4 + 512
         out = (ctypes.c_ubyte * cap)()
@@ -1456,6 +1510,12 @@ def build_diff_config(
             # signature `int f(byteptr, int, byteptr, int)` overlaps a fixed-output digest, so
             # digest (more specific) wins first; anything left that fits is a variable codec.
             if classify_buf_transform(sig) is not None:
+                # If this is a DECODER whose paired ENCODER is also in the
+                # subject, fuzz it round-trip: random plaintext -> C encoder ->
+                # valid stream -> decode. Decoding random bytes would compare
+                # C's undefined-behavior-on-malformed-input against safe Rust.
+                _enc = _paired_encoder_name(alg.name)
+                _enc_call = f"c_{_enc}(&pt)" if (_enc and _enc in by_name) else None
                 harnesses.append(AlgorithmHarness(
                     algorithm=alg.name,
                     category="buf_transform",
@@ -1463,6 +1523,7 @@ def build_diff_config(
                     c_call=f"c_{alg.name}(&input)",
                     boundary_lengths=list(_GENERIC_BOUNDARIES),
                     cases=4000,
+                    encoder_c_call=_enc_call,
                 ))
                 used_signatures.append(sig)
     if not harnesses:
