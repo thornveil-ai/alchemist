@@ -102,6 +102,14 @@ def discover_c_build(root, *, max_files: int = 300) -> tuple[list[Path], list[Pa
             continue
         if _MAIN_RE.search(txt):
             continue
+        # Skip test-harness .c files in the root (Lua's ltests.c, *_test.c). They
+        # redefine library symbols for internal testing -> duplicate-symbol link
+        # errors when compiled with the real sources. (Test *dirs* are already
+        # skipped via _NONLIB_DIRS; this catches test files at the top level.)
+        _stem = cf.stem.lower()
+        if (_stem.endswith(("test", "tests"))
+                or "_test" in _stem or "test_" in _stem):
+            continue
         # Skip amalgamation / unity-build files that #include OTHER .c files
         # (Lua's onelua.c, sqlite3.c-style). Compiling them alongside the real
         # .c files defines every symbol twice -> duplicate-symbol link failure,
