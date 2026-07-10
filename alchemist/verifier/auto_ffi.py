@@ -218,10 +218,7 @@ def parse_header(header_text: str, *, only_names: set[str] | None = None) -> lis
         name = m.group("name")
         if only_names and name not in only_names:
             continue
-        ret = m.group("ret").strip()
-        # Skip storage specifiers
-        for kw in ("extern", "static", "inline", "ZEXTERN", "ZEXPORT", "OF", "ZLIB_EXTERN"):
-            ret = re.sub(rf"\b{kw}\b", "", ret).strip()
+        ret = _strip_ret_specifiers(m.group("ret").strip())
         params_raw = m.group("params").strip()
         params = _parse_params(params_raw)
         signatures.append(CSignature(name=name, return_type=ret, params=params))
@@ -297,6 +294,35 @@ _VIS_MACRO_RE = re.compile(
     r'#\s*define\s+([A-Za-z_]\w*)\b[^\n]*'
     r'__attribute__\s*\(\s*\(\s*visibility\s*\(\s*"(?:internal|hidden|protected)"',
 )
+
+
+_RET_STRIP_KW = {
+    "extern", "static", "inline", "register", "auto", "_Noreturn",
+    "__inline", "__inline__", "__forceinline", "__attribute__",
+    "__cdecl", "__stdcall", "__fastcall", "__declspec", "OF",
+}
+
+
+def _strip_ret_specifiers(ret: str) -> str:
+    """Strip leading storage/qualifier keywords AND all-caps export/visibility
+    macros (LUAI_FUNC, ZEXPORT, ZLIB_INTERNAL, FORCE_INLINE, ...) from a C return
+    type, keeping at least the final type token(s). No hardcoded macro names —
+    the ALL_CAPS convention generalizes to any library. Without this, a header
+    prototype like `LUAI_FUNC unsigned int luaS_hash(...)` parses its return type
+    as `LUAI_FUNC unsigned int`, which no shape classifier recognizes -> the
+    function silently gets no oracle vectors and is unverifiable."""
+    toks = ret.replace("*", " * ").split()
+    i = 0
+    while i < len(toks) - 1:  # keep the last token as the type
+        t = toks[i]
+        core = t.replace("_", "")
+        is_macro = (len(t) > 1 and t.isupper() and core.isalnum()
+                    and not core.isdigit())
+        if t in _RET_STRIP_KW or is_macro:
+            i += 1
+            continue
+        break
+    return " ".join(toks[i:]).replace(" *", "*").strip() or ret
 
 
 def _visibility_neutralizers(dirs) -> list[str]:
