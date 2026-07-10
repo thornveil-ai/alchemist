@@ -1,0 +1,109 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-10T07:44:27.471263+00:00",
+  "workspace": "/tmp/smaz/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (2 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 2 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s [2/2 harnesses adapted (smaz_compress -> smaz_core::smaz_compress (buf_transform); smaz_decompress -> smaz_core::smaz_decompress (buf_transform))]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "smaz_compress",
+        "category": "buf_transform",
+        "cases": 4000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "smaz_compress -> smaz_core::smaz_compress (buf_transform)"
+      },
+      {
+        "algorithm": "smaz_decompress",
+        "category": "buf_transform",
+        "cases": 4000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "smaz_decompress -> smaz_core::smaz_decompress (buf_transform)"
+      }
+    ],
+    "cargo_summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s"
+  },
+  "oracle": {
+    "ffi_crate": "c_smaz_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/tmp/smaz/src/smaz.c",
+        "sha256": "bf293e4c530338069c451e76339560514ec8cd0ae3dca72aa0d9ffc5d26529f2"
+      }
+    ],
+    "dll": {
+      "path": "/tmp/smaz/.alchemist/verify_gen/c_smaz_ref/libc_smaz_ref.so",
+      "sha256": "288e61aacc6cc86f66cf66b9c780fc3664d72fa42c42115abad99c0f999f813d"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 2
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "dd7f065be7d7571a6f00a66e4d782c84346eee75686325ed6eb2c83292abefe0",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}

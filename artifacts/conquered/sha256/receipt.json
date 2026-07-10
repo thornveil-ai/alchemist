@@ -1,0 +1,92 @@
+{
+  "schema": "alchemist-verification-receipt/v1",
+  "created_utc": "2026-07-09T23:35:48.529278+00:00",
+  "workspace": "/tmp/sha_subj/.alchemist/output",
+  "packages": [],
+  "overall_passed": true,
+  "gates": [
+    {
+      "gate": "compile",
+      "passed": true,
+      "summary": "cargo check clean"
+    },
+    {
+      "gate": "anti-stub",
+      "passed": true,
+      "summary": "clean (3 files scanned, 0 violations)"
+    },
+    {
+      "gate": "no-unsafe",
+      "passed": true,
+      "summary": "zero unsafe across 3 files"
+    },
+    {
+      "gate": "semantic",
+      "passed": true,
+      "summary": "clean"
+    },
+    {
+      "gate": "test",
+      "passed": true,
+      "summary": "test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s; test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "gate": "differential",
+      "passed": true,
+      "summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s [1/1 harnesses adapted (sha256 -> sha256_core::sha256 (digest))]"
+    }
+  ],
+  "differential": {
+    "harnesses": [
+      {
+        "algorithm": "sha256",
+        "category": "hash",
+        "cases": 5000,
+        "seed": null,
+        "boundary_lengths": [
+          0,
+          1,
+          2,
+          255,
+          256,
+          257,
+          4096,
+          65536
+        ],
+        "binding": "sha256 -> sha256_core::sha256 (digest)"
+      }
+    ],
+    "cargo_summary": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s"
+  },
+  "oracle": {
+    "ffi_crate": "c_sha_subj_ref",
+    "compiler": {
+      "command": "gcc -shared -O2 -fPIC",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    "c_sources": [
+      {
+        "path": "/tmp/sha_subj/src/sha256.c",
+        "sha256": "3f1667e730920c0e96a8d63701fc831c517a6b1673750a1c3c5eb13203d4d4d2"
+      }
+    ],
+    "dll": {
+      "path": "/tmp/sha_subj/.alchemist/verify_gen/c_sha_subj_ref/libc_sha_subj_ref.so",
+      "sha256": "cfa99ecff18b9fdcf5f8760e62ed241d7359bc49ee7fbdfa1c2819947e1b5334"
+    }
+  },
+  "specs": {
+    "modules": 1,
+    "algorithms": 1
+  },
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39"
+  },
+  "integrity": {
+    "content_sha256": "969300030f2b1992f8d3a2edcb98de534264eec7a4c7774d1913c0673489fe8a",
+    "hmac_sha256": null,
+    "note": "unsigned \u2014 set ALCHEMIST_RECEIPT_KEY to add an HMAC; signet chain integration pending key-custody decision"
+  }
+}
