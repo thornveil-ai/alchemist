@@ -668,16 +668,34 @@ def run_implement_stage(
         from alchemist.extractor.constants_extractor import (
             extract_from_path, build_typedef_map,
         )
-        c_sources: dict[str, Path] = {
-            p.stem: p for p in source.rglob("*.c")
+        import re as _re
+        _c_files = [
+            p for p in source.rglob("*.c")
             if "test" not in p.name.lower() and "example" not in p.name.lower()
-        }
+        ]
+        c_sources: dict[str, Path] = {p.stem: p for p in _c_files}
+        # Map every function to the .c file that DEFINES it. A module's name does
+        # not always match the file its functions live in (the analyzer may group/
+        # rename modules — Lua's luaO_ceillog2 gets a module named 'llex' but is
+        # defined in lobject.c, where its carried `log_2` table lives). Extracting
+        # constants by module.name then misses the table -> E0425 in the fill.
+        _fn_def_re = _re.compile(r"(?m)^[A-Za-z_][\w \*]*?\b(\w+)\s*\([^;{}]*\)\s*\{")
+        _fn_file: dict[str, Path] = {}
+        _file_text: dict[Path, str] = {}
+        for _p in _c_files:
+            try:
+                _t = _p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            _file_text[_p] = _t
+            for _m in _fn_def_re.finditer(_t):
+                _fn_file.setdefault(_m.group(1), _p)
         # Build ONE typedef map over the whole subject (all .c + .h) so a
         # carried table typed `lu_byte`/`Bytef`/`hrt_abstime` resolves through
         # the codebase's own aliases -> C primitive -> Rust. No hardcoded
         # per-library type tables; the harness learns types from the source.
-        _subj_texts: list[str] = []
-        for _p in list(source.rglob("*.h")) + list(source.rglob("*.c")):
+        _subj_texts: list[str] = list(_file_text.values())
+        for _p in source.rglob("*.h"):
             try:
                 _subj_texts.append(_p.read_text(encoding="utf-8", errors="replace"))
             except OSError:
@@ -687,13 +705,25 @@ def run_implement_stage(
         for module in specs:
             if module.constants:
                 continue  # already populated (e.g., loaded from cache)
-            c_file = c_sources.get(module.name)
-            if c_file is None:
+            # Files that define this module's functions, plus the same-name file.
+            _files: list[Path] = []
+            for _alg in (getattr(module, "algorithms", None) or []):
+                _f = _fn_file.get(_alg.name)
+                if _f is not None and _f not in _files:
+                    _files.append(_f)
+            _named = c_sources.get(module.name)
+            if _named is not None and _named not in _files:
+                _files.append(_named)
+            if not _files:
                 continue
             try:
-                report = extract_from_path(c_file, typedef_map=subject_typedefs)
-                module.constants = report.extracted
-                total_consts += report.count
+                _merged: dict[str, object] = {}
+                for _f in _files:
+                    _rep = extract_from_path(_f, typedef_map=subject_typedefs)
+                    for _c in _rep.extracted:
+                        _merged[_c.name] = _c  # dedup by name, later file wins
+                module.constants = list(_merged.values())
+                total_consts += len(module.constants)
             except Exception:  # noqa: BLE001
                 continue
         if total_consts:
