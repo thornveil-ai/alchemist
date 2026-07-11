@@ -162,6 +162,167 @@ pub fn fmod_lua(a: f64, b: f64) -> f64 {
     }
 }
 
+// ---- L3: number PARSING (luaO_str2num), byte-exact vs C-lua ----
+
+/// `l_str2int`: parse an integer literal (decimal or `0x` hex). Hex overflow
+/// WRAPS (Lua semantics); decimal overflow returns None (Lua then tries float).
+/// Leading/trailing ASCII space is allowed; the whole (trimmed) string must be
+/// consumed.
+pub fn str2int(s: &[u8]) -> Option<i64> {
+    let t = trim_spaces(s);
+    if t.is_empty() {
+        return None;
+    }
+    let (neg, rest) = sign(t);
+    if rest.is_empty() {
+        return None;
+    }
+    let (val, consumed) = if rest.len() >= 2 && rest[0] == b'0' && (rest[1] | 0x20) == b'x' {
+        // Hex: wrapping accumulate; at least one hex digit.
+        let hex = &rest[2..];
+        let mut a: u64 = 0;
+        let mut n = 0;
+        for &c in hex {
+            let d = hex_val(c)?;
+            a = a.wrapping_mul(16).wrapping_add(d as u64);
+            n += 1;
+        }
+        if n == 0 {
+            return None;
+        }
+        (a as i64, ())
+    } else {
+        // Decimal: overflow -> None (fall through to float in str2num).
+        let mut a: i64 = 0;
+        let mut n = 0;
+        for &c in rest {
+            if !c.is_ascii_digit() {
+                return None;
+            }
+            a = a.checked_mul(10)?.checked_add((c - b'0') as i64)?;
+            n += 1;
+        }
+        if n == 0 {
+            return None;
+        }
+        (a, ())
+    };
+    let _ = consumed;
+    Some(if neg { val.wrapping_neg() } else { val })
+}
+
+/// `l_str2d`: parse a float literal (decimal or hex-float `0x1p4`). Rejects any
+/// string containing 'n'/'N' — which is exactly how C-lua rejects `inf`/`nan`.
+pub fn str2d(s: &[u8]) -> Option<f64> {
+    let t = trim_spaces(s);
+    if t.is_empty() {
+        return None;
+    }
+    // Reject inf/nan the way Lua does: presence of 'n'/'N'.
+    if t.iter().any(|&c| c == b'n' || c == b'N') {
+        return None;
+    }
+    let (neg, body) = sign(t);
+    let v = if body.len() >= 2 && body[0] == b'0' && (body[1] | 0x20) == b'x' {
+        parse_hex_float(&body[2..])?
+    } else {
+        std::str::from_utf8(body).ok()?.parse::<f64>().ok()?
+    };
+    Some(if neg { -v } else { v })
+}
+
+/// `luaO_str2num`: integer first, else float, else not-a-number.
+pub fn str2num(s: &[u8]) -> Option<LuaValue> {
+    if let Some(i) = str2int(s) {
+        return Some(LuaValue::Integer(i));
+    }
+    str2d(s).map(LuaValue::Number)
+}
+
+fn trim_spaces(s: &[u8]) -> &[u8] {
+    let mut a = 0;
+    let mut b = s.len();
+    while a < b && s[a].is_ascii_whitespace() {
+        a += 1;
+    }
+    while b > a && s[b - 1].is_ascii_whitespace() {
+        b -= 1;
+    }
+    &s[a..b]
+}
+
+fn sign(s: &[u8]) -> (bool, &[u8]) {
+    match s.first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    }
+}
+
+fn hex_val(c: u8) -> Option<u32> {
+    match c {
+        b'0'..=b'9' => Some((c - b'0') as u32),
+        b'a'..=b'f' => Some((c - b'a' + 10) as u32),
+        b'A'..=b'F' => Some((c - b'A' + 10) as u32),
+        _ => None,
+    }
+}
+
+/// Hex float `HHH.HHHpEE` (Lua/C99). Mantissa in hex, binary exponent after 'p'.
+fn parse_hex_float(s: &[u8]) -> Option<f64> {
+    let mut mant = 0.0f64;
+    let mut any = false;
+    let mut i = 0;
+    while i < s.len() {
+        if let Some(d) = hex_val(s[i]) {
+            mant = mant * 16.0 + d as f64;
+            any = true;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if i < s.len() && s[i] == b'.' {
+        i += 1;
+        let mut scale = 1.0 / 16.0;
+        while i < s.len() {
+            if let Some(d) = hex_val(s[i]) {
+                mant += d as f64 * scale;
+                scale /= 16.0;
+                any = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    if !any {
+        return None;
+    }
+    let mut exp = 0i32;
+    if i < s.len() && (s[i] | 0x20) == b'p' {
+        i += 1;
+        let (eneg, erest) = sign(&s[i..]);
+        if erest.is_empty() {
+            return None;
+        }
+        for &c in erest {
+            if !c.is_ascii_digit() {
+                return None;
+            }
+            exp = exp.checked_mul(10)?.checked_add((c - b'0') as i32)?;
+        }
+        if eneg {
+            exp = -exp;
+        }
+        i = s.len();
+    }
+    if i != s.len() {
+        return None;
+    }
+    Some(mant * 2f64.powi(exp))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +357,33 @@ mod tests {
         assert_eq!(imod(20, 6), Some(2));
         assert_eq!(imod(-1, 3), Some(2)); // sign of divisor
         assert_eq!(iflordiv(1, 0), None);
+    }
+
+    #[test]
+    fn number_parsing_matches_c_lua() {
+        // Integers (subtype preserved).
+        assert!(matches!(str2num(b"42"), Some(LuaValue::Integer(42))));
+        assert!(matches!(str2num(b"  10  "), Some(LuaValue::Integer(10))));
+        assert!(matches!(str2num(b"0x1A"), Some(LuaValue::Integer(26))));
+        assert!(matches!(str2num(b"-7"), Some(LuaValue::Integer(-7))));
+        // Hex integer overflow WRAPS (0xFFFF...F == -1).
+        assert!(matches!(str2num(b"0xFFFFFFFFFFFFFFFF"), Some(LuaValue::Integer(-1))));
+        // Floats (have '.', exponent, or overflow decimal).
+        assert!(matches!(str2num(b"3.14"), Some(LuaValue::Number(_))));
+        assert_eq!(lua_number2str(match str2num(b"1e3").unwrap() { LuaValue::Number(n)=>n, _=>0.0 }), "1000.0");
+        assert!(matches!(str2num(b".5"), Some(LuaValue::Number(_))));
+        assert!(matches!(str2num(b"10."), Some(LuaValue::Number(_))));
+        // Hex float.
+        assert!(matches!(str2num(b"0x1p4"), Some(LuaValue::Number(n)) if n == 16.0));
+        // Decimal overflow -> float, not error.
+        assert!(matches!(str2num(b"99999999999999999999999"), Some(LuaValue::Number(_))));
+        // Rejections: inf/nan (via 'n'), garbage, empty.
+        assert!(str2num(b"inf").is_none());
+        assert!(str2num(b"nan").is_none());
+        assert!(str2num(b"abc").is_none());
+        assert!(str2num(b"").is_none());
+        assert!(str2num(b"0x").is_none());
+        assert!(str2num(b"1 2").is_none());
     }
 
     #[test]
