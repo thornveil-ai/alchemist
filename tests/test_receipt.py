@@ -64,7 +64,8 @@ def test_receipt_records_gates_oracle_and_bindings(tmp_path):
     assert r["schema"] == RECEIPT_SCHEMA
     assert r["overall_passed"] is True
     assert {g["gate"] for g in r["gates"]} == {
-        "compile", "anti-stub", "no-unsafe", "semantic", "test", "differential"}
+        "compile", "anti-stub", "no-unsafe", "semantic", "test", "differential",
+        "e2e"}
     h = r["differential"]["harnesses"][0]
     assert h["algorithm"] == "adler32"
     assert h["cases"] == 5000

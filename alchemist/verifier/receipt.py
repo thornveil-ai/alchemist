@@ -62,8 +62,10 @@ def build_receipt(
     """Assemble the receipt dict from a VerificationReport + run evidence."""
     gates = []
     for name in ("compile", "anti_stub", "no_unsafe", "semantic", "test",
-                 "differential"):
-        g = getattr(report, name)
+                 "differential", "e2e"):
+        g = getattr(report, name, None)
+        if g is None:
+            continue
         gates.append({"gate": g.name, "passed": g.passed, "summary": g.summary})
 
     harnesses = []

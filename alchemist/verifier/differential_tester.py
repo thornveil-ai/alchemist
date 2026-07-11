@@ -79,6 +79,12 @@ class VerificationReport:
     # Optional UB-freedom proof under Miri. Defaults to a not-run PASS so it never
     # blocks a system without nightly+miri and never breaks existing constructions.
     miri: GateResult = field(default_factory=lambda: GateResult("miri", True, "not run"))
+    # Optional whole-program differential (e2e_oracle) for cyclic cores that
+    # cannot be verified per-function (a Lua interpreter over lua_State, PX4 over
+    # vehicle state). Defaults to a not-run PASS so it never blocks subjects
+    # without an e2e spec; when a spec IS supplied it fails closed (byte-exact
+    # observable behavior over the corpus, or refused).
+    e2e: GateResult = field(default_factory=lambda: GateResult("e2e", True, "not run"))
 
     @property
     def passed(self) -> bool:
@@ -90,12 +96,13 @@ class VerificationReport:
             and self.test.passed
             and self.differential.passed
             and self.miri.passed
+            and self.e2e.passed
         )
 
     @property
     def first_failure(self) -> GateResult | None:
         for g in (self.compile, self.anti_stub, self.no_unsafe, self.semantic,
-                  self.test, self.differential, self.miri):
+                  self.test, self.differential, self.miri, self.e2e):
             if not g.passed:
                 return g
         return None
@@ -111,6 +118,7 @@ class VerificationReport:
             f"[test       {mark(self.test)}] {self.test.summary}\n"
             f"[diff       {mark(self.differential)}] {self.differential.summary}\n"
             f"[miri       {mark(self.miri)}] {self.miri.summary}\n"
+            f"[e2e        {mark(self.e2e)}] {self.e2e.summary}\n"
             f"OVERALL: {'PASS' if self.passed else 'FAIL'}"
         )
 
@@ -139,6 +147,11 @@ class DifferentialConfig:
     # workspace. The differential gate is always harness-driven and the
     # semantic gate always sweeps the whole workspace regardless of scoping.
     packages: list[str] = field(default_factory=list)
+    # Optional whole-program differential spec (see verifier/e2e_oracle.py). When
+    # set, the e2e gate runs the corpus through the C reference AND the translated
+    # build and requires byte-identical observable behavior — the general
+    # capability for cyclic cores (Lua/PX4) that have no per-function FFI shape.
+    e2e_spec: "E2EOracleSpec | None" = None
 
 
 class DifferentialTester:
@@ -428,6 +441,35 @@ class DifferentialTester:
                           "UB-free under Miri" if ok else "Miri found undefined behaviour",
                           stdout=r.stdout, stderr=r.stderr)
 
+    def gate_e2e(self) -> GateResult:
+        """Optional whole-program differential for cyclic cores (see e2e_oracle).
+
+        Runs the subject's input corpus through the compiled-C reference AND the
+        translated build and requires byte-identical observable behavior. PASSES
+        as not-run when no `e2e_spec` is supplied (per-function differential
+        subjects don't need it); when a spec IS supplied it fails closed —
+        including on an empty corpus (run_e2e_oracle requires total>0)."""
+        spec = getattr(self.diff_config, "e2e_spec", None) if self.diff_config else None
+        if spec is None:
+            return GateResult("e2e", True, "not run (no e2e spec)")
+        console.print("[cyan]gate: whole-program e2e differential[/cyan]")
+        from alchemist.verifier.e2e_oracle import run_e2e_oracle
+        try:
+            result = run_e2e_oracle(spec)
+        except Exception as e:  # noqa: BLE001
+            # An e2e spec was declared but the run crashed — fail closed rather
+            # than silently disarm a gate the subject explicitly asked for.
+            return GateResult("e2e", False, f"e2e oracle crashed: {e}")
+        fails = [c for c in result.cases if not c.passed]
+        detail = ""
+        if fails:
+            detail = "; ".join(f"{c.name}: {c.detail}" for c in fails[:3])
+        return GateResult(
+            "e2e",
+            result.passed,
+            result.summary() + (f" — {detail}" if detail else ""),
+        )
+
     def _diff_is_oracle_backed(self) -> bool:
         """True when the differential runs against a real COMPILED-C oracle (c_sources),
         i.e. ground truth independent of the model — not a self-derived KAT-only config."""
@@ -479,6 +521,15 @@ class DifferentialTester:
             )
         miri_r = self.gate_miri() if test_r.passed else GateResult(
             "miri", True, "skipped — test gate failed")
+        # e2e is a whole-program differential; it only makes sense once the
+        # build is green. If tests failed but an e2e spec exists, the e2e gate
+        # would fail anyway — mark it skipped-fail so the report is honest.
+        if test_r.passed:
+            e2e_r = self.gate_e2e()
+        elif getattr(self.diff_config, "e2e_spec", None) is not None:
+            e2e_r = GateResult("e2e", False, "skipped — test gate failed")
+        else:
+            e2e_r = GateResult("e2e", True, "not run (no e2e spec)")
         return VerificationReport(
             compile=compile_r,
             anti_stub=anti_r,
@@ -487,6 +538,7 @@ class DifferentialTester:
             test=test_r,
             differential=diff_r,
             miri=miri_r,
+            e2e=e2e_r,
         )
 
     # --- Differential harness build / run ---

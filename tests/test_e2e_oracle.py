@@ -75,3 +75,55 @@ def test_corpus_dir_helper(tmp_path):
     spec.candidate_cmd = list(spec.reference_cmd)
     res = run_e2e_oracle(spec)
     assert res.total == 2 and res.passed
+
+
+# ---------------------------------------------------------------------------
+# Wiring into the verify gate (P1b): DifferentialTester.gate_e2e consumes
+# diff_config.e2e_spec and folds the verdict into VerificationReport.passed.
+# ---------------------------------------------------------------------------
+
+def _echo_spec(tmp_path, transform="read()"):
+    from alchemist.verifier.e2e_oracle import E2EOracleSpec
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir(exist_ok=True)
+    (corpus_dir / "a.txt").write_text("hello\n", encoding="utf-8")
+    (corpus_dir / "b.txt").write_text("world\n", encoding="utf-8")
+    ref = [sys.executable, "-c",
+           "import sys;sys.stdout.write(open(sys.argv[1]).read())", "{input}"]
+    cand = [sys.executable, "-c",
+            f"import sys;sys.stdout.write(open(sys.argv[1]).{transform})", "{input}"]
+    return E2EOracleSpec(
+        name="echo", reference_cmd=ref, candidate_cmd=cand,
+        corpus=sorted(corpus_dir.glob("*.txt")),
+    )
+
+
+def test_gate_e2e_not_run_without_spec(tmp_path):
+    from alchemist.verifier.differential_tester import (
+        DifferentialTester, DifferentialConfig,
+    )
+    t = DifferentialTester(tmp_path, diff_config=DifferentialConfig())
+    g = t.gate_e2e()
+    assert g.passed is True
+    assert "not run" in g.summary
+
+
+def test_gate_e2e_passes_on_identical_behavior(tmp_path):
+    from alchemist.verifier.differential_tester import (
+        DifferentialTester, DifferentialConfig,
+    )
+    cfg = DifferentialConfig(e2e_spec=_echo_spec(tmp_path))
+    g = DifferentialTester(tmp_path, diff_config=cfg).gate_e2e()
+    assert g.passed is True
+    assert "2/2" in g.summary
+
+
+def test_gate_e2e_fails_closed_on_divergence(tmp_path):
+    from alchemist.verifier.differential_tester import (
+        DifferentialTester, DifferentialConfig,
+    )
+    # Candidate upper-cases its output → observable behavior diverges.
+    cfg = DifferentialConfig(e2e_spec=_echo_spec(tmp_path, transform="read().upper()"))
+    g = DifferentialTester(tmp_path, diff_config=cfg).gate_e2e()
+    assert g.passed is False
+    assert "a.txt" in g.summary or "b.txt" in g.summary
