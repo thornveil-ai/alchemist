@@ -27,28 +27,41 @@ isn't a pipeline template/test, STOP — you are doing the machine's job.
 - **The fail-closed contract is real AND tested** (missing oracle→differential FAILS
   "REFUSING"; unverifiable category→`panic!`; nothing stubbed is reported verified).
 
-**Biggest actionable finding — the repo's best code is DEAD (built + tested + UNWIRED):**
-`verifier/{e2e_oracle,sanitizer_diff,amplifier}.py` and `implementer/{decomposed,parallel,
-regression,structural_decomp}.py`. `structural_decomp` is a rigorous fail-closed
-real-gcc byte-exact C-split-and-fuzz decomposer with **no caller**. Wiring these >
-writing new code. Also dead: `analyzer/preprocessor.py` (+ never-read `preprocessed`
-flag), `spec_extractor._extract_module_OLD_BULK` (~145 LOC), `_ZLIB_INFLATE_SHIM_BINDINGS_
-PENDING`, `function_classifier.py`, `shim_synth.py` (no callers).
+**Was: the repo's best code is DEAD (built + tested + UNWIRED).** ✅ RESOLVED 2026-07-11:
+- `implementer/structural_decomp.py` — **WIRED** (P1a, commit a6108a6) into the TDD
+  refusal escalation: a refused buf_transform fn now gets a gcc-PROVEN byte-exact
+  C split, then a piecewise translation re-verified by the same differential test.
+  Fail-closed (unproven split discarded, failed translation reverts).
+- `verifier/e2e_oracle.py` — **WIRED** (P1b, commit 72bdbb4) as `DifferentialConfig.
+  e2e_spec` + `DifferentialTester.gate_e2e`: whole-program observable-behavior
+  differential for cyclic cores (Lua/PX4). Folded into `report.passed` + receipt;
+  fails closed on divergence / empty corpus / crash; not-run PASS when no spec.
+- Still UNWIRED (candidate future work, not dead-delete): `verifier/{sanitizer_diff,
+  amplifier}.py`, `implementer/{decomposed,parallel,regression}.py`, `analyzer/
+  preprocessor.py`, `function_classifier.py` (real build-utility filter), `shim_synth.py`.
+  Removed the truly-dead code (`_extract_module_OLD_BULK`, `_ZLIB_INFLATE_SHIM_BINDINGS_
+  PENDING`) in commit 6c5390d.
 
-**Generalization bottleneck:** the *framework* is general but the *population* is zlib —
-`type_unifier`, `normalizer`, `spec_auditor`, `field_scanner.TYPE_HINTS`, `module_detector`
-filename sets, `state_mutator`/`c_shim_fuzz` bindings are all hand-curated zlib tables.
+**Generalization bottleneck — partially closed.** `type_unifier` **auto-populates**
+canonicals from analysis.json now (P2, commit 822c4eb): struct fractures with
+structurally-compatible spellings unify without hand-registration; curated registry
+still overrides for the semantically-hard cases (ct_data union-flattening). Still
+zlib-populated: `normalizer`, `spec_auditor`, `field_scanner.TYPE_HINTS`,
+`module_detector` filename sets, `state_mutator`/`c_shim_fuzz` bindings.
 
-**Debt:** 4 duplicate brace scanners, 2 divergent `_snake`, 2 diverged DLL builders;
-dead-logic bugs (`validator._check_orphan_rule` always-false, `auto_config.py:1426 if False`,
-`trait_extractor._normalize_type` no-op `.replace`). **CI runs only Python unit tests +
-anti-stub self-scan — it does NOT run the pipeline, invoke a model, or build generated
-Rust. Green CI ≠ a working converter.**
+**Debt — PAID (commits 6c5390d, 145da2b):** brace scanners consolidated onto the
+token-aware `scrubber.find_matching_brace` (constants_extractor already delegated;
+struct_lift now routes through it); the two `_snake` renamed to signal their
+deliberate divergence (`skeleton._snake` preserves boundary underscores,
+`api_completeness._snake_loose` strips them); the 3 dead-logic bugs fixed
+(`validator._check_orphan_rule`, `auto_config.py:1426`, `trait_extractor._normalize_type`).
+**CI STILL runs only Python unit tests + anti-stub self-scan — it does NOT run the
+pipeline, invoke a model, or build generated Rust. Green CI ≠ a working converter.**
 
-**On-mission plan (in order):** (1) wire `structural_decomp` + `e2e_oracle`; (2) auto-
-populate `type_unifier` from the analysis; (3) pay down the debt above; (4) run the
-converter to validate; THEN (5) Lua the right way — the *model* translates leaf-up,
-gated by the differential + `e2e_oracle`, refusal-rate the metric. Never hand-write.
+**On-mission plan:** (1) wire `structural_decomp` + `e2e_oracle` ✅; (2) auto-populate
+`type_unifier` ✅; (3) pay down the debt ✅; (4) run the converter to validate —
+IN PROGRESS; THEN (5) Lua the right way — the *model* translates leaf-up, gated by the
+differential + `e2e_oracle`, refusal-rate the metric. Never hand-write.
 
 ## The two pipelines
 
