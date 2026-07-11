@@ -5,6 +5,51 @@
 > most of `alchemist/autonomy/` duplicates the mature shipping pipeline. If you are
 > an agent resuming work here, read this before writing any new code.
 
+## ⚠️ ADDENDUM 2026-07-11 — full-repo re-audit + the ONE rule that was broken
+
+**THE ONE RULE: Alchemist IS the converter. The MODEL (Gemma via vLLM) writes every
+line of Rust; you build/run/verify/sharpen the converter. You NEVER hand-write the
+translation output.** In this session an agent drifted into hand-writing a Rust Lua
+interpreter (`artifacts/lua-rs/`, since removed) — the exact "shadow pipeline / copy-
+the-C-by-hand" anti-pattern this doc forbids, made worse because `architect/
+type_unifier.py` + `workspace_assembler.py` are *designed to produce the shared type
+universe automatically* from model output. If you catch yourself writing `.rs` that
+isn't a pipeline template/test, STOP — you are doing the machine's job.
+
+**True state (every file read 2026-07-11):**
+- **Verified in-repo:** `subjects/tinychk` (PASS) and `subjects/zlib` **`zlib-checksum` only**
+  (adler32+crc32, 5000 cases, byte-exact). zlib deflate/inflate in the live output are
+  `unimplemented!()` stubs, honestly excluded from the receipt. `references/*_verified`
+  (base64, ArduPilot CRC, zlib-trees partial, inflate_table) are real, `unsafe`-free,
+  oracle-backed. **`subjects/lua` = analysis + oracle ONLY — zero generated Rust.**
+- **Honest maturity:** ~30–50% of functions on *stateful* libs; kernel/OS near-zero
+  (see PRODUCTION_READINESS.md). A whole cyclic interpreter core is beyond current reach.
+- **The fail-closed contract is real AND tested** (missing oracle→differential FAILS
+  "REFUSING"; unverifiable category→`panic!`; nothing stubbed is reported verified).
+
+**Biggest actionable finding — the repo's best code is DEAD (built + tested + UNWIRED):**
+`verifier/{e2e_oracle,sanitizer_diff,amplifier}.py` and `implementer/{decomposed,parallel,
+regression,structural_decomp}.py`. `structural_decomp` is a rigorous fail-closed
+real-gcc byte-exact C-split-and-fuzz decomposer with **no caller**. Wiring these >
+writing new code. Also dead: `analyzer/preprocessor.py` (+ never-read `preprocessed`
+flag), `spec_extractor._extract_module_OLD_BULK` (~145 LOC), `_ZLIB_INFLATE_SHIM_BINDINGS_
+PENDING`, `function_classifier.py`, `shim_synth.py` (no callers).
+
+**Generalization bottleneck:** the *framework* is general but the *population* is zlib —
+`type_unifier`, `normalizer`, `spec_auditor`, `field_scanner.TYPE_HINTS`, `module_detector`
+filename sets, `state_mutator`/`c_shim_fuzz` bindings are all hand-curated zlib tables.
+
+**Debt:** 4 duplicate brace scanners, 2 divergent `_snake`, 2 diverged DLL builders;
+dead-logic bugs (`validator._check_orphan_rule` always-false, `auto_config.py:1426 if False`,
+`trait_extractor._normalize_type` no-op `.replace`). **CI runs only Python unit tests +
+anti-stub self-scan — it does NOT run the pipeline, invoke a model, or build generated
+Rust. Green CI ≠ a working converter.**
+
+**On-mission plan (in order):** (1) wire `structural_decomp` + `e2e_oracle`; (2) auto-
+populate `type_unifier` from the analysis; (3) pay down the debt above; (4) run the
+converter to validate; THEN (5) Lua the right way — the *model* translates leaf-up,
+gated by the differential + `e2e_oracle`, refusal-rate the metric. Never hand-write.
+
 ## The two pipelines
 
 **1. The shipping pipeline (the real product).** Entry point `alchemist.cli:app`
