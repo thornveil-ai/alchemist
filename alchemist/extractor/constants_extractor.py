@@ -755,6 +755,11 @@ def render_constants_block(consts: list[ConstantSpec]) -> str:
     for c in unique:
         if c.c_origin:
             lines.append(f"/// {c.c_origin}")
+        # Carried C constants keep their C names (log_2, NMAX, ...), which
+        # violate Rust's UPPER_CASE / non-snake conventions. Under the verify
+        # gate's `-D warnings` that lint is a hard error -> compile-fail-revert
+        # -> stub. Allow it per-const so a table like `log_2` compiles.
+        lines.append("#[allow(non_upper_case_globals, non_snake_case)]")
         lines.append(f"pub const {c.name}: {c.rust_type} = {c.rust_expr};")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
