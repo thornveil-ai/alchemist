@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["lua-value", "lua-string", "lua-table"]
+members = ["lua-value", "lua-string", "lua-table", "lua-lexer"]
 
 [profile.release]
 opt-level = 2
