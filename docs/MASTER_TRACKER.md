@@ -49,8 +49,8 @@ Status: `[ ]` to-do · `[~]` active · `[x]` done · `[!]` blocked
 *Make single-function C→Rust on Gemma dependable. The wall we hit this week: correct code, sunk by mechanical trivia and false refusals.*
 **Exit:** tinychk reliably 4/4 · 30+ unseen leaf fns ≥90% eventually-verified · refusal ledger live · nightly CI runs the real pipeline.
 
-- [~] **P0.1** Clean single-fn repro harness — `solo <fn>` with fixed `--output` dumps model Rust + exact differential assertion per iteration `eng` `infra`
-- [~] **P0.2** Root-cause the tinychk differential fails — model's adler32 is byte-exact vs zlib yet the gate rejects it; resolve model-variant vs oracle-regeneration vs state `eng`
+- [x] **P0.1** Clean single-fn repro harness — `ALCHEMIST_FILL_TRACE=<dir>` dumps model Rust + compile error + differential divergence per iteration `eng` `infra` *(commit 4f49675)*
+- [x] **P0.2** Root-cause the tinychk differential fails — **found via the trace**: `test_generator._emit_spec_test` ordered the KAT call by fuzz-vector dict order (`buf, seed`) not the signature (`seed, buf`) → uncompilable test → refused correct code forever. Fixed → **tinychk 4/4 OVERALL PASS** `eng` *(commit a22d18d)*
 - [ ] **P0.3** Fix verify_gen ↔ output-path coupling — regenerated diff_test must reference the actually-emitted workspace `eng`
 - [ ] **P0.4** Win-cache restore determinism — a cached PASS must reload deterministically on a clean run `eng`
 - [ ] **P0.5** Kill holistic-fixer empty-patch no-ops — produce a compiling patch or report why, never burn budget silently `eng`
