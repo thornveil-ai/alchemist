@@ -19,6 +19,44 @@ from alchemist.llm.structured import pydantic_to_tool_schema
 
 console = Console(force_terminal=True, legacy_windows=False)
 
+
+def _slim_module_for_design(spec: ModuleSpec) -> dict:
+    """Project a ModuleSpec down to the fields the architect needs to design
+    crate/trait structure. Deliberately DROPS bulky, design-irrelevant fields
+    (test_vectors, mathematical_description, invariants, pre/postconditions,
+    error_conditions, referenced_standards, complexity, source text) that
+    otherwise dominate the prompt and overflow the model context. The architect
+    decides crates/traits/ownership from names, signatures, categories, and
+    suggested traits — not from KATs or proofs."""
+    algos = []
+    for a in spec.algorithms or []:
+        algos.append({
+            "name": a.name,
+            "category": a.category,
+            "description": (a.description or "")[:200],
+            "inputs": [
+                {"name": p.name, "rust_type": p.rust_type} for p in (a.inputs or [])
+            ],
+            "return_type": a.return_type,
+            "state": [
+                {"name": s.name, "rust_type": s.rust_type} for s in (a.state or [])
+            ],
+            "suggested_rust_traits": a.suggested_rust_traits or [],
+            "no_std_compatible": a.no_std_compatible,
+            "unsafe_required": a.unsafe_required,
+        })
+    shared = [
+        {"name": st.name, "rust_definition": st.rust_definition}
+        for st in (getattr(spec, "shared_types", None) or [])
+    ]
+    return {
+        "name": spec.name,
+        "description": (spec.description or "")[:300],
+        "algorithms": algos,
+        "shared_types": shared,
+    }
+
+
 ARCHITECT_SYSTEM_PROMPT = """\
 You are Alchemist's Architecture Designer. Given algorithm specifications extracted \
 from a C codebase, you design an idiomatic Rust crate workspace.
@@ -118,6 +156,11 @@ class CrateDesigner:
     def __init__(self, config: AlchemistConfig | None = None):
         self.config = config or AlchemistConfig()
         self.llm = AlchemistLLM(self.config)
+        # Model context window used to budget the output reservation. Honors a
+        # config value if present; defaults to the served model's 32768.
+        self._context_window = int(
+            getattr(self.config, "context_window", None) or 32768
+        )
 
     def design(
         self,
@@ -133,9 +176,15 @@ class CrateDesigner:
             system_text=ARCHITECT_SYSTEM_PROMPT,
         )
 
-        # Serialize specs for the prompt
+        # Serialize specs for the prompt — SLIMMED to the fields the architect
+        # needs to design crate/trait structure (names, signatures, categories,
+        # suggested traits, shared types). Dumping full specs (test_vectors,
+        # mathematical_description, invariants — 7KB+ per fn) balloons the prompt
+        # and, with the fixed output reservation, overflowed the model context
+        # (HTTP 400: input+output > max_model_len) even on tiny subjects, and
+        # would be fatal on a large library like Lua.
         specs_json = json.dumps(
-            [s.model_dump() for s in specs],
+            [_slim_module_for_design(s) for s in specs],
             indent=2,
         )
 
@@ -150,12 +199,17 @@ class CrateDesigner:
         )
 
         schema = pydantic_to_tool_schema(CrateArchitecture)
+        # Budget the output reservation against the model context so a large
+        # prompt can never push input+output past the limit (which returns a
+        # 400 and an empty design). ~4 chars/token estimate + a safety margin.
+        approx_input_tokens = (len(ARCHITECT_SYSTEM_PROMPT) + len(prompt)) // 4
+        max_out = max(1024, min(8192, self._context_window - approx_input_tokens - 512))
         response = self.llm.call_structured(
             messages=[{"role": "user", "content": prompt}],
             tool_name="crate_architecture",
             tool_schema=schema,
             cached_context=cached,
-            max_tokens=16384,
+            max_tokens=max_out,
         )
 
         if response.structured:
