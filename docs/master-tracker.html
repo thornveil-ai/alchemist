@@ -1,0 +1,762 @@
+<title>Alchemist — Master Tracker: Autonomous C/C++ → Verified Safe Rust</title>
+<style>
+  :root {
+    --ground:#f2f3f0; --surface:#ffffff; --raised:#f9f9f6; --border:#dcded7; --border-strong:#c6c9bf;
+    --ink:#1a1d23; --muted:#5b626e; --faint:#868c97;
+    --gold:#a8781e; --gold-bright:#c69235; --gold-wash:rgba(168,120,30,0.10);
+    --t-eng:#2f6db0; --t-wire:#1f8a7d; --t-research:#8a5cc4; --t-model:#b07d1e; --t-infra:#6b7280; --t-unsafe:#c0522a; --t-product:#c23a86;
+    --s-todo:#a7adb8; --s-wip:#c69235; --s-done:#2f9160; --s-block:#c0446a;
+    --now:#2f8f5b; --near:#1f8a9a; --mid:#a8781e; --far:#8a5cc4; --frontier:#b0466a; --cont:#5b8ac2;
+    --font-mono:ui-monospace,"JetBrains Mono","SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --font-sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
+    --shadow:0 1px 2px rgba(20,24,34,.05),0 8px 26px rgba(20,24,34,.06);
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --ground:#0f121a; --surface:#151924; --raised:#1a1f2b; --border:#28303e; --border-strong:#374050;
+    --ink:#e7eaf1; --muted:#98a1b2; --faint:#69738500;--faint:#697385;
+    --gold:#d6a94c; --gold-bright:#ecc169; --gold-wash:rgba(214,169,76,.10);
+    --t-eng:#5fa0dd; --t-wire:#3fbaa8; --t-research:#b088e6; --t-model:#d6a94c; --t-infra:#8b95a6; --t-unsafe:#e07a4e; --t-product:#e368ac;
+    --s-todo:#5c6675; --s-wip:#d6a94c; --s-done:#4fb583; --s-block:#e06a92;
+    --now:#4faf7d; --near:#3fb6c8; --mid:#d6a94c; --far:#b088e6; --frontier:#d96a90; --cont:#7aa8e0;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="light"]{
+    --ground:#f2f3f0;--surface:#fff;--raised:#f9f9f6;--border:#dcded7;--border-strong:#c6c9bf;
+    --ink:#1a1d23;--muted:#5b626e;--faint:#868c97;
+    --gold:#a8781e;--gold-bright:#c69235;--gold-wash:rgba(168,120,30,.10);
+    --t-eng:#2f6db0;--t-wire:#1f8a7d;--t-research:#8a5cc4;--t-model:#b07d1e;--t-infra:#6b7280;--t-unsafe:#c0522a;--t-product:#c23a86;
+    --s-todo:#a7adb8;--s-wip:#c69235;--s-done:#2f9160;--s-block:#c0446a;
+    --now:#2f8f5b;--near:#1f8a9a;--mid:#a8781e;--far:#8a5cc4;--frontier:#b0466a;--cont:#5b8ac2;
+    --shadow:0 1px 2px rgba(20,24,34,.05),0 8px 26px rgba(20,24,34,.06);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0f121a;--surface:#151924;--raised:#1a1f2b;--border:#28303e;--border-strong:#374050;
+    --ink:#e7eaf1;--muted:#98a1b2;--faint:#697385;
+    --gold:#d6a94c;--gold-bright:#ecc169;--gold-wash:rgba(214,169,76,.10);
+    --t-eng:#5fa0dd;--t-wire:#3fbaa8;--t-research:#b088e6;--t-model:#d6a94c;--t-infra:#8b95a6;--t-unsafe:#e07a4e;--t-product:#e368ac;
+    --s-todo:#5c6675;--s-wip:#d6a94c;--s-done:#4fb583;--s-block:#e06a92;
+    --now:#4faf7d;--near:#3fb6c8;--mid:#d6a94c;--far:#b088e6;--frontier:#d96a90;--cont:#7aa8e0;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-sans);line-height:1.58;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 22px 120px}
+  a{color:var(--gold)}
+  code{font-family:var(--font-mono);font-size:.88em;background:var(--gold-wash);padding:1px 4px;border-radius:4px}
+
+  /* Masthead */
+  header.mast{padding:56px 0 30px}
+  .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin:0 0 16px;display:flex;align-items:center;gap:11px}
+  .eyebrow::before{content:"⚗";font-size:15px}
+  h1{font-family:var(--font-mono);font-weight:600;letter-spacing:-.02em;font-size:clamp(26px,4.3vw,42px);line-height:1.1;margin:0 0 18px;text-wrap:balance;max-width:22ch}
+  h1 .to{color:var(--gold-bright)}
+  .thesis{font-size:clamp(15.5px,2vw,18px);color:var(--muted);max-width:64ch;margin:0}
+  .thesis strong{color:var(--ink);font-weight:600}
+
+  /* Research panel */
+  .research{margin:30px 0 0;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;box-shadow:var(--shadow)}
+  .research h2{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 0 14px}
+  .research .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px 22px}
+  .research .r{font-size:13px;color:var(--muted)}
+  .research .r b{color:var(--ink);font-family:var(--font-mono);font-size:12px;display:block;margin-bottom:3px;letter-spacing:.01em}
+  .research .verdict{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--border);font-size:13.5px;color:var(--muted)}
+  .research .verdict strong{color:var(--ink)}
+
+  /* Sticky toolbar */
+  .toolbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);margin:28px 0 8px;padding:12px 0}
+  .tb-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+  .prog-wrap{display:flex;align-items:center;gap:12px;flex:1;min-width:240px}
+  .prog-track{flex:1;height:8px;background:var(--border);border-radius:20px;overflow:hidden;min-width:120px}
+  .prog-fill{height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold-bright));border-radius:20px;transition:width .4s ease}
+  .prog-num{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .prog-num b{color:var(--gold);font-weight:600}
+  .filters{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-family:var(--font-mono);font-size:11px;letter-spacing:.03em;padding:5px 10px;border-radius:7px;border:1px solid var(--border-strong);background:var(--raised);color:var(--muted);cursor:pointer;user-select:none}
+  .chip[aria-pressed="true"]{background:var(--gold-wash);border-color:var(--gold);color:var(--gold);font-weight:600}
+  .chip .c{font-variant-numeric:tabular-nums;opacity:.8}
+  .tb-actions{display:flex;gap:6px}
+  .btn{font-family:var(--font-mono);font-size:11px;padding:5px 10px;border-radius:7px;border:1px solid var(--border-strong);background:var(--surface);color:var(--muted);cursor:pointer}
+  .btn:hover{color:var(--ink);border-color:var(--gold)}
+  .persist-note{font-size:11.5px;color:var(--faint);margin-top:8px;font-family:var(--font-mono)}
+
+  /* Legend */
+  .legend{display:flex;flex-wrap:wrap;gap:7px 16px;padding:16px 0 2px;align-items:center}
+  .legend .lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.02em;padding:2px 7px;border-radius:5px;border:1px solid var(--border-strong);display:inline-flex;align-items:center;gap:5px;white-space:nowrap;color:var(--muted);background:var(--raised)}
+  .tag::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--dot,var(--faint));flex:none}
+  .tag.eng{--dot:var(--t-eng)} .tag.wire{--dot:var(--t-wire)} .tag.research{--dot:var(--t-research)}
+  .tag.model{--dot:var(--t-model)} .tag.infra{--dot:var(--t-infra)} .tag.product{--dot:var(--t-product)}
+  .tag.unsafe{--dot:var(--t-unsafe);color:var(--t-unsafe);border-color:color-mix(in srgb,var(--t-unsafe) 40%,var(--border-strong))}
+
+  /* Section */
+  .section{margin-top:34px;scroll-margin-top:80px}
+  .sec-head{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:11px;cursor:pointer;box-shadow:var(--shadow)}
+  .sec-head:hover{border-color:var(--border-strong)}
+  .sec-key{font-family:var(--font-mono);font-size:15px;font-weight:700;color:var(--gold);letter-spacing:-.01em;min-width:64px}
+  .sec-key .kind{display:block;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600;margin-top:2px}
+  .sec-mid h2{font-family:var(--font-mono);font-size:clamp(15px,2vw,18px);font-weight:600;margin:0;letter-spacing:-.01em;text-wrap:balance}
+  .sec-mid p{margin:3px 0 0;color:var(--muted);font-size:13px;max-width:70ch}
+  .sec-meta{display:flex;align-items:center;gap:12px}
+  .sec-prog{display:flex;align-items:center;gap:8px}
+  .sec-bar{width:74px;height:6px;background:var(--border);border-radius:20px;overflow:hidden}
+  .sec-bar span{display:block;height:100%;width:0;background:var(--s-done);border-radius:20px;transition:width .35s ease}
+  .sec-count{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .horizon{font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:20px;white-space:nowrap;font-weight:600;color:var(--hz,var(--gold));border:1px solid color-mix(in srgb,var(--hz,var(--gold)) 42%,var(--border));background:color-mix(in srgb,var(--hz,var(--gold)) 8%,transparent)}
+  .horizon.done{--hz:var(--now)} .horizon.now{--hz:var(--now)} .horizon.near{--hz:var(--near)} .horizon.mid{--hz:var(--mid)} .horizon.far{--hz:var(--far)} .horizon.frontier{--hz:var(--frontier)} .horizon.cont{--hz:var(--cont)}
+  .caret{font-family:var(--font-mono);color:var(--faint);transition:transform .2s ease;font-size:13px}
+  .section.collapsed .caret{transform:rotate(-90deg)}
+  .section.collapsed .sec-body{display:none}
+
+  .exit{margin:12px 2px 14px;font-size:12.5px;color:var(--muted);padding:9px 13px;background:var(--gold-wash);border-radius:8px;border:1px solid color-mix(in srgb,var(--gold) 20%,transparent)}
+  .exit b{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-right:8px}
+
+  .items{display:grid;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .item{display:grid;grid-template-columns:26px 52px 1fr;gap:12px;background:var(--surface);padding:11px 15px 11px 12px;align-items:start}
+  .item:hover{background:var(--raised)}
+  .item.hide{display:none}
+  .dot{width:17px;height:17px;border-radius:50%;border:2px solid var(--s-todo);cursor:pointer;margin-top:2px;flex:none;position:relative;background:transparent;transition:background .15s,border-color .15s}
+  .dot::after{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;font-family:var(--font-mono)}
+  .item[data-s="wip"] .dot{border-color:var(--s-wip);background:var(--s-wip)}
+  .item[data-s="wip"] .dot::after{content:"◐";color:var(--surface);font-size:14px;line-height:1}
+  .item[data-s="done"] .dot{border-color:var(--s-done);background:var(--s-done)}
+  .item[data-s="done"] .dot::after{content:"✓"}
+  .item[data-s="block"] .dot{border-color:var(--s-block);background:var(--s-block)}
+  .item[data-s="block"] .dot::after{content:"!"}
+  .item .id{font-family:var(--font-mono);font-size:11.5px;color:var(--gold);font-variant-numeric:tabular-nums;padding-top:2px;font-weight:600}
+  .item[data-s="done"] .b .t{color:var(--muted);text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--s-done) 50%,transparent)}
+  .b .t{font-weight:600;color:var(--ink);font-size:14px;line-height:1.32}
+  .b .dod{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:82ch}
+  .b .dod .k{font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;color:var(--faint);margin-right:5px}
+  .b .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .sec-empty{padding:14px 16px;color:var(--faint);font-size:13px;background:var(--surface);border:1px solid var(--border);border-radius:10px;display:none}
+
+  /* Critical path */
+  .cp{margin-top:46px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:26px 28px;box-shadow:var(--shadow)}
+  .cp h2{font-family:var(--font-mono);font-size:14px;margin:0 0 6px}
+  .cp .sub{color:var(--muted);margin:0 0 18px;font-size:13.5px;max-width:76ch}
+  .chain{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .node{font-family:var(--font-mono);font-size:12px;padding:7px 12px;border-radius:8px;background:var(--raised);border:1px solid var(--border-strong);white-space:nowrap}
+  .node b{color:var(--gold)}
+  .arrow{color:var(--faint);font-family:var(--font-mono)}
+
+  footer{margin-top:44px;padding-top:24px;border-top:1px solid var(--border);color:var(--faint);font-size:12.5px;max-width:78ch}
+  footer .caveat{color:var(--muted);margin:0 0 11px}
+  footer .caveat b{color:var(--t-unsafe);font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+  footer .sig{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);margin-top:16px}
+
+  @media (max-width:640px){
+    .sec-head{grid-template-columns:auto 1fr;gap:10px}
+    .sec-meta{grid-column:1/-1;justify-content:flex-start}
+    .item{grid-template-columns:24px 46px 1fr;gap:9px}
+    .research .grid{grid-template-columns:1fr}
+  }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">Alchemist · Master Tracker</p>
+    <h1>Every rung from here <span class="to">→</span> all of ArduPilot, verified.</h1>
+    <p class="thesis">The one document for the whole climb: <strong>~285 concrete milestones</strong> across 8 vertical phases and 6 capability tracks, each with a definition-of-done, honestly tagged by difficulty, and <strong>checkable</strong> — your progress saves in this browser. Finish every item and the project is genuinely complete: point it at a C/C++ codebase, walk away, come back to verified safe Rust.</p>
+
+    <div class="research">
+      <h2>Where we sit in the field — researched, not guessed</h2>
+      <div class="grid">
+        <div class="r"><b>DARPA TRACTOR (2024)</b>A DoD program to translate <em>all</em> C to idiomatic, safe Rust. The vision is validated at the national-security level — and it's a funding lane. Our edge: verification-gated, model-writes-every-line, fail-closed.</div>
+        <div class="r"><b>c2rust (Galois/Immunant)</b>The mature mechanical transpiler — but it emits <em>unsafe</em>, unidiomatic Rust. Turning that into safe, idiomatic Rust is the open problem we attack head-on.</div>
+        <div class="r"><b>Laertes · OOPSLA'21</b>Automated unsafe→safe refactoring. Its bounded success is the evidence: this is genuinely hard, not a weekend of prompting.</div>
+        <div class="r"><b>LLM translation studies</b>LLMs translate plausibly but unreliably; correctness demands an oracle. That finding <em>is</em> our thesis — the differential gate, not the model, is the source of truth.</div>
+        <div class="r"><b>Verification ladder</b>Miri (UB) → Kani (bounded model checking) → Prusti / Creusot / Verus (deductive proof) → Aeneas (functional translation validation). We climb it in the VER track.</div>
+        <div class="r"><b>The moat</b>Nobody else pairs a local model writing every line with fail-closed byte-exact verification and honest refusal. That combination is the defensible, fundable claim.</div>
+      </div>
+      <p class="verdict"><strong>Honest bottom line:</strong> the machinery is built and general. What's left is a ladder of real capability and reliability — the items below. "Perfect <em>safe</em> Rust for all of ArduPilot" is impossible as literally stated (hardware code is irreducibly unsafe); the real, worthy target is verified safe logic + a thin, audited unsafe shim.</p>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="tb-row">
+      <div class="prog-wrap">
+        <div class="prog-track"><div class="prog-fill" id="progFill"></div></div>
+        <div class="prog-num" id="progNum">— / —</div>
+      </div>
+      <div class="filters" id="filters">
+        <button class="chip" data-f="all" aria-pressed="true">All <span class="c" id="cAll">0</span></button>
+        <button class="chip" data-f="todo" aria-pressed="false">To&nbsp;do <span class="c" id="cTodo">0</span></button>
+        <button class="chip" data-f="wip" aria-pressed="false">Active <span class="c" id="cWip">0</span></button>
+        <button class="chip" data-f="done" aria-pressed="false">Done <span class="c" id="cDone">0</span></button>
+        <button class="chip" data-f="block" aria-pressed="false">Blocked <span class="c" id="cBlock">0</span></button>
+      </div>
+      <div class="tb-actions">
+        <button class="btn" id="expandAll">Expand</button>
+        <button class="btn" id="collapseAll">Collapse</button>
+        <button class="btn" id="resetBtn">Reset</button>
+      </div>
+    </div>
+    <div class="persist-note">Click the ● to cycle a milestone: to-do → active → done → blocked. Progress persists in this browser.</div>
+  </div>
+
+  <div class="legend">
+    <span class="lbl">Type</span>
+    <span class="tag eng">eng</span>
+    <span class="tag wire">wire dead code</span>
+    <span class="tag research">research-hard</span>
+    <span class="tag model">model</span>
+    <span class="tag infra">infra</span>
+    <span class="tag product">product</span>
+    <span class="tag unsafe">unsafe boundary</span>
+  </div>
+
+  <main id="root"></main>
+
+  <section class="cp">
+    <h2>The critical path</h2>
+    <p class="sub">Vertical phases are integration checkpoints — prove the whole stack on a bigger target. Horizontal tracks are the reusable capabilities you build once and apply everywhere. The spine is linear; the tracks feed it continuously.</p>
+    <div class="chain">
+      <span class="node"><b>F</b> foundations</span><span class="arrow">→</span>
+      <span class="node"><b>P0</b> reliability</span><span class="arrow">→</span>
+      <span class="node"><b>P1</b> C library</span><span class="arrow">→</span>
+      <span class="node"><b>P2</b> scale</span><span class="arrow">→</span>
+      <span class="node"><b>P3</b> C++</span><span class="arrow">→</span>
+      <span class="node"><b>P4</b> embedded</span><span class="arrow">→</span>
+      <span class="node"><b>P5</b> ArduPilot</span><span class="arrow">→</span>
+      <span class="node"><b>P6</b> autonomy</span>
+    </div>
+    <p class="sub" style="margin:18px 0 0">Tracks <b style="font-family:var(--font-mono);color:var(--gold)">SEM · VER · MODEL · IDIOM · PERF · INFRA</b> run alongside all of it. The nearest fundable milestone is the <b style="color:var(--ink)">P1 exit</b>: an unseen real C library, converted hands-off, verified, under 5% refusal.</p>
+  </section>
+
+  <footer>
+    <p class="caveat"><b>Caveat · physics</b> "Perfect safe Rust for all of ArduPilot" is unachievable as stated — register access, DMA, and ISRs are irreducibly unsafe. The real deliverable is verified safe Rust for the algorithmic layers + a thin, audited, clearly-marked unsafe hardware shim.</p>
+    <p class="caveat"><b>Caveat · research</b> Items tagged <span class="tag research" style="display:inline-flex;vertical-align:middle">research-hard</span> are open problems, not schedule you can burn down on weekends. And the whole ladder rests on the reliability floor (P0) holding — if it slips, everything above it slips too.</p>
+    <p class="sig">Alchemist · C/C++ → verified safe Rust · local model Gemma 4 31B (US-origin) · grounded in repo state @ this session · v2 master tracker</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var KEY = "alchemist-tracker-v2";
+  // s: default status (omit = todo). g: type tags.
+  var DATA = [
+    {k:"F", kind:"Banked", name:"Foundations — already in the ground", hz:"done", horizonLabel:"Done",
+     goal:"What exists and is verified today. This is not zero — it's the platform everything else stands on.",
+     exit:"A general, fail-closed, spec-first pipeline with real verified conversions behind it.",
+     items:[
+      {id:"F.1",t:"6-stage spec-first pipeline",d:"analyze → extract → architect → implement → verify → report, checkpointed, model-in-the-loop.",g:["eng"],s:"done"},
+      {id:"F.2",t:"Fail-closed byte-exact differential oracle",d:"Compile the C reference, FFI-fuzz it against the Rust; no oracle → refuse. Nothing unverified is ever reported passed.",g:["eng"],s:"done"},
+      {id:"F.3",t:"zlib byte-exact",d:"deflate + inflate + checksums, round-trip byte-exact vs C at levels 0–9.",g:["model"],s:"done"},
+      {id:"F.4",t:"SHA-256 CAVP-green",d:"Cold → safe Rust, byte-exact vs compiled C, NIST CAVP vectors wired into the gate.",g:["model"],s:"done"},
+      {id:"F.5",t:"libcrc 9/9 verified workspace",d:"Whole library → one unified verified workspace, zero hand-edits.",g:["model"],s:"done"},
+      {id:"F.6",t:"Static-internal-fn exposure keystone",d:"Strip static/inline + neutralize export macros so internal fns get external linkage in the oracle — unblocked real Lua source.",g:["eng"],s:"done"},
+      {id:"F.7",t:"structural_decomp wired into refusal escalation",d:"A refused buf_transform fn gets a gcc-PROVEN byte-exact split, then piecewise translation, re-verified. Fail-closed.",g:["eng"],s:"done"},
+      {id:"F.8",t:"e2e_oracle wired as a fail-closed gate",d:"Whole-program observable-behavior differential for cyclic cores; in report.passed + receipt.",g:["eng"],s:"done"},
+      {id:"F.9",t:"type_unifier auto-derives from analysis",d:"Struct-fracture coherence without a hand-written registry; curated overrides for the hard cases.",g:["eng"],s:"done"},
+      {id:"F.10",t:"cargo-fix mechanical-repair lever",d:"Apply rustc's machine-applicable edits on compile failure before refusing; correctness still differential-gated.",g:["eng"],s:"done"},
+      {id:"F.11",t:"Three verification false-refusals killed",d:"Decimal-vs-hex compare, min(usize,u32) coercion, a deleted live method — each a false refusal, each fixed + regression-tested.",g:["eng"],s:"done"},
+      {id:"F.12",t:"Lua leaf functions conquered from real source",d:"luaS_hash + luaO_ceillog2 byte-exact from the real 60-file Lua tree, zero hand-extraction.",g:["model"],s:"done"}
+     ]},
+
+    {k:"P0", kind:"Phase", name:"Reliability Floor", hz:"now", horizonLabel:"Now",
+     goal:"Make single-function C→Rust on Gemma dependable. The wall we hit this week: correct code, sunk by mechanical trivia and false refusals.",
+     exit:"tinychk reliably 4/4 · 30+ unseen leaf fns ≥90% eventually-verified · refusal ledger live · nightly CI runs the real pipeline.",
+     items:[
+      {id:"P0.1",t:"Clean single-fn repro harness",d:"solo <fn> with fixed --output dumps the model's Rust + the exact differential assertion per iteration, no instrumentation.",g:["eng","infra"],s:"wip"},
+      {id:"P0.2",t:"Root-cause the tinychk differential fails",d:"Model's adler32 is byte-exact vs zlib yet the gate rejects it — resolve model-variant vs oracle-regeneration vs state.",g:["eng"],s:"wip"},
+      {id:"P0.3",t:"Fix verify_gen ↔ output-path coupling",d:"Regenerated diff_test pointed at the wrong crate; it must always reference the actually-emitted workspace.",g:["eng"]},
+      {id:"P0.4",t:"Win-cache restore determinism",d:"A cached PASS failed 2× re-verify and didn't restore; a prior win must reload deterministically on a clean run.",g:["eng"]},
+      {id:"P0.5",t:"Kill holistic-fixer empty-patch no-ops",d:"Holistic escalation returns empty patches; it must produce a compiling patch or report why, never burn budget silently.",g:["eng"]},
+      {id:"P0.6",t:"Escalation-ladder audit",d:"multi-sample → holistic → structural_decomp: prove each tier adds wins, set budgets, drop tiers that don't earn their cost.",g:["eng"]},
+      {id:"P0.7",t:"Refusal-rate instrumentation",d:"Every run emits a refusal ledger with a reason taxonomy — the north-star metric made measurable.",g:["infra"]},
+      {id:"P0.8",t:"Systematic false-refusal sweep",d:"Three found this session; sweep every extract/verify gate for the rest and regression-test each.",g:["eng"]},
+      {id:"P0.9",t:"Anti-stub / semantic-lint false-positive review",d:"No heuristic lint may veto a function the compiled-C differential already proved correct.",g:["eng"]},
+      {id:"P0.10",t:"Stale-lock auto-reclamation",d:"workspace_lock reclaims a dead-PID lock instead of blocking and failing.",g:["eng"]},
+      {id:"P0.11",t:"Leaf-function benchmark suite",d:"30–50 unseen pure C fns (hashes, checksums, string ops, bit tricks); automated first-pass + eventual-verified rates.",g:["infra"]},
+      {id:"P0.12",t:"Nightly CI runs the real pipeline+model",d:"Closes the standing gap: CI has never invoked the model. Nightly translates tinychk, gates on OVERALL PASS.",g:["infra"]},
+      {id:"P0.13",t:"Deterministic replay",d:"Same subject + seed + temp=0 → identical result, so regressions attribute to code, not sampling.",g:["infra"]},
+      {id:"P0.14",t:"Per-function timing & cost telemetry",d:"Find the slow/expensive fills (extract ran ~20s/fn) and set budgets.",g:["infra"]}
+     ]},
+
+    {k:"P1", kind:"Phase", name:"Whole Small / Mid C Library — Push-Button", hz:"near", horizonLabel:"Near · weeks–months",
+     goal:"A never-seen C library → a verified Rust workspace, under 5% refusal, zero human touches. The first genuinely fundable claim.",
+     exit:"5+ unseen C libraries converted hands-off · refusal <5% · signed receipts · a stranger can clone & reproduce.",
+     items:[
+      {id:"P1.1",t:"zlib full workspace green on a FRESH clone",d:"No cached wins; the model re-derives everything to byte-exact.",g:["model"]},
+      {id:"P1.2",t:"libcrc all-green cold (9/9)",d:"Whole library → unified verified workspace with zero touches, from scratch.",g:["model"]},
+      {id:"P1.3",t:"SHA-256 / siphash / base64 / murmur3 cold-green",d:"Each re-conquered from scratch to prove the wins weren't cache artifacts.",g:["model"]},
+      {id:"P1.4",t:"parson (JSON parser) end-to-end",d:"String-heavy, allocation, state machine → verified workspace.",g:["model"]},
+      {id:"P1.5",t:"tinycbor / a CBOR codec",d:"Encode/decode roundtrip verified.",g:["model"]},
+      {id:"P1.6",t:"A small container lib (uthash-style)",d:"Pointer-heavy data structure → safe Rust equivalents.",g:["research"]},
+      {id:"P1.7",t:"A compression codec (heatshrink / miniz)",d:"Stateful stream verified end-to-end.",g:["model"]},
+      {id:"P1.8",t:"A protocol parser (http-parser subset)",d:"goto-heavy state machine → structured Rust, differentially verified.",g:["research"]},
+      {id:"P1.9",t:"A crypto primitive lib (monocypher subset)",d:"Constant-time-sensitive; KAT + differential.",g:["model"]},
+      {id:"P1.10",t:"Unattended batch runner",d:"Point at N libraries, walk away, collect per-lib scorecards + refusal ledgers.",g:["infra"]},
+      {id:"P1.11",t:"Build-system discovery robustness",d:"discover_c_build handles make / cmake / autotools / amalgamations across the unseen libs.",g:["eng"]},
+      {id:"P1.12",t:"Dependency-ordered fill at 50–150 fns",d:"Topo scheduling proven stable at mid scale.",g:["eng"]},
+      {id:"P1.13",t:"Refusal <5% exit criterion met on an unseen lib",d:"The headline metric: a fresh library converts with a single-digit refusal rate.",g:["model"]},
+      {id:"P1.14",t:"Cold-start reproducibility",d:"A stranger clones, runs, and reproduces the same verified result + signed receipt.",g:["infra"]}
+     ]},
+
+    {k:"P2", kind:"Phase", name:"Scale — Large Single C Codebase", hz:"mid", horizonLabel:"Mid · months",
+     goal:"A 30k–100k-LOC C project (SQLite core, lwIP) → a verified Rust workspace over a long, resumable, unattended run.",
+     exit:"SQLite (or lwIP) core → verified workspace, honest refusals on the residue, resumable across days.",
+     items:[
+      {id:"P2.1",t:"Call-graph partitioning + bottom-up scheduling",d:"Stable ordering across thousands of functions.",g:["eng"]},
+      {id:"P2.2",t:"Cross-module type universe at 1000s of types",d:"Coherence + dedup at scale; one C type → one Rust type everywhere.",g:["eng"]},
+      {id:"P2.3",t:"Pipeline throughput & memory profiling",d:"Fix the bottlenecks that only appear at scale.",g:["eng"]},
+      {id:"P2.4",t:"Parallel fill fleet with backpressure",d:"Saturate the endpoint without collapsing it; transient-error isolation (hit this session).",g:["eng"]},
+      {id:"P2.5",t:"Persistent run journal (SQLite-backed)",d:"Per-function state store powering resume + audit.",g:["infra"]},
+      {id:"P2.6",t:"Multi-day resumability + crash recovery",d:"Kill it, restart it, continue exactly where it stopped.",g:["eng"]},
+      {id:"P2.7",t:"Deterministic large runs",d:"Reproducible results across a whole codebase.",g:["infra"]},
+      {id:"P2.8",t:"1000-function progress dashboard",d:"Live status, verified/refused counts, ETA, cost.",g:["infra"]},
+      {id:"P2.9",t:"Coverage & unverifiable ledger at scale",d:"Which fns verified by which gate; what remains unprovable and why.",g:["infra"]},
+      {id:"P2.10",t:"SQLite core milestone",d:"A real 100k-LOC target's core → verified Rust workspace.",g:["model"]},
+      {id:"P2.11",t:"lwIP (network stack) milestone",d:"Stateful, protocol-heavy, real-world C → verified.",g:["research"]},
+      {id:"P2.12",t:"Hybrid C/Rust link-back at scale",d:"Converted modules link into a running build incrementally.",g:["eng"]}
+     ]},
+
+    {k:"P3", kind:"Phase", name:"C++ Frontier", hz:"far", horizonLabel:"Far · 6–12+ mo",
+     goal:"Prove the C++ capability stack (built in the SEM track) on real targets. ArduPilot is majority C++; the pipeline is C-first today.",
+     exit:"A header-only C++ lib + a small C++ project (classes, templates, RAII) → verified idiomatic Rust.",
+     items:[
+      {id:"P3.1",t:"C++ tree-sitter analyzer + TU model",d:"Parse real C++; build the translation-unit + class model the extractor needs.",g:["eng"]},
+      {id:"P3.2",t:"C++ reference-oracle build + mangling-aware FFI",d:"Link the differential against compiled C++, calling mangled symbols.",g:["eng"]},
+      {id:"P3.3",t:"Header-only C++ library milestone",d:"A template-heavy header-only lib (e.g. a small math/JSON lib) → verified Rust.",g:["research"]},
+      {id:"P3.4",t:"A small class-based C++ project",d:"Inheritance, RAII, operator overloading → idiomatic verified Rust.",g:["research"]},
+      {id:"P3.5",t:"A mid C++ library with templates + STL",d:"Generics, containers, iterators → verified.",g:["research"]},
+      {id:"P3.6",t:"Method-call differential harness",d:"Verify object methods, not just free functions.",g:["eng"]},
+      {id:"P3.7",t:"C++ refusal taxonomy proven",d:"The constructs the tool honestly refuses (multiple inheritance, heavy TMP) are cleanly flagged, not mistranslated.",g:["eng"]},
+      {id:"P3.8",t:"C++ idiomaticity bar",d:"Output is idiomatic Rust (traits, generics, ownership), not transliterated C++.",g:["research"]}
+     ]},
+
+    {k:"P4", kind:"Phase", name:"Embedded & the Unsafe Boundary", hz:"far", horizonLabel:"Far · 6–12+ mo",
+     goal:"Where 'perfect safe Rust' meets physics. Draw the unsafe boundary in exactly the right place and audit it — don't pretend it isn't there.",
+     exit:"A real driver → safe algorithmic Rust + a thin, clearly-marked, audited unsafe HAL shim, verified at the boundary.",
+     items:[
+      {id:"P4.1",t:"no_std translation path",d:"core/alloc only; no std assumptions leak in.",g:["eng"]},
+      {id:"P4.2",t:"Safe-vs-irreducibly-unsafe classifier",d:"Partition code: safe-translatable logic vs hardware-touching that MUST be unsafe.",g:["unsafe"]},
+      {id:"P4.3",t:"A real embedded driver end-to-end",d:"e.g. an IMU or sensor driver → safe logic + audited unsafe shim.",g:["unsafe"]},
+      {id:"P4.4",t:"Boundary verification",d:"Safe-core differential + contract tests on the shim surface.",g:["eng"]},
+      {id:"P4.5",t:"Unsafe-audit report",d:"Every unsafe block justified, minimized, human-reviewed.",g:["unsafe"]},
+      {id:"P4.6",t:"RTOS abstraction shim milestone",d:"ChibiOS/NuttX primitives → a trait-based Rust shim that a driver runs on.",g:["unsafe"]},
+      {id:"P4.7",t:"Static-allocation / no-heap path proven",d:"Fixed pools; no implicit allocation on the embedded target.",g:["eng"]},
+      {id:"P4.8",t:"Timing-preservation validation",d:"Translated code shows no behavioral/timing drift under a bench harness.",g:["unsafe"]}
+     ]},
+
+    {k:"P5", kind:"Phase", name:"ArduPilot", hz:"frontier", horizonLabel:"Frontier · 12–24+ mo",
+     goal:"The dream target, in flyable slices. Algorithmic layers first (verified), then the boundary, with SITL as the behavioral oracle.",
+     exit:"AP_Math / filters / CRC verified byte-exact · a control subset behaviorally matched in SITL · a flyable-in-simulation Rust slice.",
+     items:[
+      {id:"P5.1",t:"Ingest the ArduPilot build (waf)",d:"Extract targets, board configs, the real compile graph.",g:["eng"]},
+      {id:"P5.2",t:"Cross-library dependency graph",d:"libraries/ + vehicle-code interdependencies mapped.",g:["eng"]},
+      {id:"P5.3",t:"Feature / board conditional resolution",d:"Per-board #ifdef selection resolved to a coherent target.",g:["research"]},
+      {id:"P5.4",t:"AP_Math → verified Rust",d:"Vectors, matrices, quaternions — byte/tolerance-exact.",g:["model"]},
+      {id:"P5.5",t:"Filters & EKF math kernels",d:"LPF, notch, Kalman kernels verified.",g:["research"]},
+      {id:"P5.6",t:"AP_CRC / checksums",d:"Extend the existing ardupilot_crc_verified beachhead across the CRC surface.",g:["eng"]},
+      {id:"P5.7",t:"Coordinate / geodesy math",d:"Location, projection, distance math verified.",g:["model"]},
+      {id:"P5.8",t:"AP_HAL utility / logic (non-hardware)",d:"The safe-translatable slice of the HAL.",g:["eng"]},
+      {id:"P5.9",t:"Control math (PID, attitude/position)",d:"Controllers verified against SITL behavior.",g:["research"]},
+      {id:"P5.10",t:"Embedded Lua scripting engine",d:"ArduPilot embeds Lua — our conquered Lua work (F.12) lands directly here.",g:["model"]},
+      {id:"P5.11",t:"MAVLink → Rust",d:"Generator-aware translation of the protocol layer.",g:["research"]},
+      {id:"P5.12",t:"Parameter system → Rust",d:"Storage + access verified.",g:["eng"]},
+      {id:"P5.13",t:"DataFlash / logging format",d:"Byte-exact log format.",g:["eng"]},
+      {id:"P5.14",t:"Sensor drivers (IMU / baro / GPS)",d:"Safe logic + audited unsafe HAL shim.",g:["unsafe"]},
+      {id:"P5.15",t:"Bus drivers (I2C / SPI / UART)",d:"Audited unsafe, contract-tested.",g:["unsafe"]},
+      {id:"P5.16",t:"Scheduler / real-time loop",d:"Timing-preserving translation.",g:["unsafe"]},
+      {id:"P5.17",t:"SITL as the behavioral oracle",d:"Run C-ArduPilot vs the Rust-translated subset; diff flight logs across scenarios.",g:["research"]},
+      {id:"P5.18",t:"Flight-envelope scenario corpus",d:"The e2e differential's input set for control code.",g:["infra"]},
+      {id:"P5.19",t:"Incremental fly-in-SITL milestones",d:"Every converted library still flies in simulation.",g:["research"]},
+      {id:"P5.20",t:"Full-vehicle subset flyable on Rust",d:"A meaningful control path runs translated Rust in SITL.",g:["research"]},
+      {id:"P5.21",t:"HIL / bench validation",d:"Hardware-in-the-loop confirmation of a converted subsystem.",g:["unsafe"]},
+      {id:"P5.22",t:"Safety / certification-mindset audit",d:"Formal review of the unsafe boundary before any real airframe.",g:["unsafe"]}
+     ]},
+
+    {k:"P6", kind:"Phase", name:"Autonomy — Point & Walk Away", hz:"cont", horizonLabel:"Continuous",
+     goal:"The UX you actually asked for: alchemist translate <repo> runs unattended for hours→days and returns verified Rust + an honest refusal report.",
+     exit:"One command · unattended · resumable · verified Rust workspace + a per-subsystem '% verified / % refused / why' report you can trust.",
+     items:[
+      {id:"P6.1",t:"Long-run orchestrator",d:"Hours→days, resumable, crash-safe, no babysitting.",g:["eng"]},
+      {id:"P6.2",t:"Refusal queue + auto-escalation",d:"Harder model, decomposition, more samples — automatically, in order.",g:["eng"]},
+      {id:"P6.3",t:"Human-in-the-loop patch UX",d:"A clean queue for the residue the tool honestly can't verify.",g:["eng"]},
+      {id:"P6.4",t:"Live repo-scale dashboard",d:"Progress, ETA, cost, per-subsystem verified/refused.",g:["infra"]},
+      {id:"P6.5",t:"Model-routing tiers",d:"Cheap → strong by function difficulty; cost-aware.",g:["infra"]},
+      {id:"P6.6",t:"Distributed fill fleet",d:"Multi-machine throughput for repo-scale runs.",g:["eng"]},
+      {id:"P6.7",t:"Global regression vault",d:"Every conquered target across every subject, re-verified continuously.",g:["infra"]},
+      {id:"P6.8",t:"Repo-scale signed receipts",d:"signet receipts for a whole repo, independently checkable.",g:["infra"]},
+      {id:"P6.9",t:"One-command UX + docs",d:"alchemist translate <path> — the whole thing behind one verb.",g:["eng"]},
+      {id:"P6.10",t:"Coverage & honesty report",d:"Per-subsystem % verified / % refused / why — the artifact that makes the claim credible.",g:["infra"]},
+      {id:"P6.11",t:"Continuous re-verification on upstream drift",d:"Upstream C changes → re-translate + re-verify the delta.",g:["eng"]},
+      {id:"P6.12",t:"Buildable, tested output workspace",d:"Emit a Cargo workspace that builds, tests, integrates — not a pile of files.",g:["eng"]}
+     ]},
+
+    {k:"SEM", kind:"Track", name:"C / C++ Semantics Coverage", hz:"mid", horizonLabel:"Spans all phases",
+     goal:"Every C/C++ construct gets a sound, verified translation strategy — or an honest refusal. This is the correctness-completeness backbone; the reason 'verified' can mean something.",
+     exit:"No construct silently mistranslated. Each is handled, or refused with a reason. Aliasing, unions, and UB are respected, not ignored.",
+     items:[
+      {id:"SEM.1",t:"Pointer provenance & aliasing model",d:"Map C's unrestricted aliasing to Rust's borrow model — the #1 hard problem in the whole endeavor.",g:["research"]},
+      {id:"SEM.2",t:"restrict / noalias exploitation",d:"When C promises no-alias, emit non-overlapping slice APIs the borrow checker accepts.",g:["research"]},
+      {id:"SEM.3",t:"Pointer arithmetic → slice/index",d:"ptr+n patterns → safe indexing, or raw-ptr-in-unsafe with a bounds proof.",g:["research"]},
+      {id:"SEM.4",t:"Out-of-bounds-by-design (one-past-end, sentinels)",d:"Idiomatic C boundary tricks → safe iterators/slices.",g:["research"]},
+      {id:"SEM.5",t:"Multiple mutable aliases / shared mutable state",d:"→ Cell / RefCell / split-borrow / indices, chosen by access pattern.",g:["research"]},
+      {id:"SEM.6",t:"container_of / offsetof / intrusive structures",d:"Intrusive lists and embedded nodes → safe Rust ownership.",g:["research"]},
+      {id:"SEM.7",t:"Tagged / low-bit-stashed pointers",d:"Bit-stealing in pointers → safe tagged encodings.",g:["research"]},
+      {id:"SEM.8",t:"Null-pointer semantics",d:"→ Option<&T> / Option<NonNull<T>>.",g:["eng"]},
+      {id:"SEM.9",t:"void* generic pointers",d:"→ generics / enums / Box<dyn Any>, by usage.",g:["research"]},
+      {id:"SEM.10",t:"Uninitialized memory reads",d:"→ MaybeUninit with a written-before-read proof, or refuse.",g:["eng"]},
+      {id:"SEM.11",t:"Type punning via union",d:"→ safe tagged enum where semantics allow; transmute-with-proof where not.",g:["research"]},
+      {id:"SEM.12",t:"Type punning via memcpy / reinterpret",d:"→ from_ne_bytes / to_ne_bytes, layout-checked.",g:["eng"]},
+      {id:"SEM.13",t:"Strict-aliasing violations in real C",d:"Detect the UB many real codebases rely on and preserve observed behavior.",g:["research"]},
+      {id:"SEM.14",t:"Signed-overflow UB",d:"→ wrapping / checked / saturating by intent (partly done: the wrapping-arithmetic lever).",g:["eng"]},
+      {id:"SEM.15",t:"Shift / division UB (shift ≥ width, INT_MIN/-1)",d:"→ guarded operations that match C's actual target behavior.",g:["eng"]},
+      {id:"SEM.16",t:"Integer promotion & implicit conversion",d:"Reproduce C's promotion rules exactly with explicit casts.",g:["eng"]},
+      {id:"SEM.17",t:"sizeof / offsetof / alignment / #[repr(C)]",d:"Layout fidelity for FFI and memcpy-correctness.",g:["eng"]},
+      {id:"SEM.18",t:"Endianness-dependent code",d:"→ explicit big/little-endian ops.",g:["eng"]},
+      {id:"SEM.19",t:"Packed structs & unaligned access",d:"→ #[repr(packed)] + read_unaligned.",g:["eng"]},
+      {id:"SEM.20",t:"Flexible array members",d:"→ slice-tail / DST modeling.",g:["research"]},
+      {id:"SEM.21",t:"Anonymous structs / unions",d:"→ nested Rust types.",g:["eng"]},
+      {id:"SEM.22",t:"Bitfields",d:"→ generated bitfield accessors, byte-exact.",g:["eng"]},
+      {id:"SEM.23",t:"Computed goto / labels-as-values",d:"→ state-machine lowering (structural_decomp territory).",g:["research"]},
+      {id:"SEM.24",t:"setjmp / longjmp",d:"→ structured control flow / Result, or honest refusal.",g:["research"]},
+      {id:"SEM.25",t:"Variadic functions",d:"→ refuse-or-explicit-shim; no safe general translation.",g:["unsafe"]},
+      {id:"SEM.26",t:"Function pointers & typedef'd signatures",d:"→ fn pointers / dyn Trait / enum dispatch by usage.",g:["research"]},
+      {id:"SEM.27",t:"Recursion & deep call graphs",d:"Stack-safety analysis; convert to iteration where C relied on tail calls.",g:["eng"]},
+      {id:"SEM.28",t:"Comma operator / sequence points / eval order",d:"Preserve side-effect ordering exactly.",g:["eng"]},
+      {id:"SEM.29",t:"Object-like & function-like macros",d:"→ const / fn / inline, expansion-faithful.",g:["research"]},
+      {id:"SEM.30",t:"Token pasting (##) & stringization (#)",d:"Handle the macro sub-language's operators.",g:["research"]},
+      {id:"SEM.31",t:"X-macros / macro-generated code",d:"Expand-then-translate the generated surface.",g:["research"]},
+      {id:"SEM.32",t:"Conditional compilation matrix",d:"#if/#ifdef variant selection → a coherent per-config translation.",g:["research"]},
+      {id:"SEM.33",t:"Include-graph & translation-unit modeling",d:"Model TUs, not just files.",g:["eng"]},
+      {id:"SEM.34",t:"volatile → read_volatile / write_volatile",d:"Preserve memory-mapped-I/O semantics (unsafe by nature).",g:["unsafe"]},
+      {id:"SEM.35",t:"_Atomic + memory ordering",d:"→ std::sync::atomic with the correct Ordering.",g:["research"]},
+      {id:"SEM.36",t:"C11 threads / pthreads",d:"→ std::thread + sync primitives, behavior-preserving.",g:["research"]},
+      {id:"SEM.37",t:"Thread-local storage",d:"→ thread_local!.",g:["eng"]},
+      {id:"SEM.38",t:"Data-race detection & safe mapping",d:"Identify shared mutable state and wrap it soundly.",g:["research"]},
+      {id:"SEM.39",t:"libc calls → std / libc mapping",d:"malloc/free/memcpy/str* → Rust equivalents.",g:["eng"]},
+      {id:"SEM.40",t:"errno / signals",d:"Error and signal handling models.",g:["research"]},
+      {id:"SEM.41",t:"__attribute__ handling",d:"packed, aligned, noreturn, weak, section, etc.",g:["eng"]},
+      {id:"SEM.42",t:"Compiler builtins & intrinsics",d:"__builtin_*, popcount/clz, SIMD intrinsics → Rust equivalents.",g:["research"]},
+      {id:"SEM.43",t:"Inline assembly",d:"Detect → refuse + flag (or asm! for experts); an honest boundary.",g:["unsafe"]},
+      {id:"SEM.44",t:"K&R / old-style declarations",d:"Legacy C decl forms parsed and handled.",g:["eng"]},
+      {id:"SEM.45",t:"C++ class → struct + impl",d:"Data + methods mapped cleanly.",g:["eng"]},
+      {id:"SEM.46",t:"Access control → visibility",d:"private/protected/public → Rust visibility.",g:["eng"]},
+      {id:"SEM.47",t:"Single inheritance → composition + trait",d:"Base → embedded field + Deref / shared trait.",g:["research"]},
+      {id:"SEM.48",t:"Multiple inheritance → refuse/flag",d:"No clean general Rust mapping; honest boundary.",g:["unsafe"]},
+      {id:"SEM.49",t:"Virtual inheritance → refuse/flag",d:"Diamond/virtual bases — flag, don't mistranslate.",g:["unsafe"]},
+      {id:"SEM.50",t:"Virtual dispatch → dyn Trait / enum-dispatch",d:"Chosen by call-site usage; verified equivalent.",g:["research"]},
+      {id:"SEM.51",t:"vtable layout fidelity (for FFI)",d:"When bridging to C++ during migration.",g:["research"]},
+      {id:"SEM.52",t:"Abstract base → trait",d:"Pure-virtual interfaces → Rust traits.",g:["eng"]},
+      {id:"SEM.53",t:"Constructors → assoc fns / builders",d:"Overloaded ctors → named constructors.",g:["eng"]},
+      {id:"SEM.54",t:"Destructors / RAII → Drop",d:"Deterministic cleanup preserved.",g:["eng"]},
+      {id:"SEM.55",t:"Operator overloading → std::ops",d:"Add/Index/Deref/etc. → trait impls.",g:["eng"]},
+      {id:"SEM.56",t:"Copy / move semantics → Clone / move",d:"Map C++ value semantics to Rust ownership.",g:["research"]},
+      {id:"SEM.57",t:"References & const& → borrows",d:"& / &mut with lifetime inference.",g:["research"]},
+      {id:"SEM.58",t:"Templates → generics + bounds",d:"Type params → Rust generics.",g:["research"]},
+      {id:"SEM.59",t:"Template specialization → impls / where",d:"Specializations → impl selection.",g:["research"]},
+      {id:"SEM.60",t:"Non-type template params → const generics",d:"template<int N> → const N: usize.",g:["eng"]},
+      {id:"SEM.61",t:"SFINAE / concepts → trait bounds",d:"Partial; refuse the pathological cases.",g:["research"]},
+      {id:"SEM.62",t:"Template metaprogramming → refuse/flag",d:"Compile-time TMP has no general clean mapping.",g:["unsafe"]},
+      {id:"SEM.63",t:"STL containers → std",d:"vector→Vec, map→BTreeMap/HashMap, string→String, array→[T;N].",g:["eng"]},
+      {id:"SEM.64",t:"Iterators → Rust iterators",d:"Idiomatic iteration, not index loops.",g:["eng"]},
+      {id:"SEM.65",t:"Smart pointers → Box / Rc / Arc",d:"unique_ptr/shared_ptr → ownership-correct Rust.",g:["research"]},
+      {id:"SEM.66",t:"Exceptions → Result / panic policy",d:"Chosen error strategy, behavior-equivalent.",g:["research"]},
+      {id:"SEM.67",t:"Namespaces → modules",d:"Structural mapping.",g:["eng"]},
+      {id:"SEM.68",t:"Name mangling & overload resolution",d:"Resolve which overload a call binds to.",g:["research"]},
+      {id:"SEM.69",t:"Lambdas / closures → Rust closures",d:"Captures mapped to move/borrow.",g:["eng"]},
+      {id:"SEM.70",t:"constexpr / consteval → const fn",d:"Compile-time evaluation preserved where possible.",g:["research"]}
+     ]},
+
+    {k:"VER", kind:"Track", name:"Verification & Formal Methods", hz:"mid", horizonLabel:"Spans all phases",
+     goal:"From differential testing toward actual equivalence proof. Every function earns a sound gate — or an honest refusal. This is what makes 'verified' a real word.",
+     exit:"Zero unverified emissions · each fn tagged with its proof method · cyclic cores verifiable · the oracle itself audited for soundness.",
+     items:[
+      {id:"VER.1",t:"Byte-exact FFI differential (harden)",d:"The workhorse gate — generalize to any signature reliably.",g:["eng"]},
+      {id:"VER.2",t:"Whole-program e2e observable differential",d:"Wired this session; now exercise it widely (CLI tools, interpreters).",g:["eng"],s:"wip"},
+      {id:"VER.3",t:"Stateful sequence differential (generalize)",d:"state_mutator hardened for any struct-state function.",g:["eng"]},
+      {id:"VER.4",t:"Coverage-guided fuzz-vector generation",d:"Vectors that actually exercise the branches.",g:["eng"]},
+      {id:"VER.5",t:"Sanitizer-diff verdict engine",d:"Wire sanitizer_diff: on a mismatch, run C under ASan/UBSan → 'C is buggy, Rust is correct-to-diverge.'",g:["wire"]},
+      {id:"VER.6",t:"Miri UB-freedom gate at scale",d:"Prove the safe Rust is UB-free where the toolchain allows.",g:["eng"]},
+      {id:"VER.7",t:"Property / roundtrip test synthesis",d:"Auto-derive inverse-pair + invariant proptests (encode∘decode = id).",g:["eng"]},
+      {id:"VER.8",t:"Metamorphic relations for reference-less code",d:"Relations that must hold when no compiled reference exists.",g:["research"]},
+      {id:"VER.9",t:"KAT / standards catalog (FIPS/RFC)",d:"Broaden auto-lookup so more fns get a standards-backed gate.",g:["infra"]},
+      {id:"VER.10",t:"Translation validation (bounded equivalence)",d:"Prove C-fn ≡ Rust-fn on bounded inputs, not just sampled.",g:["research"]},
+      {id:"VER.11",t:"Kani (bounded model checking) integration",d:"Symbolic verification for critical/small functions.",g:["research"]},
+      {id:"VER.12",t:"Deductive proof (Prusti / Creusot / Verus)",d:"Prove functional properties where tractable.",g:["research"]},
+      {id:"VER.13",t:"Aeneas-style functional translation validation",d:"LLBC-based equivalence for the pure functional core.",g:["research"]},
+      {id:"VER.14",t:"Optimization-invariance equivalence",d:"Verified at multiple opt-levels; behavior independent of -O.",g:["research"]},
+      {id:"VER.15",t:"Float / fixed-point differential",d:"Tolerance and bit-exact modes; deterministic across targets.",g:["research"]},
+      {id:"VER.16",t:"Concurrency verification (loom)",d:"Data-race-freedom / ordering claims for translated sync code.",g:["research"]},
+      {id:"VER.17",t:"Side-channel / constant-time preservation",d:"Don't optimize away timing properties; flag & preserve.",g:["research"]},
+      {id:"VER.18",t:"Oracle provenance & signed receipts",d:"Compiler version, source+DLL hashes, seed fingerprints (extend signet).",g:["infra"]},
+      {id:"VER.19",t:"Callback / higher-order-fn differential",d:"Verify functions that take function pointers.",g:["research"]},
+      {id:"VER.20",t:"Unverifiable taxonomy + refusal policy",d:"Enumerate what genuinely cannot be gated and mandate refusal.",g:["eng"]},
+      {id:"VER.21",t:"Verification cost model",d:"Don't spend 5000 cases where 50 suffice; scale rigor to risk.",g:["infra"]},
+      {id:"VER.22",t:"Mutation-test the ORACLE itself",d:"Is the gate sound? Inject wrong Rust and confirm it's caught.",g:["research"]},
+      {id:"VER.23",t:"Regression vault",d:"Every conquered fn re-verified on each run — no silent regressions.",g:["infra"]},
+      {id:"VER.24",t:"Per-fn cross-domain coverage report",d:"Which input domains each fn was proven over.",g:["infra"]},
+      {id:"VER.25",t:"'Divergence = a proven C bug' write-up",d:"Formalize the sanitizer-diff verdict as a publishable result.",g:["research"]}
+     ]},
+
+    {k:"MODEL", kind:"Track", name:"Model & Generation", hz:"near", horizonLabel:"Spans all phases",
+     goal:"Get the most from a local model — and close the self-improvement loop. The model isn't the bottleneck (it writes correct algorithms); the harness is. US-origin models only.",
+     exit:"High first-pass fill rate on Gemma via better prompting, retrieval, repair, and a fine-tune on the tool's own verified conversions.",
+     items:[
+      {id:"MODEL.1",t:"Spec-first chain-of-thought (refine)",d:"Sharpen the extract→implement prompt chain.",g:["model"]},
+      {id:"MODEL.2",t:"Best-of-N + self-consistency (tune)",d:"Sweep n, temperature, selection criteria.",g:["model"]},
+      {id:"MODEL.3",t:"Verification-in-the-loop generation",d:"Feed the exact oracle/compile error back into the next attempt (partly done — deepen).",g:["eng"]},
+      {id:"MODEL.4",t:"RAG over prior VERIFIED conversions",d:"Retrieval-augmented fill from a growing library of proven C→Rust pairs.",g:["research"]},
+      {id:"MODEL.5",t:"Self-training corpus harvest",d:"Every verified conversion is a training pair — accumulate the dataset automatically.",g:["research"]},
+      {id:"MODEL.6",t:"Fine-tune Gemma-4-31B on the verified corpus",d:"Close the loop: the tool teaches its own model, US-origin only.",g:["research"]},
+      {id:"MODEL.7",t:"Distill a specialized translation model",d:"A smaller/faster model tuned purely for gated C→Rust.",g:["research"]},
+      {id:"MODEL.8",t:"Grammar-constrained decoding",d:"Constrain output to valid Rust syntax at generation time.",g:["research"]},
+      {id:"MODEL.9",t:"Context management for large fns",d:"Chunking / summarization; the 32k-context overflow hit the architect this session.",g:["eng"],s:"wip"},
+      {id:"MODEL.10",t:"Whole-module / long-context prompting",d:"Strategy for feeding coherent module context without overflow.",g:["eng"]},
+      {id:"MODEL.11",t:"Model eval harness",d:"Per-model translation success on the benchmark suite; track Gemma vs alternatives.",g:["infra"]},
+      {id:"MODEL.12",t:"Model routing by difficulty",d:"Cheap → strong per function; cost-aware.",g:["infra"]},
+      {id:"MODEL.13",t:"Multi-model ensemble / vote",d:"US-origin ensemble (Gemma, Llama-4) for the hardest fns.",g:["research"]},
+      {id:"MODEL.14",t:"Prompt-library versioning + A/B",d:"Every prompt change measured against the benchmark.",g:["infra"]},
+      {id:"MODEL.15",t:"Reference-C + macro injection (harden)",d:"Reliably feed the source + expanded macros into the fill prompt.",g:["eng"]},
+      {id:"MODEL.16",t:"Decomposition prompting for hard fns",d:"Extend structural_decomp beyond buf_transform to more shapes.",g:["eng"]},
+      {id:"MODEL.17",t:"Mechanical-mistake prompt hardening",d:"Explicit wrapping-arithmetic, usize-coercion, no_std guidance (pairs with cargo-fix lever).",g:["model"]},
+      {id:"MODEL.18",t:"Idiomaticity prompting (non-regressive)",d:"Push idiomatic Rust without breaking the differential.",g:["model"]},
+      {id:"MODEL.19",t:"Cost / latency budgeting per fn",d:"Cap spend and time; escalate deliberately.",g:["infra"]},
+      {id:"MODEL.20",t:"Local-serving reliability",d:"vLLM :8086 (not the dead :8090 proxy); endpoint failover; transient-error isolation.",g:["infra"]},
+      {id:"MODEL.21",t:"Determinism controls",d:"A temp=0 replay path for regression + reproducibility.",g:["infra"]}
+     ]},
+
+    {k:"IDIOM", kind:"Track", name:"Idiomaticity & Quality", hz:"mid", horizonLabel:"Spans all phases",
+     goal:"The Rust must be genuinely good — idiomatic, clippy-clean, ergonomic — not a transliteration of C wearing Rust syntax. Verified-preserving, always.",
+     exit:"Output a Rust engineer would accept in review: iterators, Option/Result, slices, clean ownership, real docs — with correctness never traded for style.",
+     items:[
+      {id:"IDIOM.1",t:"Transliteration → idiomatic pass",d:"A verified-preserving rewrite stage that raises quality without changing behavior.",g:["eng"]},
+      {id:"IDIOM.2",t:"Raw index loops → iterators",d:"for(i=0;...) → .iter()/.enumerate() where safe.",g:["eng"]},
+      {id:"IDIOM.3",t:"Sentinel/null returns → Option/Result",d:"Error-code returns become typed results.",g:["eng"]},
+      {id:"IDIOM.4",t:"Manual buffers → slices / Vec / arrays",d:"Pointer+length pairs → native Rust containers.",g:["eng"]},
+      {id:"IDIOM.5",t:"Error codes → Result + error enums",d:"Idiomatic error types, not int returns.",g:["eng"]},
+      {id:"IDIOM.6",t:"clippy-clean output gate",d:"Generated crates pass clippy with no warnings.",g:["eng"]},
+      {id:"IDIOM.7",t:"rustfmt-clean output",d:"Consistent, formatted output.",g:["eng"]},
+      {id:"IDIOM.8",t:"Idiomatic ownership inference",d:"borrow vs own decided well, not defensively cloned.",g:["research"]},
+      {id:"IDIOM.9",t:"Doc-comment carry / generation",d:"Preserve C comments; generate Rust docs.",g:["eng"]},
+      {id:"IDIOM.10",t:"Ergonomic public API design",d:"The Rust API is nice to use, not FFI-shaped.",g:["research"]},
+      {id:"IDIOM.11",t:"Module / crate structure quality",d:"Sensible module boundaries in the emitted workspace.",g:["eng"]},
+      {id:"IDIOM.12",t:"Idiomaticity scored & regression-gated",d:"Measure quality; never regress correctness to gain it.",g:["infra"]}
+     ]},
+
+    {k:"PERF", kind:"Track", name:"Performance Parity", hz:"mid", horizonLabel:"Spans all phases",
+     goal:"The Rust must match or beat the C. For flight software especially, a translation that's slower is a translation that's rejected.",
+     exit:"Every conquered subject benchmarked; Rust ≥ C on time, size, and allocation, with a regression gate.",
+     items:[
+      {id:"PERF.1",t:"Perf-parity gate threaded into the receipt",d:"perf.py exists — wire the ratio into the verification receipt.",g:["wire"]},
+      {id:"PERF.2",t:"Benchmark suite per subject",d:"Representative workloads for every conquered library.",g:["infra"]},
+      {id:"PERF.3",t:"Zero-cost-abstraction verification",d:"Confirm the idiomatic Rust compiles to no-worse code.",g:["eng"]},
+      {id:"PERF.4",t:"Bounds-check elision where provably safe",d:"Recover C-level speed on hot loops without unsafe.",g:["research"]},
+      {id:"PERF.5",t:"Binary-size parity",d:"Track and bound output size vs C.",g:["eng"]},
+      {id:"PERF.6",t:"Allocation-behavior parity",d:"No surprise heap allocation vs the C original.",g:["eng"]},
+      {id:"PERF.7",t:"SIMD / vectorization preservation",d:"Keep the vectorization the C compiler achieved.",g:["research"]},
+      {id:"PERF.8",t:"Perf-regression gate across runs",d:"Flag any conversion that slows a subject down.",g:["infra"]}
+     ]},
+
+    {k:"INFRA", kind:"Track", name:"Infrastructure, Eval & Product", hz:"near", horizonLabel:"Spans all phases",
+     goal:"The harness, the metrics, the trust story, and the path to funding. What turns a research pipeline into a credible, defensible product.",
+     exit:"A public benchmark + leaderboard, reproducible signed receipts, one-command UX, a flagship dogfood demo, and a clear DARPA-TRACTOR / SBIR posture.",
+     items:[
+      {id:"INFRA.1",t:"The eval harness / leaderboard",d:"Per-subject, per-model verified/refused scores over time.",g:["infra"]},
+      {id:"INFRA.2",t:"Public unseen-library benchmark set",d:"A held-out corpus + scorecards proving generality.",g:["infra"]},
+      {id:"INFRA.3",t:"CI runs the real pipeline+model nightly",d:"The standing gap: CI has never invoked the model or built generated Rust.",g:["infra"]},
+      {id:"INFRA.4",t:"Reproducible runs",d:"Pinned toolchains, seeds, model versions → identical results.",g:["infra"]},
+      {id:"INFRA.5",t:"Product-grade signed conversion receipts",d:"Independently checkable proof of what was verified and how.",g:["infra"]},
+      {id:"INFRA.6",t:"One-command UX",d:"alchemist translate <path> — the whole thing behind one verb.",g:["eng"]},
+      {id:"INFRA.7",t:"Repo-scale live dashboard",d:"Progress, ETA, cost, per-subsystem status.",g:["infra"]},
+      {id:"INFRA.8",t:"Resumable / crash-safe long runs",d:"A journal that survives kills and restarts.",g:["eng"]},
+      {id:"INFRA.9",t:"Distributed fill fleet",d:"Multi-machine throughput for repo-scale runs.",g:["eng"]},
+      {id:"INFRA.10",t:"Cost accounting & budgets",d:"Know and cap the compute per run.",g:["infra"]},
+      {id:"INFRA.11",t:"Coverage / honesty report",d:"% verified / % refused / why, per subsystem — the credibility artifact.",g:["infra"]},
+      {id:"INFRA.12",t:"Documentation site + user guide",d:"So it isn't only usable by its author.",g:["infra"]},
+      {id:"INFRA.13",t:"Buildable, tested output workspace",d:"Emit a Cargo workspace that builds + tests + integrates.",g:["eng"]},
+      {id:"INFRA.14",t:"Converter supply-chain security",d:"The tool itself is trustworthy — reproducible, signed, auditable.",g:["infra"]},
+      {id:"INFRA.15",t:"DARPA TRACTOR alignment & positioning",d:"Map the capability to the program; a concrete funding lane.",g:["product"]},
+      {id:"INFRA.16",t:"SBIR / dual-use framing (NV013 lineage)",d:"Package the differentiated claim for defense/dual-use funding.",g:["product"]},
+      {id:"INFRA.17",t:"Flagship dogfood demo",d:"Convert one real, recognizable dependency end-to-end as the showcase.",g:["eng"]},
+      {id:"INFRA.18",t:"Open-source posture & licensing",d:"Apache-2.0 stance; what's open vs held.",g:["product"]},
+      {id:"INFRA.19",t:"Publish the verified C→Rust pair dataset",d:"A research asset + moat: the largest verified-conversion corpus.",g:["research"]},
+      {id:"INFRA.20",t:"Continuous re-verification on upstream drift",d:"Track upstream C changes → re-translate + re-verify the delta.",g:["eng"]}
+     ]}
+  ];
+
+  var STATUSES = ["todo","wip","done","block"];
+  var root = document.getElementById("root");
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch(e){ state = {}; }
+  var filter = "all";
+
+  function statusOf(id, def){ return state[id] || def || "todo"; }
+  function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+
+  function esc(s){ return s; } // text set via textContent, safe by construction
+
+  function build(){
+    root.innerHTML = "";
+    DATA.forEach(function(sec){
+      var section = document.createElement("section");
+      section.className = "section";
+      section.id = "sec-" + sec.k;
+
+      var head = document.createElement("div");
+      head.className = "sec-head";
+      head.setAttribute("role","button");
+      head.setAttribute("tabindex","0");
+      head.innerHTML =
+        '<div class="sec-key">'+sec.k+'<span class="kind">'+sec.kind+'</span></div>'+
+        '<div class="sec-mid"><h2></h2><p></p></div>'+
+        '<div class="sec-meta">'+
+          '<div class="sec-prog"><span class="sec-count"></span><div class="sec-bar"><span></span></div></div>'+
+          '<span class="horizon '+sec.hz+'">'+sec.horizonLabel+'</span>'+
+          '<span class="caret">▾</span>'+
+        '</div>';
+      head.querySelector("h2").textContent = sec.name;
+      head.querySelector(".sec-mid p").textContent = sec.goal;
+      section.appendChild(head);
+
+      var bodyEl = document.createElement("div");
+      bodyEl.className = "sec-body";
+
+      var exitEl = document.createElement("div");
+      exitEl.className = "exit";
+      var b = document.createElement("b"); b.textContent = "Exit";
+      exitEl.appendChild(b);
+      exitEl.appendChild(document.createTextNode(sec.exit));
+      bodyEl.appendChild(exitEl);
+
+      var itemsEl = document.createElement("div");
+      itemsEl.className = "items";
+      sec.items.forEach(function(it){
+        var row = document.createElement("div");
+        row.className = "item";
+        row.setAttribute("data-id", it.id);
+        row.setAttribute("data-s", statusOf(it.id, it.s));
+
+        var dot = document.createElement("div");
+        dot.className = "dot";
+        dot.setAttribute("role","button");
+        dot.setAttribute("tabindex","0");
+        dot.setAttribute("aria-label","cycle status for "+it.id);
+
+        var idEl = document.createElement("div");
+        idEl.className = "id";
+        idEl.textContent = it.id;
+
+        var body = document.createElement("div");
+        body.className = "b";
+        var t = document.createElement("div"); t.className="t"; t.textContent = it.t;
+        var dod = document.createElement("div"); dod.className="dod";
+        var k = document.createElement("span"); k.className="k"; k.textContent="DoD";
+        dod.appendChild(k); dod.appendChild(document.createTextNode(it.d));
+        var tags = document.createElement("div"); tags.className="tags";
+        (it.g||[]).forEach(function(g){
+          var tg = document.createElement("span"); tg.className="tag "+g;
+          tg.textContent = g==="wire"?"wire":(g==="research"?"research-hard":(g==="unsafe"?"unsafe":g));
+          tags.appendChild(tg);
+        });
+        body.appendChild(t); body.appendChild(dod); body.appendChild(tags);
+
+        row.appendChild(dot); row.appendChild(idEl); row.appendChild(body);
+
+        function cycle(){
+          var cur = row.getAttribute("data-s");
+          var next = STATUSES[(STATUSES.indexOf(cur)+1)%STATUSES.length];
+          row.setAttribute("data-s", next);
+          if(next==="todo" && !it.s){ delete state[it.id]; }
+          else { state[it.id] = next; }
+          save(); refreshCounts();
+        }
+        dot.addEventListener("click", cycle);
+        dot.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); cycle(); }});
+
+        itemsEl.appendChild(row);
+      });
+      bodyEl.appendChild(itemsEl);
+
+      var empty = document.createElement("div");
+      empty.className = "sec-empty";
+      empty.textContent = "No milestones match this filter.";
+      bodyEl.appendChild(empty);
+
+      section.appendChild(bodyEl);
+      root.appendChild(section);
+
+      function toggle(){ section.classList.toggle("collapsed"); }
+      head.addEventListener("click", toggle);
+      head.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); }});
+    });
+  }
+
+  function applyFilter(){
+    document.querySelectorAll(".section").forEach(function(sec){
+      var rows = sec.querySelectorAll(".item");
+      var shown = 0;
+      rows.forEach(function(r){
+        var s = r.getAttribute("data-s");
+        var vis = (filter==="all") || (s===filter);
+        r.classList.toggle("hide", !vis);
+        if(vis) shown++;
+      });
+      var empty = sec.querySelector(".sec-empty");
+      if(empty) empty.style.display = shown===0 ? "block" : "none";
+    });
+  }
+
+  function refreshCounts(){
+    var total=0, done=0, wip=0, todo=0, block=0;
+    DATA.forEach(function(sec){
+      var secTotal=0, secDone=0;
+      sec.items.forEach(function(it){
+        total++; secTotal++;
+        var s = statusOf(it.id, it.s);
+        if(s==="done"){done++; secDone++;}
+        else if(s==="wip") wip++;
+        else if(s==="block") block++;
+        else todo++;
+      });
+      var secEl = document.getElementById("sec-"+sec.k);
+      if(secEl){
+        secEl.querySelector(".sec-count").textContent = secDone+" / "+secTotal;
+        secEl.querySelector(".sec-bar span").style.width = (secTotal? (100*secDone/secTotal):0)+"%";
+      }
+    });
+    var pct = total? Math.round(100*done/total):0;
+    document.getElementById("progFill").style.width = pct+"%";
+    document.getElementById("progNum").innerHTML = "<b>"+done+"</b> / "+total+" done · "+pct+"%";
+    document.getElementById("cAll").textContent = total;
+    document.getElementById("cTodo").textContent = todo;
+    document.getElementById("cWip").textContent = wip;
+    document.getElementById("cDone").textContent = done;
+    document.getElementById("cBlock").textContent = block;
+    applyFilter();
+  }
+
+  build();
+  refreshCounts();
+
+  document.getElementById("filters").addEventListener("click", function(e){
+    var btn = e.target.closest(".chip"); if(!btn) return;
+    filter = btn.getAttribute("data-f");
+    document.querySelectorAll("#filters .chip").forEach(function(c){ c.setAttribute("aria-pressed", c===btn ? "true":"false"); });
+    applyFilter();
+  });
+  document.getElementById("expandAll").addEventListener("click", function(){
+    document.querySelectorAll(".section").forEach(function(s){ s.classList.remove("collapsed"); });
+  });
+  document.getElementById("collapseAll").addEventListener("click", function(){
+    document.querySelectorAll(".section").forEach(function(s){ s.classList.add("collapsed"); });
+  });
+  document.getElementById("resetBtn").addEventListener("click", function(){
+    if(!confirm("Reset all progress to defaults? This clears your saved statuses.")) return;
+    state = {}; save();
+    document.querySelectorAll(".item").forEach(function(r){
+      var id = r.getAttribute("data-id");
+      var def = "todo";
+      DATA.forEach(function(sec){ sec.items.forEach(function(it){ if(it.id===id && it.s) def = it.s; }); });
+      r.setAttribute("data-s", def);
+    });
+    refreshCounts();
+  });
+})();
+</script>
