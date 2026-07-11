@@ -57,17 +57,18 @@ def _strip_comments(t: str) -> str:
 
 
 def _matching_brace_body(text: str, open_idx: int) -> tuple[str, int]:
-    depth = 0
-    j = open_idx
-    while j < len(text):
-        if text[j] == "{":
-            depth += 1
-        elif text[j] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[open_idx + 1:j], j
-        j += 1
-    return text[open_idx + 1:], len(text)
+    """Return (body-between-braces, index-of-closing-brace) for the `{` at open_idx.
+
+    Routes through the token-aware `scrubber.find_matching_brace` so braces
+    inside string/char literals and comments in the struct body are skipped
+    correctly. On an unmatched brace, falls back to consuming to end-of-text
+    (preserving this helper's original contract).
+    """
+    from alchemist.implementer.scrubber import find_matching_brace
+    close = find_matching_brace(text, open_idx)
+    if close == -1:
+        return text[open_idx + 1:], len(text)
+    return text[open_idx + 1:close], close
 
 
 def _find_body(text: str, name: str) -> str | None:

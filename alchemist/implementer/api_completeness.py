@@ -94,7 +94,16 @@ def collect_public_fns(crate_dir: Path) -> set[str]:
     return out
 
 
-def _snake(name: str) -> str:
+def _snake_loose(name: str) -> str:
+    """Loose snake_case for GENERATING match CANDIDATES (not for emitting names).
+
+    Deliberately different from `skeleton._snake`: this strips leading/trailing
+    underscores and splits on digit→upper boundaries, so it produces the widest
+    set of plausible names the model might have used. Do NOT unify with
+    `skeleton._snake`, which must PRESERVE boundary underscores because zlib
+    names (`_tr_stored_block`, `adler32_combine_`) depend on them for hardport
+    splice and public/internal disambiguation.
+    """
     out: list[str] = []
     for i, ch in enumerate(name):
         if ch.isupper() and i > 0 and (name[i - 1].islower() or name[i - 1].isdigit()):
@@ -112,12 +121,12 @@ def _variants(name: str) -> set[str]:
         match free functions.
     """
     base = name.strip()
-    cands = {base, _snake(base)}
+    cands = {base, _snake_loose(base)}
     # Strip common C prefixes
     if base.startswith("z_"):
         cands.add(base[2:])
     if base.startswith("Z_"):
-        cands.add(_snake(base[2:]))
+        cands.add(_snake_loose(base[2:]))
     # Strip `_cb` suffix etc — less common, omit for now
     return {c for c in cands if c}
 
