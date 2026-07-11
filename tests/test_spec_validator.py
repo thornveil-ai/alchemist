@@ -100,6 +100,41 @@ def test_adler32_correct_test_vector_is_accepted():
     assert report.ok
 
 
+def test_adler32_correct_vector_in_DECIMAL_is_accepted():
+    # Regression: the catalog stores hex (0x11e60398) but the model may express
+    # the SAME value in decimal. A lexical compare wrongly flagged this as a
+    # conflict (fail-closed false positive that refuses a correct spec). The
+    # comparison must be numeric.
+    decimal_form = str(int("11e60398", 16))  # == 300286872
+    assert decimal_form == "300286872"
+    dec_vec = TestVector(
+        description="Wikipedia",
+        inputs={"input": 'b"Wikipedia"'},
+        expected_output=decimal_form,
+        tolerance="exact",
+    )
+    spec = _adler_spec(test_vectors=[dec_vec])
+    report = validate_spec(spec)
+    assert report.ok, (
+        "decimal form of the correct checksum must not be flagged as a mismatch: "
+        + "; ".join(i.message for i in report.errors)
+    )
+
+
+def test_adler32_wrong_value_still_flagged_in_both_bases():
+    # A genuinely wrong value must still fail — under neither hex nor decimal
+    # reading does it match the catalog.
+    for wrong in ("0xdeadbeef", "123456789"):
+        bad = TestVector(
+            description="Wikipedia",
+            inputs={"input": 'b"Wikipedia"'},
+            expected_output=wrong,
+            tolerance="exact",
+        )
+        report = validate_spec(_adler_spec(test_vectors=[bad]))
+        assert not report.ok, f"{wrong} should be flagged as a mismatch"
+
+
 # ---------- Category / return type ----------
 
 def test_checksum_with_vec_return_warns():

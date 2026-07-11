@@ -163,12 +163,23 @@ def _check_test_vectors_against_standard(alg: AlgorithmSpec) -> list[SpecIssue]:
             continue
         if declared_in in catalog_lookup:
             expected_hex = catalog_lookup[declared_in]
-            # Compare declared expected to standard expected
             declared_out = tv.expected_output.strip().lower()
-            # Strip 0x / leading zeros for comparison
-            declared_norm = declared_out.replace("0x", "").lstrip("0") or "0"
-            expected_norm = expected_hex.lower().lstrip("0") or "0"
-            if declared_norm != expected_norm:
+            # Compare by NUMERIC VALUE, not string form. The catalog stores hex,
+            # but the model may express the SAME checksum value in decimal (e.g.
+            # 6422626 == 0x00620062) — a lexical compare wrongly flags that as a
+            # conflict, a fail-closed FALSE POSITIVE that refuses a correct spec.
+            # Accept if declared matches expected under EITHER a hex or decimal
+            # reading; only a value that matches under neither is a real mismatch.
+            expected_val = _parse_int_any(expected_hex, prefer_hex=True)
+            candidates = set()
+            hv = _parse_int_any(declared_out, prefer_hex=True)
+            if hv is not None:
+                candidates.add(hv)
+            if declared_out.replace("0x", "").isdigit():  # plausible decimal
+                dv = _parse_int_any(declared_out, prefer_hex=False)
+                if dv is not None:
+                    candidates.add(dv)
+            if expected_val is not None and expected_val not in candidates:
                 issues.append(SpecIssue(
                     algorithm=alg.name,
                     rule="test_vector_mismatch",
@@ -179,6 +190,19 @@ def _check_test_vectors_against_standard(alg: AlgorithmSpec) -> list[SpecIssue]:
                     ),
                 ))
     return issues
+
+
+def _parse_int_any(s: str, *, prefer_hex: bool) -> int | None:
+    """Parse a numeric string to int in the requested base (hex if prefer_hex,
+    else decimal). Tolerates a `0x` prefix and surrounding whitespace/case.
+    Returns None if it doesn't parse in that base."""
+    t = (s or "").strip().lower().replace("0x", "")
+    if not t:
+        return None
+    try:
+        return int(t, 16 if prefer_hex else 10)
+    except ValueError:
+        return None
 
 
 def _extract_input_bytes(inputs: dict[str, str]) -> bytes | None:
