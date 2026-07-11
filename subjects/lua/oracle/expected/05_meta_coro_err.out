@@ -1,0 +1,8 @@
+(4,6)	5.0
+1,4,9,done	dead
+false	/tmp/lua_oracle/oracle/corpus/05_meta_coro_err.lua:19: boom
+false	/tmp/lua_oracle/oracle/corpus/05_meta_coro_err.lua:20: attempt to perform arithmetic on a nil value
+true	42
+false	table	7
+handled:/tmp/lua_oracle/oracle/corpus/05_meta_coro_err.lua:24: x
+exit=0
