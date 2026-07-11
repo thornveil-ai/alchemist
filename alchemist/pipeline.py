@@ -905,6 +905,21 @@ def run_implement_stage(
         gen = TDDGenerator(config=config)
         result = gen.generate_workspace(specs, arch, output, source_root=source)
         ok = bool(result.ok)
+        # P0.7 — emit the refusal ledger (the north-star metric). Diagnostic
+        # only; a failed write never affects the run.
+        try:
+            from alchemist.reporter.refusal_ledger import write_refusal_ledger
+            _ledger, _lpath = write_refusal_ledger(
+                result, Path(source) / ".alchemist", subject=Path(source).name,
+            )
+            console.print(
+                f"[cyan]refusal ledger: {_ledger['verified']}/{_ledger['total_functions']} "
+                f"verified, {_ledger['refused']} refused "
+                f"(refusal rate {_ledger['refusal_rate'] * 100:.1f}%)"
+                + (f" → {_lpath}" if _lpath else "") + "[/cyan]"
+            )
+        except Exception as _e:  # noqa: BLE001
+            console.print(f"[yellow]refusal ledger skipped: {_e}[/yellow]")
         summary = (
             f"TDD: {sum(1 for a in result.attempts if a.tests_passed)}/"
             f"{len(result.attempts)} fns pass tests; "

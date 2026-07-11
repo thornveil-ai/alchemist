@@ -55,10 +55,10 @@ Status: `[ ]` to-do · `[~]` active · `[x]` done · `[!]` blocked
 - [ ] **P0.4** Win-cache restore determinism — a cached PASS must reload deterministically on a clean run `eng`
 - [ ] **P0.5** Kill holistic-fixer empty-patch no-ops — produce a compiling patch or report why, never burn budget silently `eng`
 - [ ] **P0.6** Escalation-ladder audit — multi-sample → holistic → structural_decomp: prove each tier adds wins, set budgets `eng`
-- [ ] **P0.7** Refusal-rate instrumentation — every run emits a refusal ledger + reason taxonomy (the north-star metric) `infra`
+- [x] **P0.7** Refusal-rate instrumentation — every translate run emits `<subject>/.alchemist/refusal_ledger.json` (per-fn verified/refused + reason + escalations) and prints the refusal rate `infra` *(reporter/refusal_ledger.py)*
 - [ ] **P0.8** Systematic false-refusal sweep — sweep every extract/verify gate for the rest, regression-test each `eng`
 - [ ] **P0.9** Anti-stub / semantic-lint false-positive review — no lint may veto a differentially-proven-correct fn `eng`
-- [ ] **P0.10** Stale-lock auto-reclamation — workspace_lock reclaims a dead-PID lock instead of blocking `eng`
+- [x] **P0.10** Stale-lock auto-reclamation — **already implemented + tested** (`workspace_lock` reclaims dead-PID locks; `test_stale_lock_reclaimed`). Session pain was orphaned *live* processes (SSH-timeout leftovers), not a lock bug — an operational issue, not a code one `eng`
 - [ ] **P0.11** Leaf-function benchmark suite — 30–50 unseen pure C fns; automated first-pass + eventual-verified rates `infra`
 - [ ] **P0.12** Nightly CI runs the real pipeline+model — translates tinychk, gates on OVERALL PASS (closes the standing gap) `infra`
 - [ ] **P0.13** Deterministic replay — same subject+seed+temp=0 → identical result `infra`
