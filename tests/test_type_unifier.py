@@ -246,3 +246,113 @@ def test_field_additions_add_missing_sym_buf():
     # idempotent
     unify_types(specs, {"files": {}})
     assert specs[0].shared_types[0].rust_definition.count("pub sym_buf") == 1
+
+
+# ---------------------------------------------------------------------------
+# Auto-derived canonicals (P2): generalize the struct-fracture repair so a
+# never-seen library gets coherence without a hand-written registry — while
+# staying sound (never merge genuinely-different structs).
+# ---------------------------------------------------------------------------
+
+from alchemist.architect.type_unifier import derive_struct_canonicals
+from alchemist.extractor.schemas import SharedType, TypeField
+
+
+def _analysis_with_structs(fns, structs):
+    """analysis dict carrying both functions and struct definitions.
+    `structs` = {c_struct_name: [field_name, ...]}."""
+    return {"files": {"x.c": {
+        "functions": [
+            {"name": n, "params": [{"name": pn, "type": ct} for pn, ct in ps]}
+            for n, ps in fns.items()
+        ],
+        "structs": [
+            {"name": nm, "kind": "struct",
+             "fields": [{"type": "int", "name": f} for f in fs]}
+            for nm, fs in structs.items()
+        ],
+    }}}
+
+
+def _st(name, fields):
+    return SharedType(
+        name=name, description="",
+        rust_definition=f"pub struct {name} {{ }}",
+        fields=[TypeField(name=f, rust_type="u16", description="") for f in fields])
+
+
+def test_auto_derive_unifies_compatible_struct_fracture():
+    """A genuine C struct `node` that fractured into NodeRich (a,b,c) and
+    NodeThin (a,b) — a lossy subset — auto-unifies to the richest spelling
+    with NO hand-written registry entry."""
+    specs = [ModuleSpec(name="m", display_name="", description="", algorithms=[
+        _alg("build", [("n", "&mut NodeRich")]),
+        _alg("scan",  [("n", "&NodeThin")]),
+        _alg("emit",  [("n", "Vec<(u16, u16)>")]),  # tuple stand-in
+    ], shared_types=[_st("NodeRich", ["a", "b", "c"]),
+                     _st("NodeThin", ["a", "b"])])]
+    analysis = _analysis_with_structs(
+        {"build": [("n", "node")], "scan": [("n", "node")],
+         "emit": [("n", "node")]},
+        {"node": ["a", "b", "c"]},
+    )
+    derived = derive_struct_canonicals(specs, analysis)
+    assert "node" in derived
+    assert derived["node"].rust_name == "NodeRich"          # richest wins
+    assert "NodeThin" in derived["node"].aliases
+    # And through the full pass, every reference unifies to NodeRich.
+    rep = unify_types(specs, analysis)
+    calls = {a.name: a.inputs[0].rust_type for a in specs[0].algorithms}
+    assert calls["build"] == "&mut NodeRich"
+    assert calls["scan"] == "&NodeThin".replace("NodeThin", "NodeRich")
+    assert "NodeRich" in calls["emit"]                      # tuple → NodeRich
+
+
+def test_auto_derive_refuses_incompatible_struct_fracture():
+    """A C struct `widget` fractured into two DISJOINT Rust shapes (Foo{x,y}
+    vs Bar{p,q}) is genuinely two different structs (or context-polymorphic);
+    auto-derivation must NOT merge them."""
+    specs = [ModuleSpec(name="m", display_name="", description="", algorithms=[
+        _alg("a", [("w", "&Foo")]),
+        _alg("b", [("w", "&Bar")]),
+    ], shared_types=[_st("Foo", ["x", "y"]), _st("Bar", ["p", "q"])])]
+    analysis = _analysis_with_structs(
+        {"a": [("w", "widget")], "b": [("w", "widget")]},
+        {"widget": ["x", "y", "p", "q"]},
+    )
+    derived = derive_struct_canonicals(specs, analysis)
+    assert "widget" not in derived
+
+
+def test_auto_derive_ignores_non_struct_base_types():
+    """A base type the analysis did NOT record as a struct (a scalar typedef)
+    is never auto-unified, even if its Rust spellings differ."""
+    specs = [ModuleSpec(name="m", display_name="", description="", algorithms=[
+        _alg("a", [("h", "Handle")]),
+        _alg("b", [("h", "OtherHandle")]),
+    ], shared_types=[_st("Handle", ["v"]), _st("OtherHandle", ["v"])])]
+    # `myint` is NOT in structs → excluded.
+    analysis = _analysis_with_structs(
+        {"a": [("h", "myint")], "b": [("h", "myint")]},
+        {"SomethingElse": ["z"]},
+    )
+    assert derive_struct_canonicals(specs, analysis) == {}
+
+
+def test_auto_derive_does_not_override_curated_ct_data():
+    """The curated ct_data canonical (union-flattened freq/code/dad/len) must
+    win over any auto-derivation for the same base."""
+    specs = [ModuleSpec(name="trees", display_name="", description="", algorithms=[
+        _alg("pqdownheap", [("tree", "&[TreeElement]")]),
+        _alg("scan", [("tree", "&[HuffmanNode]")]),
+    ], shared_types=[_st("TreeElement", ["freq", "code", "dad", "len"]),
+                     _st("HuffmanNode", ["freq", "code"])])]
+    analysis = _analysis_with_structs(
+        {"pqdownheap": [("tree", "ct_data")], "scan": [("tree", "ct_data")]},
+        {"ct_data": ["fc", "dl"]},
+    )
+    rep = unify_types(specs, analysis)
+    # Curated wins: canonical is TreeElement with the full 4-field body.
+    assert rep.canonical["ct_data"] == "TreeElement"
+    te = rep.structs["TreeElement"]
+    assert [f[0] for f in te.fields] == ["freq", "code", "dad", "len"]

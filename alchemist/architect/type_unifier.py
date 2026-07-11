@@ -335,6 +335,135 @@ def _apply_field_overrides(specs, overrides) -> int:
     return n
 
 
+# ---------------------------------------------------------------------------
+# Auto-derived canonicals — the generalization that removes the need to
+# hand-register every struct type per subject. Sound because it unifies ONLY
+# genuine struct types (known to the analysis) whose fractured Rust spellings
+# are structurally COMPATIBLE; it never merges spellings that disagree on
+# fields (those may be a real context-polymorphism — e.g. zlib's z_stream
+# state casting to deflate_state OR inflate_state — which unifying would
+# corrupt) and never picks a scalar/tuple as the canonical.
+# ---------------------------------------------------------------------------
+
+_SCALAR_ELEM = re.compile(
+    r"^(?:u|i)(?:8|16|32|64|128|size)$|^f(?:32|64)$|^bool$|^char$|^str$|^String$")
+
+
+def _is_struct_like(elem: str) -> bool:
+    """A PascalCase identifier that could name a struct (not a scalar/str)."""
+    e = (elem or "").strip()
+    return bool(re.match(r"^[A-Z]\w*$", e)) and not _SCALAR_ELEM.match(e)
+
+
+def _struct_defs_in_analysis(analysis: dict) -> set[str]:
+    """Set of C struct/union type names the analyzer recorded a definition for."""
+    names: set[str] = set()
+    for f in (analysis.get("files") or {}).values():
+        for s in f.get("structs") or []:
+            nm = s.get("name")
+            if nm and nm != "<anonymous>":
+                names.add(nm)
+    return names
+
+
+def _shared_type_field_names(specs: list) -> dict[str, frozenset]:
+    """Rust type name -> its field-name set (from shared_types.fields, falling
+    back to parsing the rust_definition). Used to test whether two fractured
+    struct spellings are structurally compatible."""
+    out: dict[str, frozenset] = {}
+    for module in specs:
+        for st in getattr(module, "shared_types", None) or []:
+            fields = {tf.name for tf in getattr(st, "fields", None) or [] if tf.name}
+            if not fields:
+                rd = getattr(st, "rust_definition", "") or ""
+                fields = set(re.findall(r"(?:pub\s+)?([A-Za-z_]\w*)\s*:", rd))
+            if fields:
+                out[st.name] = frozenset(fields)
+    return out
+
+
+def _compatible(a: frozenset, b: frozenset) -> bool:
+    """Two field-name sets are compatible when one is a subset of the other
+    (a lossy subset like TreeElement-missing-`dad`, or an exact match). Disjoint
+    or mutually-exclusive sets are DIFFERENT structs — not compatible."""
+    return a <= b or b <= a
+
+
+def derive_struct_canonicals(
+    specs: list, analysis: dict,
+) -> dict[str, CanonicalType]:
+    """Auto-populate a canonical registry from the analysis, for struct types
+    that fractured into structurally-compatible Rust spellings.
+
+    This is the generalization that lets a never-seen library get type coherence
+    without a hand-written registry: the common "extractor named the same struct
+    two ways (TreeElement / HuffmanNode) or emitted a `(u16,u16)` stand-in" case
+    is resolved automatically. Genuinely-different-shaped fractures are LEFT
+    ALONE (fail-safe: the model / a curated overlay handles those). Returns a
+    {c_base -> CanonicalType} map; the caller merges the curated registry on top.
+    """
+    struct_names = _struct_defs_in_analysis(analysis)
+    if not struct_names:
+        return {}
+    field_names = _shared_type_field_names(specs)
+    c_params = _analysis_param_types(analysis)
+
+    # Gather observed Rust element spellings per C base type.
+    elems_by_base: dict[str, set[str]] = defaultdict(set)
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = c_params.get(alg.name) or []
+            for i, p in enumerate(list(alg.inputs or [])):
+                c_type = sig[i][1] if i < len(sig) else next(
+                    (ct for pn, ct in sig if pn == p.name), "")
+                base = _c_base(c_type)
+                if base:
+                    _pre, elem, _suf = _element_of(p.rust_type or "")
+                    elems_by_base[base].add(elem)
+
+    derived: dict[str, CanonicalType] = {}
+    for base, elems in elems_by_base.items():
+        if base not in struct_names:
+            continue  # only genuine struct types
+        named = {e for e in elems if _is_struct_like(e)}
+        tuples = {e for e in elems if _TUPLE_ELEMENT.match(e)}
+        others = elems - named - tuples
+        # A non-struct-like, non-tuple spelling (a scalar, a fully-qualified
+        # path, an unknown) in the mix means this base isn't cleanly one struct
+        # everywhere — refuse to unify (context-polymorphic or a scalar-collapse
+        # the model must resolve).
+        if others or len(named) == 0:
+            continue
+        # Restrict to named spellings we actually have field data for, and
+        # require them to be mutually compatible.
+        known = {n for n in named if n in field_names}
+        if not known:
+            # No field data to prove compatibility; only safe if there's a
+            # single named spelling (then tuples alias to it).
+            if len(named) != 1:
+                continue
+            canonical = next(iter(named))
+        else:
+            fs = list(known)
+            if not all(_compatible(field_names[a], field_names[b])
+                       for a in fs for b in fs):
+                continue  # different structs — leave alone
+            # Canonical = the richest (most fields), tie-break on name for
+            # determinism (Date.now/random are unavailable and irrelevant here).
+            canonical = max(sorted(known),
+                            key=lambda n: len(field_names[n]))
+            # Any named spelling WITHOUT field data is not proven compatible;
+            # exclude it from aliases (leave it untouched).
+            named = known | {canonical}
+        aliases = tuple(sorted((named - {canonical}) | tuples))
+        if not aliases:
+            continue  # no actual fracture to repair
+        derived[base] = CanonicalType(
+            c_type=base, rust_name=canonical, fields=(), aliases=aliases,
+        )
+    return derived
+
+
 def unify_types(
     specs: list,
     analysis: dict,
@@ -345,10 +474,16 @@ def unify_types(
     """Canonicalize Rust types across the workspace, in place on `specs`.
 
     Returns an UnifyReport with the rewrite count and the canonical struct
-    definitions to emit. A C type is unified when it is either registered or
-    mapped to more than one distinct Rust element type across the specs.
+    definitions to emit. A C type is unified when it is either registered
+    (curated or auto-derived from the analysis) or mapped to more than one
+    distinct Rust element type across the specs.
     """
-    registry = {**DEFAULT_CANONICAL, **(registry or {})}
+    # Auto-derived struct canonicals generalize the common fracture case; the
+    # curated DEFAULT_CANONICAL and any caller-supplied registry override them
+    # (curated knowledge — e.g. ct_data's union-flattened complete field set —
+    # is richer than what auto-derivation can prove).
+    auto = derive_struct_canonicals(specs, analysis)
+    registry = {**auto, **DEFAULT_CANONICAL, **(registry or {})}
     overrides = (DEFAULT_FIELD_OVERRIDES if field_overrides is None
                  else field_overrides)
     c_params = _analysis_param_types(analysis)
