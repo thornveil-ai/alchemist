@@ -74,6 +74,7 @@ class FunctionAttempt:
     final_compiled: bool = False
     tests_passed: bool = False
     escalated_to_holistic: bool = False
+    escalated_to_decomposition: bool = False
     last_error: str = ""
 
 
@@ -925,6 +926,28 @@ class TDDGenerator:
                 attempt.escalated_to_holistic = True
                 self._holistic_fix(crate_dir, alg, attempt.last_error)
 
+        # Refusal-time escalation: verifier-policed structural decomposition.
+        # The whole fill loop refused this function. Try to break it into
+        # smaller helpers via a gcc-PROVEN byte-exact C split, then translate
+        # the (easier) decomposed unit and re-verify with the SAME differential
+        # test. Fail-closed: an unproven split is discarded and a failed
+        # translation reverts — so this can only convert refusals into wins,
+        # never degrade a passing function.
+        if not attempt.tests_passed:
+            try:
+                if self._attempt_structural_decomposition(
+                    alg, module, crate_spec, module_path, crate_dir,
+                    workspace_dir, test_name_prefix,
+                ):
+                    attempt.final_compiled = True
+                    attempt.tests_passed = True
+                    attempt.escalated_to_decomposition = True
+            except Exception as e:  # noqa: BLE001
+                console.print(
+                    f"  [yellow]{alg.name}: structural-decomposition "
+                    f"escalation error (non-fatal): {e}[/yellow]"
+                )
+
         return attempt
 
     def _error_context_for(self, alg: AlgorithmSpec) -> str:
@@ -1668,6 +1691,237 @@ class TDDGenerator:
             body_end=body_end,
             item_end=item_end,
         )
+
+    # --- Refusal-time escalation: verifier-policed structural decomposition ---
+
+    def _attempt_structural_decomposition(
+        self,
+        alg: AlgorithmSpec,
+        module: ModuleSpec,
+        crate_spec: CrateSpec,
+        module_path: Path,
+        crate_dir: Path,
+        workspace_dir: Path,
+        test_name_prefix: str,
+    ) -> bool:
+        """Break a refused function into gcc-proven byte-exact helpers, then
+        translate the easier decomposed unit (see implementer/structural_decomp).
+
+        Only fires for the ONE differential shape the offline equivalence gate
+        can fuzz today (buf_transform: `int f(char*in,int,char*out,int)`). Sound
+        by construction: an unproven split is discarded, and a failed or
+        unverified translation reverts the module — so this can only turn a
+        refusal into a
+        verified win, never degrade a passing function. Returns True only on a
+        2x-verified differential pass.
+        """
+        src_root = getattr(self, "_source_root", None)
+        if src_root is None:
+            return False
+        src_root = Path(src_root)
+
+        # (1) Locate the original C function + a preamble carrying its file's
+        #     globals/#includes/sibling prototypes.
+        loc = self._c_function_and_preamble(alg, src_root)
+        if loc is None:
+            return False
+        fn_text, preamble, include_dirs = loc
+
+        # (2) Shape gate — the offline equivalence fuzzer only supports
+        #     buf_transform today. Classify from the C prototype.
+        from alchemist.implementer.structural_decomp import (
+            _classify_shape,
+            propose_and_verify_decomposition,
+        )
+        proto = fn_text.split("{", 1)[0].strip()
+        if _classify_shape(proto) != "buf_transform":
+            return False
+
+        # (3) Model callback for the (untrusted) split proposal.
+        def _call_llm(prompt: str, step: str) -> "str | None":
+            try:
+                resp = self.llm.call_structured(
+                    messages=[{"role": "user", "content": prompt}],
+                    tool_name="decompose",
+                    tool_schema={
+                        "type": "object",
+                        "properties": {"content": {"type": "string"}},
+                        "required": ["content"],
+                    },
+                    cached_context=getattr(self, "_cached_ctx", None),
+                    max_tokens=4000,
+                    temperature=0.2,
+                )
+            except Exception:  # noqa: BLE001
+                return None
+            if getattr(resp, "error", ""):
+                return None
+            if resp.structured and "content" in resp.structured:
+                return resp.structured.get("content")
+            return getattr(resp, "content", None)
+
+        console.print(
+            f"  [cyan]{alg.name}: refused — attempting verifier-policed "
+            f"structural decomposition[/cyan]"
+        )
+        deco = propose_and_verify_decomposition(
+            fn_source=fn_text,
+            fn_name=alg.name,
+            shape="buf_transform",
+            original_c=fn_text,
+            call_llm=_call_llm,
+            include_dirs=include_dirs,
+            preamble=preamble,
+        )
+        if deco is None or not deco.verified_equivalent:
+            console.print(
+                f"  [yellow]{alg.name}: no proven-equivalent split — "
+                f"keeping refusal[/yellow]"
+            )
+            return False
+        console.print(
+            f"  [green]{alg.name}: proven-equivalent C split "
+            f"({len(deco.helpers)} helper(s)); {deco.equivalence_report}[/green]"
+        )
+
+        # (4) Translate the PROVEN decomposed C unit → Rust, splice, re-verify
+        #     with the SAME differential test. The driver keeps the public
+        #     signature (its differential test is unchanged); helpers are
+        #     private and verified transitively through the driver's byte-exact
+        #     output.
+        rust_blob = self._translate_decomposition_to_rust(alg, deco, module_path)
+        if not rust_blob:
+            return False
+        current = module_path.read_text(encoding="utf-8")
+        replaced = self._replace_fn_in_source(current, alg.name, rust_blob)
+        if replaced is None:
+            return False
+        module_path.write_text(replaced, encoding="utf-8")
+        ok_compile, _ = _run_cargo_check(crate_dir, timeout=180)
+        if not ok_compile:
+            module_path.write_text(current, encoding="utf-8")
+            return False
+        ok_twice, total = self._verify_cached_win_twice(crate_dir, test_name_prefix)
+        if not (ok_twice and total > 0):
+            module_path.write_text(current, encoding="utf-8")
+            return False
+        console.print(
+            f"  [green]{alg.name}: DECOMPOSITION WIN — byte-exact via "
+            f"{len(deco.helpers)}-helper split (2x, {total} tests)[/green]"
+        )
+        return True
+
+    def _c_function_and_preamble(
+        self, alg: AlgorithmSpec, src_root: Path,
+    ) -> "tuple[str, str, list[Path]] | None":
+        """Return (full C fn text, preamble, include_dirs) for the equivalence
+        gate. The preamble is the containing .c file with the target function
+        removed, so every global/#include/sibling prototype the split needs is
+        present when gcc compiles both the original and the decomposed unit."""
+        from alchemist.implementer.reference_probe import extract_c_function_body
+
+        candidate_paths: list[Path] = []
+        for sf in alg.source_files or []:
+            p = Path(sf)
+            candidate_paths.append(p if p.is_absolute() else src_root / sf)
+        if not candidate_paths:
+            candidate_paths = list(src_root.rglob("*.c"))
+
+        try:
+            from alchemist.verifier.build_c_dll import discover_c_build
+            _srcs, inc = discover_c_build(src_root)
+            base_inc = list(inc) if inc else [src_root]
+        except Exception:  # noqa: BLE001
+            base_inc = [src_root]
+
+        for fn_name in (alg.source_functions or [alg.name]):
+            for path in candidate_paths:
+                if not path.exists():
+                    continue
+                fn_text = extract_c_function_body(path, fn_name)
+                if not fn_text:
+                    continue
+                try:
+                    file_text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                # Normalize newlines: tree-sitter reads raw bytes (may keep
+                # CRLF on Windows) while read_text applies universal-newline
+                # translation, so a raw substring/replace can miss. gcc is fine
+                # with LF, so canonicalize both to LF before splicing.
+                fn_norm = fn_text.replace("\r\n", "\n").replace("\r", "\n")
+                file_norm = file_text.replace("\r\n", "\n").replace("\r", "\n")
+                if fn_norm not in file_norm:
+                    continue
+                preamble = file_norm.replace(fn_norm, "", 1)
+                include_dirs = list(base_inc)
+                if path.parent not in include_dirs:
+                    include_dirs = [path.parent] + include_dirs
+                return fn_norm, preamble, include_dirs
+        return None
+
+    def _translate_decomposition_to_rust(
+        self, alg: AlgorithmSpec, deco, module_path: Path,
+    ) -> "str | None":
+        """Prompt the model to translate a proven decomposed C unit (helpers +
+        driver) into one Rust blob: private helper fns followed by the public
+        driver fn. Anti-stub gated; must contain the driver fn or it's rejected."""
+        module_source = self._strip_test_module(
+            module_path.read_text(encoding="utf-8"))
+        helpers_c = "\n\n".join(h.source for h in deco.helpers)
+        prompt = (
+            "Translate the following C into safe Rust. The function was split "
+            "into small helpers plus a driver; the split is PROVEN byte-exact "
+            "against the original C, so translate it faithfully piece by piece.\n\n"
+            "Requirements:\n"
+            f"- Emit the driver as `pub fn {alg.name}(...)` with EXACTLY the "
+            f"signature it already has in the module shown below.\n"
+            "- Emit each helper as a PRIVATE `fn` (no `pub`). Keep helper names.\n"
+            "- The driver must call the helpers, mirroring the C control flow.\n"
+            "- C integer arithmetic wraps (2s-complement): use wrapping_add / "
+            "wrapping_mul / wrapping_sub for any arithmetic that could overflow "
+            "so results match C EXACTLY (plain +,*,- panic on overflow in Rust).\n"
+            "- Return ONLY Rust source: the helper fns followed by the driver "
+            "fn. No module-level use/const/static/mod items, no prose.\n\n"
+            f"## Existing module (for the driver's exact signature + types)\n"
+            f"```rust\n{module_source[:4000]}\n```\n\n"
+            f"## Helper C functions\n```c\n{helpers_c}\n```\n\n"
+            f"## Driver C ({alg.name})\n```c\n{deco.driver_source}\n```\n"
+        )
+        try:
+            resp = self.llm.call_structured(
+                messages=[{"role": "user", "content": prompt}],
+                tool_name="impl",
+                tool_schema={
+                    "type": "object",
+                    "properties": {"content": {"type": "string"}},
+                    "required": ["content"],
+                },
+                cached_context=getattr(self, "_cached_ctx", None),
+                max_tokens=6000,
+                temperature=0.15,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if getattr(resp, "error", ""):
+            return None
+        if resp.structured and "content" in resp.structured:
+            content = (resp.structured.get("content") or "").strip()
+        else:
+            content = (getattr(resp, "content", "") or "").strip()
+        if not content:
+            return None
+        content, _ = scrub_rust(content)
+        content = self._strip_module_items(content)
+        # Anti-stub: a decomposition win must be real code, never a placeholder.
+        if scan_text("pending.rs", content):
+            return None
+        # Must contain the driver fn (either the raw or snake-cased name).
+        from alchemist.implementer.skeleton import _snake
+        names = {alg.name, _snake(alg.name)}
+        if not any(re.search(r"\bfn\s+" + re.escape(n) + r"\b", content) for n in names):
+            return None
+        return content
 
     def _holistic_fix(self, crate_dir: Path, alg: AlgorithmSpec, error_ctx: str) -> None:
         """Escalation tier: whole-crate fix via the holistic fixer."""

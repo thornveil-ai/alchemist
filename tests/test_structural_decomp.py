@@ -249,3 +249,84 @@ def test_gate_declines_unsupported_shape():
     )
     assert not ok
     assert "no fuzzer" in report
+
+
+# ---------------------------------------------------------------------------
+# Wiring into the TDD fill-loop escalation (P1a): the sound fail-closed hooks.
+# These do NOT invoke a model — they prove the guards the escalation relies on.
+# ---------------------------------------------------------------------------
+
+class _ExplodingLLM:
+    """An LLM stand-in that fails the test if the model is ever called.
+    Used to prove the shape gate short-circuits before any model call."""
+    def call_structured(self, *a, **k):  # noqa: D401
+        raise AssertionError("model must NOT be called on the fail-closed path")
+
+
+def test_c_function_and_preamble_extracts_fn_and_preamble(tmp_path):
+    from alchemist.implementer.tdd_generator import TDDGenerator
+    from alchemist.extractor.schemas import AlgorithmSpec
+
+    src = tmp_path / "codec.c"
+    src.write_text(
+        "#include <string.h>\n"
+        "static const int TABLE[3] = {1, 2, 3};\n"
+        "int codec_encode(const char *in, int n, char *out, int cap) {\n"
+        "    int k = 0;\n"
+        "    for (int i = 0; i < n && k < cap; i++) out[k++] = in[i] ^ TABLE[i % 3];\n"
+        "    return k;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    gen = TDDGenerator(llm=_ExplodingLLM())
+    alg = AlgorithmSpec(
+        name="codec_encode", display_name="codec_encode", category="filter",
+        description="xor codec", source_files=["codec.c"],
+        source_functions=["codec_encode"],
+    )
+    loc = gen._c_function_and_preamble(alg, tmp_path)
+    assert loc is not None
+    fn_text, preamble, include_dirs = loc
+    # The full function definition is returned...
+    assert "codec_encode(const char *in" in fn_text
+    assert "return k;" in fn_text
+    # ...and the preamble carries the file's globals/#includes but NOT the fn body.
+    assert "#include <string.h>" in preamble
+    assert "TABLE[3]" in preamble
+    assert "return k;" not in preamble
+    assert any(p == tmp_path for p in include_dirs)
+
+
+def test_escalation_fail_closed_on_non_buf_transform_shape(tmp_path):
+    """A checksum-shaped function is NOT buf_transform, so the escalation must
+    return False WITHOUT calling the model (the equivalence gate can't fuzz it)."""
+    from alchemist.implementer.tdd_generator import TDDGenerator
+    from alchemist.extractor.schemas import AlgorithmSpec, ModuleSpec
+    from alchemist.architect.schemas import CrateSpec
+
+    src = tmp_path / "sum.c"
+    src.write_text(
+        "unsigned crc_like(unsigned seed, const char *buf, int n) {\n"
+        "    unsigned h = seed;\n"
+        "    for (int i = 0; i < n; i++) h = h * 31u + (unsigned char)buf[i];\n"
+        "    return h;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    gen = TDDGenerator(llm=_ExplodingLLM())
+    alg = AlgorithmSpec(
+        name="crc_like", display_name="crc_like", category="checksum",
+        description="rolling hash", source_files=["sum.c"],
+        source_functions=["crc_like"],
+    )
+    module = ModuleSpec(
+        name="sum", display_name="sum", description="", algorithms=[alg])
+    crate = CrateSpec(name="sumcrate", description="", modules=["sum"])
+    gen._source_root = tmp_path
+    # No model call happens: _ExplodingLLM.call_structured would raise. The
+    # shape gate returns False first.
+    result = gen._attempt_structural_decomposition(
+        alg, module, crate, tmp_path / "nonexistent.rs", tmp_path, tmp_path,
+        "crc_like",
+    )
+    assert result is False
