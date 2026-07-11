@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["lua-value"]
+
+[profile.release]
+opt-level = 2
