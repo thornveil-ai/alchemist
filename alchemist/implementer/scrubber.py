@@ -287,6 +287,19 @@ def scrub_rust(code: str) -> tuple[str, list[str]]:
             fixes.append(f"stripped redefined const {text[:40].strip()}")
     code = new_code
 
+    # Repair a split inner attribute: Gemma sometimes emits
+    #   #![
+    #   #allow(unused_variables, ...)]
+    # instead of `#![allow(...)]` (a stray newline + `#` after `#![`). That is a
+    # hard parse error ("expected identifier, found `#`") that kills the whole
+    # module compile. Collapse `#![ [ws] [#] <attr>(...) ]` back to `#![<attr>(...)]`.
+    _split_attr = re.sub(
+        r"#!\[\s*#?\s*((?:allow|deny|warn|forbid|cfg_attr|no_std|feature)\b[^\]]*)\]",
+        r"#![\1]", code)
+    if _split_attr != code:
+        code = _split_attr
+        fixes.append("repaired split inner attribute `#![ #attr]` -> `#![attr]`")
+
     # Remove stray markdown fences that sometimes leak through JSON.
     # Strip ANY line that is just ``` or ```lang anywhere in the file.
     code = re.sub(r"^\s*```(?:\w+)?\s*$\n?", "", code, flags=re.MULTILINE)

@@ -701,6 +701,38 @@ def run_implement_stage(
             except OSError:
                 continue
         subject_typedefs = build_typedef_map(_subj_texts)
+        # Auto-enable safe-scalar (bounded [-1,255]) fuzzing when a target fn's C
+        # body calls ctype (glibc isdigit/tolower or Lua's lisdigit/ltolower).
+        # Those index __ctype_b_loc()[c] and are UB/SEGFAULT outside the char
+        # domain, so full-range fuzzing crashes the oracle -> the fn gets no
+        # vectors and can't be verified. Read the code (ctype calls), don't
+        # hardcode function names. Bounds BOTH synthesis and the differential.
+        import os as _os_ss
+        _ctype_re = _re.compile(
+            r"\bl?(?:is(?:alnum|alpha|blank|cntrl|digit|graph|lower|print|punct"
+            r"|space|upper|xdigit)|to(?:lower|upper))\s*\(")
+        if not _os_ss.environ.get("ALCHEMIST_SAFE_SCALAR"):
+            from alchemist.implementer.scrubber import find_matching_brace as _fmb
+            def _fn_body(_txt, _nm):
+                _m = _re.search(
+                    rf"(?m)^[A-Za-z_][\w \*]*?\b{_re.escape(_nm)}\s*\([^;{{}}]*\)\s*\{{", _txt)
+                if not _m:
+                    return ""
+                _cl = _fmb(_txt, _m.end() - 1)
+                return _txt[_m.start():_cl + 1] if _cl > 0 else _txt[_m.start():_m.start() + 4000]
+            _needs_safe = False
+            for _mod in specs:
+                for _alg in (getattr(_mod, "algorithms", None) or []):
+                    _f = _fn_file.get(_alg.name)
+                    if _f and _ctype_re.search(_fn_body(_file_text.get(_f, ""), _alg.name)):
+                        _needs_safe = True
+                        break
+                if _needs_safe:
+                    break
+            if _needs_safe:
+                _os_ss.environ["ALCHEMIST_SAFE_SCALAR"] = "1"
+                console.print(
+                    "[cyan]safe-scalar domain auto-enabled (target fn uses ctype)[/cyan]")
         total_consts = 0
         for module in specs:
             if module.constants:
