@@ -15,6 +15,14 @@ target/
 # Test subjects — exclude derived artifacts but keep C source
 subjects/*/target/
 subjects/*/.alchemist/
+# Compiled oracle/probe binaries under subjects (ELF, regenerable — keep source)
+subjects/**/_seq
+subjects/**/_oracle
+subjects/**/_own
+subjects/**/_eff
+subjects/**/apcrcref
+subjects/**/auto_ref
+subjects/**/jsmn_ref
 subjects/zlib                   # embedded repo gitlink — don't track
 subjects/zlib/                  # embedded repo — clone separately
 subjects/zlib-dll               # vendored zlib build tree — keep out of repo
