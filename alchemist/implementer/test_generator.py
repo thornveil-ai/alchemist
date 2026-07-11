@@ -675,6 +675,7 @@ def _emit_spec_test(
     idx: int,
     *,
     return_type: str | None = None,
+    alg: AlgorithmSpec | None = None,
 ) -> str:
     """Emit a test from a spec.test_vectors entry.
 
@@ -730,11 +731,25 @@ def _emit_spec_test(
     # identifier (`r#in`) in both the let-binding and the call — otherwise
     # the whole test module fails to compile.
     arg_names = []
+    name_to_bound: dict[str, str] = {}
     for pname, pvalue in vec.inputs.items():
         safe_name = _sanitize_param_name(pname, len(arg_names))
         arg_names.append(safe_name)
+        name_to_bound[pname] = safe_name
         lines.append(f"        let {safe_name} = {_literal_from_spec_value(pvalue)};\n")
-    arg_list = ", ".join(arg_names)
+    # Order the CALL arguments by the FUNCTION SIGNATURE (alg.inputs), NOT the
+    # fuzz-vector's dict order. If the vector's inputs were built in a different
+    # order than the emitted signature (e.g. {buf, seed} while the fn is
+    # (seed, buf)), calling in vector order emits a swapped-argument call that
+    # can't compile — which REFUSES the model's correct code forever, no matter
+    # how many times it retries. Match vector-input keys to signature params by
+    # name; fall back to vector order only when they don't correspond 1:1.
+    call_args = arg_names
+    if alg is not None and alg.inputs:
+        sig_names = [p.name for p in alg.inputs]
+        if set(sig_names) == set(vec.inputs.keys()) and len(sig_names) == len(arg_names):
+            call_args = [name_to_bound[n] for n in sig_names]
+    arg_list = ", ".join(call_args)
     lines.append(f"        let got = super::{fn_name}({arg_list});\n")
     expected = vec.expected_output.strip()
     if expected:
@@ -815,7 +830,7 @@ def emit_module_test_block(
         fn_name = _rust_fn_name(alg.name)
         # 1. Spec-provided test vectors
         for i, v in enumerate(alg.test_vectors or []):
-            lines.append(_emit_spec_test(fn_name, v, i, return_type=alg.return_type))
+            lines.append(_emit_spec_test(fn_name, v, i, return_type=alg.return_type, alg=alg))
             stats["spec"] += 1
             emitted_any = True
         # 2. Standards catalog — only when the signature matches a recognizable
