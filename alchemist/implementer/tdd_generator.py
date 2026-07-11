@@ -818,6 +818,24 @@ class TDDGenerator:
             # Compile check (crate only)
             ok_compile, cerr = _run_cargo_check(crate_dir, timeout=180)
             if not ok_compile:
+                # Deterministic mechanical repair BEFORE re-prompting: apply
+                # rustc's own machine-applicable suggestions (as-usize coercions,
+                # missing `mut`, unused imports) via cargo fix. The model
+                # routinely writes algorithmically-correct code that fails only
+                # on a trivial coercion the LLM repair loop can't reliably fix;
+                # rustfix resolves these deterministically. Correctness is still
+                # gated by the byte-exact differential below, so this can only
+                # rescue a mechanically-broken CORRECT body, never mask a wrong
+                # algorithm.
+                if _run_cargo_fix(crate_dir, timeout=180):
+                    ok_fixed, cerr_fixed = _run_cargo_check(crate_dir, timeout=180)
+                    if ok_fixed:
+                        console.print(
+                            f"  [green]{alg.name}: cargo fix repaired mechanical "
+                            f"compile error(s) on iter {iteration}[/green]"
+                        )
+                        ok_compile, cerr = True, cerr_fixed
+            if not ok_compile:
                 # Revert and try again with compile-error context + the
                 # LLM's own failed attempt so it can see what it wrote.
                 # Without the attempt in context, the next prompt shows the
@@ -2497,6 +2515,29 @@ def _cargo_with_link_retry(argv: list[str], path: Path, timeout: int,
         time.sleep(0.5 * (3 ** attempt))
         last = (r.returncode, r.stdout, r.stderr)
     return last
+
+
+def _run_cargo_fix(path: Path, timeout: int = 180) -> bool:
+    """Apply rustc's machine-applicable suggestions via `cargo fix`.
+
+    Deterministic mechanical repair for the common case where the model writes
+    algorithmically-correct Rust that fails only on a trivial coercion (e.g.
+    `min(usize, u32)` -> `as usize`), a missing `mut`, or an unused import.
+    rustfix applies ONLY rustc-verified machine-applicable edits, and the
+    byte-exact differential gate still verifies correctness afterward — so this
+    can never mask a wrong algorithm, only rescue a mechanically-broken correct
+    one. Returns True if cargo fix ran to completion (caller re-checks compile
+    to see whether it actually helped)."""
+    try:
+        r = subprocess.run(
+            ["cargo", "fix", "--lib", "--allow-dirty", "--allow-no-vcs",
+             "--broken-code"],
+            cwd=str(path), capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return r.returncode == 0
 
 
 def _run_cargo_test(path: Path, timeout: int = 600) -> tuple[bool, str, str]:
