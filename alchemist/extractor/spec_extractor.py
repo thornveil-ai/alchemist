@@ -118,6 +118,36 @@ class SpecExtractor:
 
         return specs
 
+    def _build_project_context(self, analysis: dict) -> str:
+        """Build a project overview for the cached context.
+
+        Live helper used by extract_all() to seed the LLM's cached context. (An
+        earlier cleanup wrongly deleted this alongside the dead _extract_module_
+        OLD_BULK cluster; it is NOT dead — extract_all calls it every run. The
+        unit suite missed it because CI never runs the real extract path with a
+        model, which is exactly why it must be restored.)
+        """
+        summary = analysis.get("summary", {})
+        modules = analysis.get("modules", [])
+
+        lines = [
+            "## Project Analysis Summary",
+            f"Source: {analysis.get('source', 'unknown')}",
+            f"Files: {summary.get('total_files', 0)}",
+            f"Lines: {summary.get('total_lines', 0):,}",
+            f"Functions: {summary.get('total_functions', 0)}",
+            "",
+            "## Detected Modules",
+        ]
+        for mod in modules:
+            lines.append(
+                f"- **{mod['name']}** ({mod['category']}): "
+                f"{len(mod.get('functions', []))} functions, "
+                f"{mod.get('total_lines', 0)} lines"
+            )
+
+        return "\n".join(lines)
+
     def _extract_module(self, module: dict, analysis: dict) -> ModuleSpec | None:
         """Extract spec for a single module via per-function extraction.
 
