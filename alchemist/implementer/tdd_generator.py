@@ -434,6 +434,25 @@ class TDDGenerator:
             total_tests = max(total_tests, sum(ran_counts))
         return True, total_tests
 
+    def _trace_fill(self, alg, crate, module, iteration, kind, content):
+        """Env-gated per-iteration fill trace (P0.1). When ALCHEMIST_FILL_TRACE
+        names a directory, write the model's Rust, the compile error, and the
+        differential divergence for every iteration to
+        <dir>/<crate>__<module>__<fn>/iterNN.<kind> — so root-causing a fill no
+        longer requires hand-instrumenting this file. No-op when unset; never
+        raises."""
+        import os
+        base = os.environ.get("ALCHEMIST_FILL_TRACE")
+        if not base:
+            return
+        try:
+            slug = f"{crate}__{module}__{alg.name}".replace("/", "_").replace("\\", "_")
+            d = Path(base) / slug
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"iter{iteration:02d}.{kind}").write_text(content or "", encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _fill_in_function(
         self,
         alg: AlgorithmSpec,
@@ -744,6 +763,7 @@ class TDDGenerator:
             # Strip leaked module-level items (use/static/const) the LLM
             # may have emitted above the function definition.
             new_fn = self._strip_module_items(new_fn)
+            self._trace_fill(alg, crate_spec.name, module.name, iteration, "rust", new_fn)
 
             # Anti-stub check
             stub_violations = scan_text("pending.rs", new_fn)
@@ -843,6 +863,7 @@ class TDDGenerator:
                 # which of its choices broke — it just rewrites similar code.
                 module_path.write_text(current, encoding="utf-8")
                 attempt.last_error = _top_lines(cerr, 3)
+                self._trace_fill(alg, crate_spec.name, module.name, iteration, "compile", cerr)
                 previous_failure = (
                     f"## Previous iteration FAILED to compile.\n\n"
                     f"You wrote this:\n```rust\n{new_fn[:2500]}\n```\n\n"
@@ -927,6 +948,11 @@ class TDDGenerator:
             attempt.last_error = _top_lines(terr, 5)
             _combined_out = (tout or "") + chr(10) + (terr or "")
             _divergence = _distill_vector_divergence(_combined_out)
+            self._trace_fill(
+                alg, crate_spec.name, module.name, iteration, "test",
+                (("DIVERGENCE: " + _divergence + "\n\n") if _divergence else "")
+                + _combined_out,
+            )
             previous_failure = (
                 f"## Previous iteration compiled but FAILED tests.\n\n"
                 f"You wrote:\n```rust\n{new_fn[:2500]}\n```\n\n"
