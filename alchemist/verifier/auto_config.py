@@ -1423,7 +1423,7 @@ def classify_alloc_sequence(by_name, structs, specs=None):
         for name, sig in fns_:
             ps = [(p[1] or "").strip() for p in sig.params]
             ret = (sig.return_type or "").strip()
-            if (len(ps) == 3 and _CONST_BYTE_PTR2.match(ps[1].replace("const ", "") if False else ps[1])
+            if (len(ps) == 3 and _CONST_BYTE_PTR2.match(ps[1])
                     and _INT_C_TYPES.match(ps[2]) and ret == "void"):
                 init = (name, sig)
             elif (len(ps) == 3 and _MUT_BYTE_PTR3.match(ps[1]) and _INT_C_TYPES.match(ps[2])

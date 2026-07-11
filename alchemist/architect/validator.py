@@ -226,27 +226,22 @@ def _check_dependency_dag(arch: CrateArchitecture, report: ValidationReport) -> 
 
 
 def _check_orphan_rule(arch: CrateArchitecture, report: ValidationReport) -> None:
-    """Orphan rule: a type's inherent impl must be in the same crate.
+    """Orphan rule: a trait must be declared in a crate that actually exists.
 
-    Architecture should not have a type T defined in crate A but expected
-    to be impl'd in crate B. The Implementer would hit E0116.
+    A trait assigned to a non-existent crate is unbuildable (the Implementer
+    emits `impl Trait for T` in a crate that never gets created). The previous
+    version of this check had an always-false condition and never fired.
     """
-    type_to_crate: dict[str, str] = {}
-    # Gather where each shared type lives based on crate.modules + spec types
-    # (We use a heuristic: if a crate's name suggests it owns a type, that's its home.)
-    for crate in arch.crates:
-        for mod_name in crate.modules:
-            type_to_crate[mod_name] = crate.name
-
-    # Trait specs declare a 'crate' field; check that all impl crates match
+    crate_names = {c.name for c in arch.crates}
     for trait_spec in arch.traits:
         owning = trait_spec.crate
-        if owning not in type_to_crate.values() and owning != trait_spec.crate:
+        if owning and owning not in crate_names:
             report.add(ValidationIssue(
                 rule="orphan_rule",
-                severity=Severity.warning,
-                message=f"Trait {trait_spec.name} declared in crate {owning}, "
-                        f"but no module producer found for it",
+                severity=Severity.error,
+                message=f"Trait {trait_spec.name} declared in crate {owning!r}, "
+                        f"which does not exist in the architecture "
+                        f"(crates: {sorted(crate_names)})",
                 location=trait_spec.name,
             ))
 

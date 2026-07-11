@@ -51,8 +51,12 @@ class _Shape:
 
 
 def _normalize_type(t: str) -> str:
-    """Collapse whitespace and standardize a Rust type for shape comparison."""
-    return re.sub(r"\s+", "", t).replace("&mut", "&mut ").replace("&", "&").strip()
+    """Collapse ALL whitespace for internal shape comparison. Consistency is
+    all that matters here (the value is only used to group same-shape algorithms,
+    never rendered), so a single whitespace-strip is correct — the previous
+    version's `.replace("&","&")` was a no-op and its `&mut`->`&mut ` re-spacing
+    contradicted the collapse."""
+    return re.sub(r"\s+", "", t)
 
 
 def _shape_for(alg: AlgorithmSpec) -> _Shape | None:
