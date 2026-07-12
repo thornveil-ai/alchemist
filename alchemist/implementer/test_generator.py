@@ -722,6 +722,8 @@ def _emit_spec_test(
         return _emit_hash_final_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("byte_transform"):
         return _emit_byte_transform_test(fn_name, vec, idx)
+    if vec.tolerance == "roundtrip":
+        return _emit_roundtrip_test(fn_name, vec, idx, return_type)
     if vec.tolerance == "str_exact":
         return _emit_str_exact_test(fn_name, vec, idx, return_type)
     test_name = f"test_{fn_name}_spec_{idx}"
@@ -781,6 +783,33 @@ def _emit_spec_test(
                          f'"{_msg(vec.description or f"vector {idx}")}");\n')
     lines.append("    }\n")
     return "".join(lines)
+
+
+def _emit_roundtrip_test(fn_name: str, vec, idx: int, return_type: str | None) -> str:
+    """Emit a decoder roundtrip vector (tolerance="roundtrip"): the input is a
+    VALID encoded stream (minted by the C encoder), `expected_output` is the
+    original plaintext (a `b"..."` byte literal, or a `"..."` str literal for a
+    text-out decoder). Uses `.unwrap()` for a `Result<_, E>` return so `E` need
+    not impl `PartialEq` — a decode that errors panics the test (a real
+    failure), and the recovered bytes/str are compared byte-exact to the
+    plaintext."""
+    rt = (return_type or "").strip()
+    inp = next(iter(vec.inputs.values())) if vec.inputs else '""'
+    in_lit = _literal_from_spec_value(inp)
+    expected = (vec.expected_output or "").strip()
+    is_result = rt.startswith("Result<")
+    is_text = ("String" in rt) and ("Vec" not in rt)
+    test_name = f"test_{fn_name}_roundtrip_{idx}"
+    call = f"super::{fn_name}({in_lit})"
+    got = f"{call}.unwrap()" if is_result else call
+    msg = _msg(vec.description or vec.source or f"roundtrip {idx}")
+    if is_text:
+        cmp = f'assert_eq!({got}.as_str(), {expected}, "{msg}");'
+    else:
+        cmp = f'assert_eq!({got}.as_slice(), &{expected}[..], "{msg}");'
+    return (f"    #[test]\n    fn {test_name}() {{\n"
+            f"        {cmp}\n"
+            f"    }}\n")
 
 
 def _emit_smoke_test(fn_name: str) -> str:

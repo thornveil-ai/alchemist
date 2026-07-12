@@ -657,6 +657,58 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (cstr_out)",
                 ))
+            elif h.category == "cstr_roundtrip":
+                # DECODER `(&str) -> Vec<u8>|Result<Vec<u8>>|String|Result<String>`.
+                # Verified by the ROUNDTRIP identity decode(encode(pt)) == pt, so
+                # the Rust side is the decoder (normalized to Vec<u8>) and the C
+                # side is the ENCODER (`char* enc(char*)`), uniquely named
+                # `c_<decoder>_enc` to avoid colliding with the encoder's own
+                # cstr_out wrapper. No C-decoder call is emitted (its `char*`
+                # return is NUL-lossy for binary), and none is needed.
+                from alchemist.verifier.auto_config import _paired_encoder_name
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of cstr_roundtrip '{h.algorithm}': not found")
+                path = f"{fn.crate_ident}::{fn.name}"
+                in_ty = (fn.params[0][1] if fn.params else "&str").strip()
+                arg = "input" if "str" in in_ty else "input.as_bytes()"
+                call = f"{path}({arg})"
+                if fn.ret.startswith("Result<"):
+                    call = f"({call}).unwrap_or_default()"
+                if "String" in fn.ret and "Vec" not in fn.ret:
+                    norm = f"({call}).into_bytes()"
+                elif "[u8" in fn.ret and "Vec" not in fn.ret:
+                    norm = f"({call}).to_vec()"
+                else:
+                    norm = call
+                enc_name = _paired_encoder_name(h.algorithm) or ""
+                rust_wrapper = (
+                    f"/// Roundtrip decoder ({fn.crate}::{fn.name}), normalized to Vec<u8>.\n"
+                    f"pub fn rust_{h.algorithm}(input: &str) -> Vec<u8> {{\n"
+                    f"    {norm}\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"/// C encoder ({enc_name}) — mints a valid stream from plaintext.\n"
+                    f"pub fn c_{h.algorithm}_enc(pt: &[u8]) -> String {{\n"
+                    f"    let cin = match std::ffi::CString::new(pt) "
+                    f"{{ Ok(c) => c, Err(_) => return String::new() }};\n"
+                    f"    let rp = unsafe {{ {ffi_ident}::{enc_name}(cin.as_ptr() as _) }};\n"
+                    f"    if rp.is_null() {{ return String::new(); }}\n"
+                    f"    // Leak rp on purpose (sound, bounded — see cstr_out).\n"
+                    f"    unsafe {{ std::ffi::CStr::from_ptr(rp as *const _) }}"
+                    f".to_string_lossy().into_owned()\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} "
+                               f"(cstr_roundtrip via {enc_name})",
+                ))
             elif h.category == "inplace":
                 fn = _pick_unambiguous(h.algorithm, api)
                 if fn is None:

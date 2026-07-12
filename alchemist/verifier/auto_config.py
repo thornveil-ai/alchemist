@@ -1066,6 +1066,100 @@ def fuzz_cstr_out_vectors(dll, alg, sig, *, count: int = 24):
     return vectors
 
 
+def classify_cstr_roundtrip(sig, by_name) -> "str | None":
+    """A `char* f(char*)` DECODER paired with an oracle-able ENCODER in the
+    same subject. base64_decode / *_decode / *_uncompress etc. lift to
+    `Result<Vec<u8>, E>` (binary out) or `String`, which `cstr_out` correctly
+    DECLINES because the C `char*` return is NUL-lossy for binary and random
+    fuzz strings are not valid encoded streams — so the decoder refuses with
+    "no verifiable test vectors".
+
+    The fix is a ROUNDTRIP oracle: mint valid inputs by running the compiled C
+    encoder on random plaintext `p`, then require `decode(encode(p)) == p`. The
+    encoder is the C reference, so this is a sound differential. Returns the
+    paired ENCODER's name (which must itself be the `char* enc(char*)` cstr_out
+    shape and present in the subject), or None.
+
+    Checked BEFORE cstr_out in both the vector-synth and harness dispatch: the
+    two share the `char* f(char*)` signature, and only a *named decoder with a
+    real encoder partner* takes this branch (encoders never match
+    `_paired_encoder_name`), so text encoders still flow to cstr_out."""
+    if _CHAR_PTR.match((sig.return_type or "").strip()) is None:
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if not (len(params) == 1 and _CHAR_PTR.match(params[0])):
+        return None
+    enc = _paired_encoder_name(sig.name)
+    if not enc or enc not in by_name:
+        return None
+    if classify_cstr_out(by_name[enc]) is None:
+        return None
+    return enc
+
+
+def fuzz_cstr_roundtrip_vectors(dll, alg, sig, enc_name, *, count: int = 24):
+    """Mint decoder fill-loop vectors by running the compiled C ENCODER on random
+    plaintext: `p` (non-NUL bytes) -> C encode -> valid encoded string `ct`; emit
+    `(&str) -> <bytes|text>` vectors whose expected output is `p` itself. The
+    roundtrip identity `decode(encode(p)) == p` IS the oracle (the encoder is the
+    compiled C reference). tolerance="roundtrip" routes to `_emit_roundtrip_test`."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if _paired_encoder_name(sig.name) != enc_name:
+        return []
+    enc = getattr(dll, enc_name, None)
+    if enc is None:
+        return []
+    enc.restype = ctypes.c_char_p
+    enc.argtypes = (ctypes.c_char_p,)
+    ret = (alg.return_type or "").strip()
+    text_out = ("String" in ret) and ("Vec" not in ret)
+    in_param = next((p for p in (alg.inputs or [])
+                     if "str" in (p.rust_type or "").lower()
+                     or "[u8]" in (p.rust_type or "")), None)
+    if in_param is None:
+        return []
+    in_is_str = "str" in (in_param.rust_type or "").lower()
+    rng = _rng(_FUZZ_SEED)
+    # Plaintext: non-NUL bytes (the C encoder takes a NUL-terminated char*). A
+    # text-out decoder additionally needs printable plaintext so it reads back
+    # as a String losslessly.
+    if text_out:
+        alphabet = [ord(c) for c in
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,-_+/"]
+    else:
+        alphabet = list(range(1, 256))
+    seen: set[bytes] = set()
+    vectors = []
+    tries = 0
+    while len(vectors) < count and tries < count * 12:
+        tries += 1
+        n = rng.randint(0, 24)
+        p = bytes(alphabet[rng.randint(0, len(alphabet) - 1)] for _ in range(n))
+        if p in seen:
+            continue
+        seen.add(p)
+        try:
+            ct = enc(p)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(ct, (bytes, bytearray)):
+            continue
+        ct_s = bytes(ct).decode("ascii", "replace")
+        in_lit = _rust_str_lit(ct_s) if in_is_str else _rust_bytes_lit(bytes(ct))
+        expected = (_rust_str_lit(p.decode("ascii", "replace"))
+                    if text_out else _rust_bytes_lit(p))
+        vectors.append(SpecTestVector(
+            description=f"roundtrip_ptlen_{n}",
+            source=f"C reference (roundtrip via {enc_name}): {sig.name}",
+            inputs={in_param.name: in_lit},
+            expected_output=expected,
+            tolerance="roundtrip",
+        ))
+    return vectors
+
+
 # A pointer to an array of a NON-byte integer scalar (int/long/short/...). The
 # checksum/digest shapes own single-byte element pointers (char/uint8_t), so this
 # deliberately excludes them to avoid stealing byte-buffer checksums.
@@ -2070,6 +2164,27 @@ def build_diff_config(
                 ))
                 used_signatures.append(sig)
                 continue
+            _rt_enc = classify_cstr_roundtrip(sig, by_name)
+            if _rt_enc is not None:
+                # DECODER `char* f(char*)` paired with an encoder — verify the
+                # roundtrip identity decode(encode(pt)) == pt. The C side is the
+                # ENCODER (uniquely-named c_<decoder>_enc wrapper), so no lossy
+                # C-decoder call is needed; the proptest mints a valid stream
+                # from random plaintext and requires the Rust decoder to invert
+                # it byte-exactly. Checked BEFORE cstr_out (shared signature).
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="cstr_roundtrip",
+                    rust_call=f"rust_{alg.name}(&input)",
+                    c_call="",
+                    encoder_c_call=f"c_{alg.name}_enc(&pt)",
+                    input_strategy="prop::collection::vec(1u8..=255u8, 0..48)",
+                    cases=2000,
+                ))
+                used_signatures.append(sig)
+                if _rt_enc in by_name and by_name[_rt_enc] not in used_signatures:
+                    used_signatures.append(by_name[_rt_enc])
+                continue
             if classify_cstr_out(sig) is not None:
                 # C `char* f(char*)`: string in -> freshly-allocated string out
                 # (to_upper / rot13 / hex_encode / *_encode). Checked before
@@ -2370,6 +2485,8 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 vecs = fuzz_iarray_reduce_vectors(dll, alg, sig)
             elif classify_buf_gen(sig) is not None:
                 vecs = fuzz_buf_gen_vectors(dll, alg, sig)
+            elif (_rt_enc := classify_cstr_roundtrip(sig, by_name)) is not None:
+                vecs = fuzz_cstr_roundtrip_vectors(dll, alg, sig, _rt_enc)
             elif classify_cstr_out(sig) is not None:
                 vecs = fuzz_cstr_out_vectors(dll, alg, sig)
             elif classify_cbuf_out(sig) is not None:

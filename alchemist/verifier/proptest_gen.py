@@ -36,7 +36,7 @@ VALID_CATEGORIES = {
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
     "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "cstr_out", "buf_transform",
-    "iarray_reduce", "cstr_scalar", "buf_gen"}
+    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip"}
 
 
 @dataclass
@@ -252,6 +252,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_cstr_scalar_block(h)
     if h.category == "buf_gen":
         return _proptest_buf_gen_block(h)
+    if h.category == "cstr_roundtrip":
+        return _proptest_cstr_roundtrip_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -329,6 +331,31 @@ def _proptest_buf_transform_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
                 prop_assert_eq!({h.rust_call}, {h.c_call});
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_cstr_roundtrip_block(h: AlgorithmHarness) -> str:
+    """Differential for a DECODER `(&str) -> Vec<u8>` verified by the roundtrip
+    identity: mint a VALID encoded stream from random plaintext via the C
+    ENCODER (`encoder_c_call`, the reference), then require the Rust decoder to
+    invert it byte-exactly — `decode(encode(pt)) == pt`. The C decoder's own
+    `char*` return is NUL-lossy for binary output, so it is never called; the
+    encoder is the oracle. Decoding random (un-encoded) bytes would exercise the
+    C decoder's UB-on-malformed-input, which memory-safe Rust cannot replicate."""
+    strategy = h.input_strategy or "prop::collection::vec(1u8..=255u8, 0..48)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_roundtrip_matches_c_reference(pt in {strategy}) {{
+                // Mint a valid encoded stream from random plaintext via the C
+                // encoder, then require the Rust decoder to recover it exactly.
+                let input = {h.encoder_c_call};
+                let rust_out = {h.rust_call};
+                prop_assert_eq!(rust_out.as_slice(), pt.as_slice());
             }}
         }}
     """).rstrip()
