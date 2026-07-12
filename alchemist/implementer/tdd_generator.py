@@ -2417,9 +2417,22 @@ class TDDGenerator:
                 if sig is not None:
                     from alchemist.verifier.auto_config import (
                         classify_digest_shape, fuzz_digest_vectors,
+                        classify_cstr_roundtrip, fuzz_cstr_roundtrip_vectors,
                     )
                     if classify_digest_shape(sig) is not None:
                         vectors = fuzz_digest_vectors(dll, alg, sig)
+                        _accept(mod, alg, vectors,
+                                oracle_tag_for_file("dll", dll_path))
+                        continue
+                    # Inverse-pair roundtrip decoder (base64_decode etc.): the
+                    # generic fuzz_for_spec below can't oracle a `char* f(char*)`
+                    # binary-out decoder (random strings aren't valid streams),
+                    # so mint vectors by running the paired C ENCODER and require
+                    # decode(encode(p)) == p. Must be dispatched here (auto_config
+                    # shape), not in fuzz_for_spec.
+                    _rt_enc = classify_cstr_roundtrip(sig, subject_sigs)
+                    if _rt_enc is not None:
+                        vectors = fuzz_cstr_roundtrip_vectors(dll, alg, sig, _rt_enc)
                         _accept(mod, alg, vectors,
                                 oracle_tag_for_file("dll", dll_path))
                         continue
