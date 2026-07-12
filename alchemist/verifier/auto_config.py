@@ -1146,6 +1146,11 @@ def fuzz_cstr_roundtrip_vectors(dll, alg, sig, enc_name, *, count: int = 24):
             continue
         if not isinstance(ct, (bytes, bytearray)):
             continue
+        # Encoder failure (NULL / empty output for a non-empty plaintext) would
+        # mint a bogus `decode("") == p` vector — drop it. An empty plaintext
+        # legitimately encodes to empty, so only guard the non-empty case.
+        if len(p) > 0 and len(bytes(ct)) == 0:
+            continue
         ct_s = bytes(ct).decode("ascii", "replace")
         in_lit = _rust_str_lit(ct_s) if in_is_str else _rust_bytes_lit(bytes(ct))
         expected = (_rust_str_lit(p.decode("ascii", "replace"))

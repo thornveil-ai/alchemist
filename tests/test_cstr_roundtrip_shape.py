@@ -97,6 +97,15 @@ def test_cstr_roundtrip_is_a_valid_category():
     assert "cstr_roundtrip" in pg.VALID_CATEGORIES
 
 
+def test_fill_loop_filter_matches_roundtrip_tests():
+    # The fill loop runs `cargo test <filters>`; without a roundtrip filter it
+    # runs 0 tests and wrongly reports "no test vectors" for a decoder that
+    # actually has roundtrip tests emitted.
+    from alchemist.implementer.tdd_generator import _test_filters_for_fn
+    filters = _test_filters_for_fn("base64_decode")
+    assert "test_base64_decode_roundtrip_" in filters
+
+
 def test_proptest_block_mints_via_encoder_and_asserts_identity():
     h = pg.AlgorithmHarness(
         algorithm="base64_decode", category="cstr_roundtrip",

@@ -2709,6 +2709,7 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
             f"test_{name}_xform_",
             f"test_{name}_str_",
             f"test_{name}_body_",
+            f"test_{name}_roundtrip_",
             f"smoke_{name}",
         ])
     return filters
