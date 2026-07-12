@@ -558,9 +558,14 @@ class TDDGenerator:
         # the correct COMPLETE translation is an empty body. There is nothing
         # to verify (no inputs, no observable output) — accept on compile.
         from alchemist.implementer.init_templates import (
-            noop_table_init_template,
+            noop_table_init_template, free_noop_template,
         )
         noop_init = noop_table_init_template(alg)
+        # A pure free/destroy wrapper (C body is only deallocation calls) is a
+        # no-op in safe Rust — owned buffers drop automatically. Same accept-on-
+        # compile path as the static-table no-op; body-confirmed, so fail-closed.
+        if noop_init is None:
+            noop_init = free_noop_template(alg, getattr(self, "_source_root", None))
         if noop_init:
             current = module_path.read_text(encoding="utf-8")
             replaced = self._replace_fn_in_source(current, alg.name, noop_init)

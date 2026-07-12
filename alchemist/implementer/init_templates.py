@@ -72,6 +72,62 @@ def noop_table_init_template(alg) -> str | None:
     )
 
 
+_FREE_CALL_RE = re.compile(
+    r"^(free|cfree|kfree|vfree|xfree|g_free|\w+_(free|destroy|release|dispose|cleanup))"
+    r"\s*\(.*\)$", re.IGNORECASE)
+
+
+def free_noop_template(alg, source_root) -> str | None:
+    """A `void free_X(ptr)` whose C body is ONLY deallocation calls is a no-op in
+    safe Rust — an owned buffer (Vec/Box) drops automatically. Accept it as an
+    empty body ONLY when the C body CONFIRMS pure deallocation (fail-closed: any
+    other statement and we defer to the model). This clears the "no test vectors"
+    refusal for a genuine free/destroy wrapper (heap:free_buffer), which the model
+    itself recognises should be removed under Rust ownership.
+    """
+    if source_root is None:
+        return None
+    ret = (alg.return_type or "()").strip()
+    if ret not in ("()", "void", ""):
+        return None
+    if len(alg.inputs or []) != 1:
+        return None
+    pt = (alg.inputs[0].rust_type or "").strip()
+    if not (pt.startswith("&") or pt.startswith("Vec<") or pt.startswith("Box<")
+            or "[u8" in pt or pt.startswith("*")):
+        return None
+    from pathlib import Path
+    from alchemist.implementer.reference_probe import extract_c_function_body
+    body = None
+    root = Path(source_root)
+    for cf in list(root.rglob("*.c")) + list(root.rglob("*.h")):
+        try:
+            b = extract_c_function_body(cf, alg.name)
+        except Exception:  # noqa: BLE001
+            b = None
+        if b:
+            body = b
+            break
+    if not body:
+        return None
+    # extract_c_function_body returns the WHOLE function; take the { ... } body.
+    open_i, close_i = body.find("{"), body.rfind("}")
+    if open_i == -1 or close_i <= open_i:
+        return None
+    b = body[open_i + 1:close_i]
+    b = re.sub(r"/\*.*?\*/", " ", b, flags=re.DOTALL)
+    b = re.sub(r"//[^\n]*", " ", b)
+    stmts = [s.strip() for s in b.split(";") if s.strip()]
+    if not stmts or not all(_FREE_CALL_RE.match(s) for s in stmts):
+        return None
+    from alchemist.implementer.skeleton import _fn_signature
+    return (f"{_fn_signature(alg)} {{\n"
+            f"    // The C original freed the buffer. In safe Rust an owned buffer\n"
+            f"    // (Vec/Box) is dropped automatically, so this deallocation is a\n"
+            f"    // no-op — there is nothing to verify.\n"
+            f"}}")
+
+
 def is_init_function(name: str) -> bool:
     """True iff a deterministic reset-to-default template is applicable.
 

@@ -693,6 +693,39 @@ def _lib_rs_for(
     for e in errors:
         lines.append(emit_error_enum(e))
         lines.append("")
+
+    # Placeholder error types: the architect sometimes writes a trait method
+    # returning `Result<_, SomeError>` without defining SomeError anywhere (base64's
+    # `Decoder::decode -> Result<Vec<u8>, DecodeError>`). An undefined type breaks
+    # the WHOLE crate's compile -> the library fills 0 functions. Emit a minimal
+    # placeholder for any error type a trait references but that isn't defined here
+    # or imported, so the skeleton compiles and the fill loop can run.
+    rendered = "\n".join(lines)
+    defined = {e.name for e in errors} | {t.name for t in traits}
+    referenced: set[str] = set()
+    _NOT_ERR = {"Self", "Vec", "String", "Box", "Option", "Result", "Ok", "Err",
+                "Some", "None", "HashMap", "BTreeMap", "Cow"}
+    for t in traits:
+        for m in t.methods:
+            # The error type is the uppercase identifier ending a `Result<…, X>`.
+            # Match `, X>` so nested generics (`Result<Vec<u8>, DecodeError>`) work.
+            for em in re.finditer(r",\s*([A-Z][A-Za-z0-9_]*)\s*>", m.signature or ""):
+                if em.group(1) not in _NOT_ERR:
+                    referenced.add(em.group(1))
+    for et in sorted(referenced - defined):
+        # Skip types that are already imported / re-exported into scope above.
+        if re.search(rf"\buse\b[^\n;]*\b{re.escape(et)}\b", rendered) or \
+                re.search(rf"\bpub\s+use\b[^\n;]*::\*", rendered):
+            continue
+        lines.append(f"/// Placeholder error (referenced by a trait, not otherwise defined).")
+        lines.append(f"#[derive(Debug, Clone, PartialEq, Eq)]")
+        lines.append(f"pub struct {et};")
+        lines.append(f"impl core::fmt::Display for {et} {{")
+        lines.append(f"    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{")
+        lines.append(f'        write!(f, "{et}")')
+        lines.append("    }")
+        lines.append("}")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
