@@ -6,6 +6,28 @@ The one document for the whole climb: **~285 concrete milestones** across **8 ve
 
 > Interactive, checkable version: `docs/master-tracker.html` (progress persists in-browser).
 
+## Progress at a glance  *(as of 2026-07-12)*
+
+| Phase / Track | Done | Status |
+|---|---|---|
+| **F** · Foundations | **12/12** | ✅ complete |
+| **P0** · Reliability Floor | **14/14** | ✅ complete (+P0.8a) |
+| **P1** · Whole Small/Mid C Library | **4/15** | 🔨 in progress (1 active) |
+| P2 · Scale — Large Single Codebase | 0/12 | ⬜ not started |
+| P3 · C++ Frontier | 0/8 | ⬜ |
+| P4 · Embedded & Unsafe Boundary | 0/8 | ⬜ |
+| P5 · ArduPilot | 0/22 | ⬜ frontier |
+| P6 · Autonomy — Point & Walk Away | 0/12 | ⬜ continuous |
+| Track · SEM (semantics) | 0/70 | ⬜ * |
+| Track · VER (verification) | 0/25 | 🔨 2 active * |
+| Track · MODEL | 0/21 | 🔨 1 active * |
+| Track · IDIOM | 0/12 | ⬜ * |
+| Track · PERF | 0/8 | ⬜ * |
+| Track · INFRA | 0/20 | ⬜ * |
+| **TOTAL** | **30/259 (11%)** | |
+
+\* **Track vs phase counts overlap and are honest by design.** The 6 capability Tracks are the reusable-capability backlog; when a track capability is *delivered*, it is recorded against the phase item that demanded it (e.g. the struct-carry, type-unifier, e2e-oracle, and decomposition capabilities live as **F.7–F.9** and the shape system as **P0.8/P0.8a/P0.9 + P1.15**), not double-checked in the Track list. So the Track checkboxes read low even though much of their machinery is built and verified — they track *remaining* capability, phases track *delivered* capability. The reliability floor (F+P0 = 26 items) is 100% done; the current front is **P1**.
+
 ## Where we sit in the field (researched, not guessed)
 
 - **DARPA TRACTOR (2024)** — a DoD program to translate *all* C to idiomatic, safe Rust. Validates the vision at the national-security level and is a funding lane. Our edge: verification-gated, model-writes-every-line, fail-closed.
@@ -21,6 +43,122 @@ The one document for the whole climb: **~285 concrete milestones** across **8 ve
 `eng` engineering · `wire` wire existing-but-dead code · `research` research-hard/open problem · `model` model-dependent · `infra` infrastructure · `product` product/GTM · `unsafe` irreducible unsafe boundary
 
 Status: `[ ]` to-do · `[~]` active · `[x]` done · `[!]` blocked
+
+---
+
+## Architecture — how the machine works, and where every item lives
+
+*Read this once and the whole tracker becomes navigable: each phase/track item below is a change to one of the components described here. Every item's note names the component and commit; this section says what that component IS and where its code lives. Paths are relative to the repo root (`alchemist/…`). Line counts are approximate load-bearing sizes, not limits.*
+
+### 0. The one idea
+
+**The oracle, not the model, is the source of truth.** A local model (Gemma 4 31B, US-origin, on the box at `:8086`) writes every line of Rust. Nothing it writes is trusted until a **byte-exact differential oracle** — the compiled C reference, fuzzed through FFI and compared against the Rust — agrees on every input. **No oracle ⇒ refuse** (fail-closed). We never hand-write translation output; we build, run, and sharpen the *converter*. A refusal is an honest "we can't prove this yet," never a silent stub.
+
+### 1. The 6-stage pipeline  (`pipeline.py` orchestrates; `cli.py translate` is the entry point)
+
+```
+   C source dir
+       │
+  [1] analyze   analyzer/         parse C, build call graph, detect algorithmic modules
+       │                          → parser.py, call_graph.py, module_detector.py, preprocessor.py
+  [2] extract   extractor/        per-fn spec: signature, Rust-lifted types, test vectors, category
+       │                          → spec_extractor.py, normalizer.py, function_classifier.py, schemas.py
+  [3] architect architect/        design the crate/trait/type layout across modules
+       │                          → crate_designer.py, trait_extractor.py, type_unifier.py, validator.py
+  [4] implement implementer/      TDD fill: skeleton → emit tests → model fills each fn → in-loop verify
+       │                          → tdd_generator.py (the heart), skeleton.py, test_generator.py
+  [5] verify    verifier/         the 5-gate final differential proof (see §3)
+       │                          → auto_config.py, adapter_gen.py, proptest_gen.py, differential_tester.py
+  [6] report    reporter/         refusal ledger, metrics, perf, signed receipt
+                                   → refusal_ledger.py, metrics.py, perf.py; receipt in verifier/receipt.py
+```
+
+Specs are checkpointed to `<subject>/.alchemist/specs/`; a run is resumable. `solo.py` runs a scoped single-/few-function translate for fast iteration; `lib_orchestrator.py` runs whole libraries.
+
+### 2. The shape system — the central abstraction (this is what most items touch)
+
+A C function is classified into a **shape** by its signature. The shape determines how the oracle mints inputs, compares outputs, and what tolerance applies. **This is the extensibility surface: adding support for a new kind of function = adding a new shape.**
+
+**Shape catalog** (each is a `classify_*` + `fuzz_*` pair in `verifier/auto_config.py`, plus emitters):
+
+| Shape | C signature (archetype) | Rust lift | Oracle |
+|---|---|---|---|
+| `checksum` | `u32 f(const u8*, len[, seed])` | `fn(&[u8][,seed])->u32` | scalar compare, fold boundaries |
+| `hash`/`digest` | `void f(const u8*, len, u8* out)` | `fn(&[u8])->Vec<u8>` | digest bytes + NIST/FIPS catalog KATs |
+| `scalar` | `T f(scalars…)` | `fn(scalars)->T` | scalar compare |
+| `inplace` | `void f(u8* buf, len)` | `fn(&mut[u8])` | mutated-buffer compare |
+| `buf_transform` | `int f(in,inlen,out,outlen)` | `fn(&[u8])->Vec<u8>` | out[0..ret]; **decoder→roundtrip via `_paired_encoder_name`** |
+| `cbuf_out` | `char* f(char*)` (text→text, e.g. NMEA) | `fn(&str)->String` | result-string compare |
+| `cstr_out` | `char* f(char*)` (text encoder) | `fn(&[u8]\|&str)->String` | NUL-terminated string compare |
+| `cstr_scalar` | `T f(const char* s, scalars…)` | `fn(&str,…)->T` | scalar compare |
+| `iarray_reduce` | `T f(const int* a, n)` | `fn(&[int])->T` | scalar reduce |
+| `buf_gen` | `u8* f(size n,…)` | `fn(n,…)->Vec<u8>` | generated-buffer compare |
+| `cstr_roundtrip` | `char* f(char*)` **binary-out decoder** | `fn(&str)->Result<Vec<u8>,E>` | **P1.15**: mint via paired C encoder, `decode(encode(p))==p` |
+| `cipher_seq` / `alloc_seq` / `hash_seq` | init+op sharing a struct | struct-carried | sequence differential (state observer) |
+| `scalar_mutator` | `void f(&mut State, scalars)` | struct-carried | state-mutation differential |
+
+**⚠️ The N-site wiring rule (the single most important thing to know when adding/reading a shape).** A shape is not one function — it is wired at **5–7 sites that must all agree**, and there are **TWO independent vector-dispatch paths** that both need the shape or the fill loop silently sees "no test vectors":
+
+1. `classify_<shape>()` + `fuzz_<shape>_vectors()` — `verifier/auto_config.py`
+2. **Dispatch A** — `synthesize_c_vectors()` per-fn dispatch — `verifier/auto_config.py` (the pipeline calls this)
+3. **Dispatch B** — the `TDDGenerator` fuzz backfill dispatch — `implementer/tdd_generator.py` (~line 2416). The generator **clears machine-tagged vectors and re-mints via its own dispatch**; a shape missing here dies even if Dispatch A produced vectors. *(This bit us on P1.15.)*
+4. `build_diff_config()` harness branch — `verifier/auto_config.py` (feeds the final gate; must be checked before more-general shapes)
+5. proptest block `_proptest_<shape>_block()` + `VALID_CATEGORIES` — `verifier/proptest_gen.py`
+6. FFI adapter branch — `verifier/adapter_gen.py` (emits `rust_<fn>` and `c_<fn>` wrappers)
+7. fill-loop test emitter `_emit_<shape>_test()` + the cargo-test name filter in `_test_filters_for_fn()` — `implementer/test_generator.py` + `tdd_generator.py`. *(A missing filter ⇒ 0 tests run ⇒ false "no test vectors". Also bit us on P1.15.)*
+
+Canonical worked example of all 7 sites: **P1.15 `cstr_roundtrip`** (commits 07020fd→c8bff85). Simpler examples: **P0.8a `cstr_out`**, **P0.8 `iarray_reduce`/`cstr_scalar`**, **P1-baseline `buf_gen`**.
+
+### 3. The verification gate stack  (stage 5; the fail-closed proof)
+
+Emitted by `auto_config.build_diff_config()` → `adapter_gen` + `proptest_gen` into a throwaway `verify_gen/` crate, run by `differential_tester.py`:
+
+- **gate 1** `cargo check --workspace` — it compiles.
+- **gate 2** anti-stub scan (`implementer/anti_stub.py`) — no `todo!()`/`unimplemented!()`/trivial-constant returns.
+- **gate (structural)** no-`unsafe` proof — the output is safe Rust.
+- **gate 3** semantic lints (`implementer/semantic_lints.py`) — no oracle-evading shortcuts.
+- **gate 4** `cargo test --workspace` — the spec/KAT vectors (C-minted) pass.
+- **gate 5** differential proptest — fresh fuzzed inputs, Rust vs C **live**, byte-exact.
+
+**Vector minting & crash isolation** (`synthesize_c_vectors`): the C reference is compiled to a DLL and called via `ctypes`; because fuzzed inputs hit real C undefined behavior, minting runs in a **forked child** — a segfault returns 0 vectors (fail-closed) instead of killing the translator. A signed receipt (`verifier/receipt.py`) seals gates+harnesses+oracle+env with a content-SHA256 (optional HMAC).
+
+### 4. Type & memory model  (how the skeleton compiles cold)
+
+- **struct-carry** (`verifier/struct_lift.py`, wired in `pipeline.py`) lifts C state structs into Rust so the skeleton compiles before any body is filled. Resolves scalar typedefs (`BYTE`→`u8`), enum typedefs (`jsmntype_t`→`i32`), strips `#ifdef` in struct bodies, and raw-escapes keyword fields (`type`→`r#type`).
+- **type_unifier** (`architect/type_unifier.py`) auto-derives one coherent type model across fractured modules from the analysis (no hand-written registry — F.9).
+- **normalizers** (`extractor/normalizer.py` + `auto_config` lifts) canonicalize specs; **`solo._load_specs_and_arch` re-applies them on every reload** so a reloaded spec matches the in-memory one (P0.3).
+
+### 5. Fill escalation ladder  (`implementer/tdd_generator.py`, cheapest→dearest; `won_via` records which tier won)
+
+`cached` (subject-anchored win cache `<subject>/.alchemist/wins`, P0.4) → deterministic `template` (init/reset `init_templates.py`; static-table no-op; free/destroy no-op) → `single` model fill → `multi_sample` best-of-N (`multi_sample.py`) → `holistic` whole-file fixer (`holistic.py`, self-terminates after 2 no-op patches, P0.5) → `decomposition` gcc-proven byte-exact split (`structural_decomp.py`, F.7). Reference transliteration via `reference_probe.py`.
+
+### 6. Reliability & observability layer
+
+- **refusal ledger** (`reporter/refusal_ledger.py`) — the north-star metric: per-fn verified/refused + reason + `won_via` + telemetry (`elapsed_s`/`llm_calls`/`output_tokens`), plus `wins_by_tier` rollup. Written to `<subject>/.alchemist/refusal_ledger.json`.
+- **deterministic replay** — `ALCHEMIST_DETERMINISTIC=1` forces temp 0 + single-sample everywhere (byte-identical output proven, P0.13).
+- **benchmarks** — `bench/leaf/` (26 unseen leaf fns → scorecard, P0.11) and `bench/lib/run_libbench.py` (whole-lib batch → per-lib + overall refusal, P1.10). Nightly cron runs the real pipeline+model (P0.12).
+
+### 7. How to trace any tracker item to its code
+
+Every completed item's note carries **(a)** the component/shape it changed (names map to §1–6 above), **(b)** the commit SHA, and **(c)** the box-validation result where model-dependent. To go from an item to code: read the note → find the named module in the map above → `git show <sha>`. New capability items are almost always "a new shape" (§2, the 7 sites) or "a new gate/lever" (§3/§5).
+
+**Component → primary file quick map:**
+
+| Concern | File(s) |
+|---|---|
+| Pipeline orchestration | `pipeline.py`, `cli.py`, `solo.py`, `lib_orchestrator.py` |
+| Analyze | `analyzer/{parser,call_graph,module_detector,preprocessor}.py` |
+| Extract / specs | `extractor/{spec_extractor,normalizer,function_classifier,schemas,fuzz_vectors}.py` |
+| Architect / types | `architect/{crate_designer,trait_extractor,type_unifier,validator,schemas}.py` |
+| **Shapes & oracle config** | **`verifier/auto_config.py`** (classify/fuzz/synthesize/build_diff_config) |
+| Fill loop (the heart) | `implementer/tdd_generator.py` |
+| Skeleton / tests | `implementer/{skeleton,test_generator,init_templates}.py` |
+| Struct-carry | `verifier/struct_lift.py` |
+| Gate emit | `verifier/{adapter_gen,proptest_gen,differential_tester,auto_ffi}.py` |
+| Gates (stub/lint) | `implementer/{anti_stub,semantic_lints}.py` |
+| Escalation tiers | `implementer/{multi_sample,holistic,structural_decomp,reference_probe}.py` |
+| Report / receipts | `reporter/{refusal_ledger,metrics,perf}.py`, `verifier/receipt.py` |
+| Benchmarks | `bench/leaf/`, `bench/lib/` |
 
 ---
 
