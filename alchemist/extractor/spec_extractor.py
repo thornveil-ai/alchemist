@@ -161,7 +161,13 @@ class SpecExtractor:
         # Gather (function_name, file_path, source_code) tuples
         func_data = []
         for filepath, file_data in files_dict.items():
-            if not filepath.endswith(".c"):
+            # Read function bodies from C source AND headers: a header-only
+            # library (jsmn, stb-style) keeps its whole implementation in a `.h`.
+            # This is safe because the parser only records functions that have a
+            # body, and the `func["name"] not in module_funcs` guard below keeps
+            # us to exactly the module's own functions — a prototype-only header
+            # contributes nothing.
+            if not filepath.endswith((".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh")):
                 continue
             try:
                 source = Path(filepath).read_text(errors="replace")
