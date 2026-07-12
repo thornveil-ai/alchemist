@@ -1,6 +1,6 @@
 {
   "subjects": 23,
-  "subjects_overall_pass": 18,
+  "subjects_overall_pass": 21,
   "total_functions": 23,
   "verified": 21,
   "refused": 2,
@@ -43,7 +43,7 @@
         {
           "name": "adler32s",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -61,7 +61,7 @@
         {
           "name": "clz32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -97,7 +97,7 @@
         {
           "name": "crc32b",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -115,7 +115,7 @@
         {
           "name": "djb2buf",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -133,7 +133,7 @@
         {
           "name": "fletcher16b",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -151,7 +151,7 @@
         {
           "name": "fnv1a",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -169,7 +169,7 @@
         {
           "name": "gcd32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -177,7 +177,7 @@
     {
       "subject": "hex_encode",
       "category": "cstr",
-      "overall": "FAIL",
+      "overall": "PASS",
       "total": 1,
       "verified": 1,
       "refused": 0,
@@ -187,7 +187,7 @@
         {
           "name": "hex_encode",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -205,7 +205,7 @@
         {
           "name": "imin",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -223,7 +223,7 @@
         {
           "name": "isqrt32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -241,7 +241,7 @@
         {
           "name": "jenkins_oaat",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -259,7 +259,7 @@
         {
           "name": "myabs",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -277,7 +277,7 @@
         {
           "name": "next_pow2",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -313,7 +313,7 @@
         {
           "name": "popcount32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -331,7 +331,7 @@
         {
           "name": "reverse_bits32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -339,7 +339,7 @@
     {
       "subject": "rot13",
       "category": "cstr",
-      "overall": "FAIL",
+      "overall": "PASS",
       "total": 1,
       "verified": 1,
       "refused": 0,
@@ -349,7 +349,7 @@
         {
           "name": "rot13",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -367,7 +367,7 @@
         {
           "name": "rotl32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -403,7 +403,7 @@
         {
           "name": "sum8",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -429,7 +429,7 @@
     {
       "subject": "to_upper",
       "category": "cstr",
-      "overall": "FAIL",
+      "overall": "PASS",
       "total": 1,
       "verified": 1,
       "refused": 0,
@@ -439,7 +439,7 @@
         {
           "name": "to_upper",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]

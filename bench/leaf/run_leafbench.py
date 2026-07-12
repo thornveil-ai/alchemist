@@ -90,8 +90,14 @@ def run_subject(subject: Path, *, timeout: int = 600) -> dict:
         entry["verified"] = led.get("verified", 0)
         entry["refused"] = led.get("refused", 0)
         entry["refusal_rate"] = led.get("refusal_rate", 0.0)
+        # first-pass = verified with <=1 repair iteration. iterations==0 is the
+        # BEST case (win restored / no fill retry) — guard against the `0 or 99`
+        # falsy trap that would misscore a perfect iteration-0 result as a miss.
+        def _iters(f):
+            it = f.get("iterations")
+            return 99 if it is None else it
         entry["first_pass"] = sum(
-            1 for f in fns if f.get("verified") and (f.get("iterations") or 99) <= 1)
+            1 for f in fns if f.get("verified") and _iters(f) <= 1)
         entry["functions"] = [
             {"name": f.get("name"), "verified": f.get("verified"),
              "iterations": f.get("iterations"),
