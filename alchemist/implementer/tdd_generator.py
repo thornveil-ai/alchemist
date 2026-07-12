@@ -2606,6 +2606,8 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
       test_<fn>_state_<idx>    — state-mutator vectors
       test_<fn>_observer_<idx> — observer vectors
       test_<fn>_xform_<idx>    — byte-transform vectors (zmem* family)
+      test_<fn>_str_<idx>      — str_exact vectors (cbuf_out/NMEA, cstr_out)
+      test_<fn>_body_<idx>     — fully-rendered rust_body vectors (tree-builders)
       smoke_<fn>               — legacy smoke test (rare)
 
     Handles snake-case conversion: spec names like `zlibCompileFlags` are
@@ -2623,6 +2625,8 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
             f"test_{name}_state_",
             f"test_{name}_observer_",
             f"test_{name}_xform_",
+            f"test_{name}_str_",
+            f"test_{name}_body_",
             f"smoke_{name}",
         ])
     return filters
