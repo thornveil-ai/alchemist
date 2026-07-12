@@ -2263,6 +2263,31 @@ def build_diff_config(
         used_signatures.append(by_name[_hs["init"][0]])
         used_signatures.append(by_name[_hs["update"][0]])
         used_signatures.append(by_name[_fin])
+    # Context-hash digest sequence (SHA-256/SHA-1/MD5/HMAC): multi-field ctx +
+    # final(ctx, out_digest). The gate-5 differential runs the whole
+    # init->update->final sequence on both sides and compares the N-byte digest.
+    _dgs = classify_hash_digest_sequence(by_name, _structs, specs)
+    if _dgs is not None:
+        _dfin = _dgs["final"][0]
+        _dffi = struct_lift.emit_ffi_struct(_dgs["rust"], _dgs["fields"])
+        if _dffi is not None:
+            _struct_defs.append(_dffi)
+            _typedef_overrides[_dgs["struct"]] = _dgs["rust"]
+            harnesses.append(AlgorithmHarness(
+                algorithm=_dfin,
+                category="hash_digest_seq",
+                rust_call=f"rust_{_dfin}(data.clone())",
+                c_call=f"c_{_dfin}(data)",
+                cases=2000,
+                input_strategy="prop::collection::vec(any::<u8>(), 0..512)",
+                seq_struct=_dgs["rust"],
+                seq_init=_dgs["init"][0],
+                seq_gen=_dgs["update"][0],
+                digest_len=_dgs["digest_len"],
+            ))
+            used_signatures.append(by_name[_dgs["init"][0]])
+            used_signatures.append(by_name[_dgs["update"][0]])
+            used_signatures.append(by_name[_dfin])
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             # The C signature shape is the real gate — a scalar-returning

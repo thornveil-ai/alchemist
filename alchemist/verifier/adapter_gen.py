@@ -805,6 +805,45 @@ def plan_adapters(
                     rust_crates={init_fn.crate, gen_fn.crate},
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{gen_fn.name} (cipher seq)",
                 ))
+            elif h.category == "hash_digest_seq":
+                # Context-hash (SHA-256/SHA-1/MD5): run the whole
+                # init->update->final sequence and return the N-byte digest.
+                init_fn = _pick_unambiguous(h.seq_init, api)
+                upd_fn = _pick_unambiguous(h.seq_gen, api)
+                fin_fn = _pick_unambiguous(h.algorithm, api)
+                if init_fn is None or upd_fn is None or fin_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt hash-digest-seq '{h.algorithm}': "
+                        f"init/update/final fn not found")
+                ci = init_fn.crate_ident
+                st = h.seq_struct or "State"
+                n = h.digest_len
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(data: Vec<u8>) -> [u8; {n}] {{\n"
+                    f"    let mut ctx = {ci}::{st}::default();\n"
+                    f"    {init_fn.crate_ident}::{init_fn.name}(&mut ctx);\n"
+                    f"    {upd_fn.crate_ident}::{upd_fn.name}(&mut ctx, &data);\n"
+                    f"    let mut out = [0u8; {n}];\n"
+                    f"    {fin_fn.crate_ident}::{fin_fn.name}(&mut ctx, &mut out);\n"
+                    f"    out\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(data: Vec<u8>) -> [u8; {n}] {{\n"
+                    f"    let mut ctx: {ffi_ident}::{st} = unsafe {{ core::mem::zeroed() }};\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(&mut ctx as *mut _); }}\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_gen}(&mut ctx as *mut _, "
+                    f"data.as_ptr(), data.len() as _); }}\n"
+                    f"    let mut out = [0u8; {n}];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(&mut ctx as *mut _, "
+                    f"out.as_mut_ptr()); }}\n"
+                    f"    out\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={init_fn.crate, upd_fn.crate, fin_fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
+                               f"{fin_fn.name} (hash digest seq)",
+                ))
             elif h.category == "hash_seq":
                 init_fn = _pick_unambiguous(h.seq_init, api)
                 upd_fn = _pick_unambiguous(h.seq_gen, api)

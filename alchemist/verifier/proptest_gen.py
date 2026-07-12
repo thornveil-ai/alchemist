@@ -35,7 +35,7 @@ VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
-    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "cstr_out", "buf_transform",
+    "cipher_seq", "alloc_seq", "hash_seq", "hash_digest_seq", "cbuf_out", "cstr_out", "buf_transform",
     "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip"}
 
 
@@ -240,6 +240,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
         return _proptest_hash_seq_block(h)
+    if h.category == "hash_digest_seq":
+        return _proptest_hash_digest_seq_block(h)
     if h.category == "buf_transform":
         return _proptest_buf_transform_block(h)
     if h.category == "cbuf_out":
@@ -525,6 +527,23 @@ def _proptest_hash_seq_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference(data in {strat}) {{
                 prop_assert_eq!(rust_{h.algorithm}(data.clone()), c_{h.algorithm}(data));
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_hash_digest_seq_block(h: AlgorithmHarness) -> str:
+    """Context-hash digest sequence differential (SHA-256/SHA-1/MD5): fuzz the
+    message, run the whole init->update->final sequence on BOTH the Rust port and
+    the compiled-C reference, and compare the N-byte digest byte-exactly."""
+    strat = h.input_strategy or "prop::collection::vec(any::<u8>(), 0..512)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_digest_matches_c_reference(data in {strat}) {{
+                prop_assert_eq!({h.rust_call}, {h.c_call});
             }}
         }}
     """).rstrip()
