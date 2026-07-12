@@ -158,6 +158,29 @@ def test_sha256_with_h0_and_be_padding_clean():
     assert not has_errors(findings)
 
 
+def test_sha256_transform_without_h0_not_flagged():
+    # The transform consumes an existing working state; H0 belongs in init only.
+    # Requiring it here was the sha256 0/4 whole-library false-refusal.
+    src = """
+    pub fn sha256_transform(state: &mut Sha256Ctx, block: &[u8]) {
+        let k: [u32; 64] = [0x428a2f98, 0x71374491, /* ... */];
+        // ... 64 rounds of wrapping arithmetic on state.data ...
+    }"""
+    for fn in ("sha256_transform", "sha256_update", "sha256_final"):
+        alg = _alg(fn, return_type="()")
+        findings = lint_sha256(src, alg)
+        assert not any(f.rule == "sha256_missing_h0" for f in findings), \
+            f"{fn} wrongly flagged for missing H0"
+
+
+def test_sha256_init_without_h0_still_flagged():
+    # init seeds the hash state — a stub init lacking H0 must still be caught.
+    src = "pub fn sha256_init(ctx: &mut Sha256Ctx) { }"
+    alg = _alg("sha256_init", return_type="()")
+    findings = lint_sha256(src, alg)
+    assert any(f.rule == "sha256_missing_h0" for f in findings)
+
+
 # ---------- MD5 ----------
 
 def test_md5_with_be_length_flagged():

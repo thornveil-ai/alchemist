@@ -259,8 +259,20 @@ def lint_sha256(source: str, alg: AlgorithmSpec) -> list[SemanticFinding]:
             severity="error",
             message="SHA-256 length padding must be big-endian. to_le_bytes is MD5, not SHA.",
         ))
-    # Initial hash words — one of H0[0] must appear
-    if "0x6a09_e667" not in source and "0x6a09e667" not in source.lower().replace("_", ""):
+    # Initial hash words — H0[0] must appear where the hash state is SEEDED: an
+    # init/reset or a monolithic all-in-one `sha256(msg) -> digest`. A decomposed
+    # SHA-256 splits into init/update/final/transform, and the initial vector
+    # lives ONLY in init — the helpers that CONSUME an existing working state
+    # (transform/update/final/compress/block) legitimately never contain
+    # 0x6a09e667, so requiring it there refuses correct code on every iteration
+    # (this was the sha256 0/4 whole-library batch failure). Skip the check for
+    # those state-consuming helpers; require it everywhere else (init + monolithic).
+    name = (alg.name or "").lower()
+    consumes_state = any(k in name for k in
+                         ("transform", "update", "final", "compress", "_block"))
+    if not consumes_state \
+            and "0x6a09_e667" not in source \
+            and "0x6a09e667" not in source.lower().replace("_", ""):
         findings.append(SemanticFinding(
             rule="sha256_missing_h0",
             severity="error",
