@@ -1146,12 +1146,19 @@ def fuzz_cstr_roundtrip_vectors(dll, alg, sig, enc_name, *, count: int = 24):
             continue
         if not isinstance(ct, (bytes, bytearray)):
             continue
+        ct_bytes = bytes(ct)
         # Encoder failure (NULL / empty output for a non-empty plaintext) would
         # mint a bogus `decode("") == p` vector — drop it. An empty plaintext
         # legitimately encodes to empty, so only guard the non-empty case.
-        if len(p) > 0 and len(bytes(ct)) == 0:
+        if len(p) > 0 and len(ct_bytes) == 0:
             continue
-        ct_s = bytes(ct).decode("ascii", "replace")
+        # A `&str`-input decoder needs the encoded stream to be valid ASCII (a
+        # real caller passes text). Standard base64 output is always ASCII; a
+        # non-ASCII byte means the encoder misbehaved on this input — skip it
+        # (also, a non-ASCII byte cannot be rendered in a Rust `"..."` literal).
+        if in_is_str and any(b >= 128 for b in ct_bytes):
+            continue
+        ct_s = ct_bytes.decode("ascii", "replace")
         in_lit = _rust_str_lit(ct_s) if in_is_str else _rust_bytes_lit(bytes(ct))
         expected = (_rust_str_lit(p.decode("ascii", "replace"))
                     if text_out else _rust_bytes_lit(p))
