@@ -221,6 +221,15 @@ class TDDGenerator:
         self.multi_sample_after = multi_sample_after
         self.multi_sample_n = multi_sample_n
         self.multi_sample_temperature = multi_sample_temperature
+        # P0.13 deterministic replay: with ALCHEMIST_DETERMINISTIC set, decode
+        # greedily everywhere (temp 0) and collapse the multi-sample fan-out to a
+        # single greedy sample, so the same subject + fixed fuzz seed reproduces
+        # byte-identical Rust across runs. Off by default (sampling finds more wins).
+        import os as _os
+        self._deterministic = bool(_os.environ.get("ALCHEMIST_DETERMINISTIC"))
+        if self._deterministic:
+            self.multi_sample_temperature = 0.0
+            self.multi_sample_n = 1
 
     # --- Main entry ---
 
@@ -1127,6 +1136,9 @@ class TDDGenerator:
         temperature: float = 0.15,
         module_source: str | None = None,
     ) -> str | None:
+        # P0.13: greedy decode in deterministic-replay mode.
+        if getattr(self, "_deterministic", False):
+            temperature = 0.0
         from alchemist.standards import lookup_test_vectors
         from alchemist.references import find_references
         from alchemist.references.registry import references_for_standards
@@ -1842,7 +1854,7 @@ class TDDGenerator:
                     },
                     cached_context=getattr(self, "_cached_ctx", None),
                     max_tokens=4000,
-                    temperature=0.2,
+                    temperature=0.0 if getattr(self, "_deterministic", False) else 0.2,
                 )
             except Exception:  # noqa: BLE001
                 return None
@@ -1991,7 +2003,7 @@ class TDDGenerator:
                 },
                 cached_context=getattr(self, "_cached_ctx", None),
                 max_tokens=6000,
-                temperature=0.15,
+                temperature=0.0 if getattr(self, "_deterministic", False) else 0.15,
             )
         except Exception:  # noqa: BLE001
             return None
