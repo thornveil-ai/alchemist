@@ -148,6 +148,38 @@ def test_checksum_still_wins_over_cstr_scalar(tmp_path):
 
 # ---------------- proptest + adapter rendering ----------------
 
+def test_load_specs_applies_auto_config_normalizers(tmp_path):
+    """P0.3: _load_specs_and_arch (used by BOTH solo and the verify stage) must apply
+    the auto_config type-lifts, or a reload sees pre-normalization specs — the exact
+    stale-spec coupling that made count_char's differential disagree with the model."""
+    from alchemist.extractor.schemas import ModuleSpec, AlgorithmSpec, Parameter
+    from alchemist.architect.schemas import CrateArchitecture
+    from alchemist.solo import _load_specs_and_arch
+
+    subject = tmp_path
+    (subject / "count_char.c").write_text(
+        "int count_char(const char *s, char c) { int n=0; while(*s){ if(*s==c) n++; s++; } return n; }\n",
+        encoding="utf-8")
+    alch = subject / ".alchemist"
+    specs_dir = alch / "specs"
+    specs_dir.mkdir(parents=True)
+    alg = AlgorithmSpec(
+        name="count_char", display_name="count_char", category="utility",
+        description="count", return_type="usize",
+        inputs=[Parameter(name="s", rust_type="&str", description="s"),
+                Parameter(name="c", rust_type="char", description="c")],  # the mis-lift
+    )
+    mod = ModuleSpec(name="count_char", display_name="count_char",
+                     description="m", algorithms=[alg])
+    (specs_dir / "count_char.json").write_text(mod.model_dump_json(indent=2), encoding="utf-8")
+    arch = CrateArchitecture(workspace_name="count-char", description="w", crates=[])
+    (alch / "architecture.json").write_text(arch.model_dump_json(indent=2), encoding="utf-8")
+
+    specs, _arch, _out = _load_specs_and_arch(subject)
+    c_param = next(p for m in specs for a in m.algorithms for p in a.inputs if p.name == "c")
+    assert c_param.rust_type == "i8", "reload must re-lift the C `char` value-arg to i8"
+
+
 def test_proptest_blocks_render():
     from alchemist.verifier.proptest_gen import AlgorithmHarness, emit_differential_test
     ir = AlgorithmHarness(

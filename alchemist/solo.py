@@ -107,6 +107,23 @@ def _load_specs_and_arch(
     # Apply same pre-flight fixes the pipeline uses so solo sees corrected specs.
     from alchemist.extractor.normalizer import normalize_all
     specs, _ = normalize_all(specs)
+    # Apply the SAME auto_config type-lifts the implement stage applies in-memory
+    # (byte-buffer, char-scalar, digest). Without this, a reload — including the
+    # verify stage's build_diff_config — sees pre-normalization specs (e.g. a C
+    # `char` value-arg still typed Rust `char`), so the generated differential
+    # disagrees with the model's actual (normalized) signature. All three are
+    # idempotent, so re-applying to already-normalized disk specs is a no-op.
+    try:
+        from alchemist.verifier.auto_config import (
+            normalize_byte_buffer_types,
+            normalize_char_scalar_params,
+            normalize_digest_specs,
+        )
+        normalize_byte_buffer_types(subject, specs)
+        normalize_char_scalar_params(subject, specs)
+        normalize_digest_specs(subject, specs)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from alchemist.extractor.spec_auditor import audit_all, apply_auto_fixes
         report = audit_all(specs, subject)
