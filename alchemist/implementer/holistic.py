@@ -54,6 +54,11 @@ class HolisticResult:
     success: bool = False
     files_changed: list[str] = field(default_factory=list)
     final_stderr: str = ""
+    # Set when the loop stops early because the model stopped making progress
+    # (empty patches or patches that rewrite identical content). Distinguishes
+    # "gave up, no progress" from "ran all iterations and still failing" so the
+    # caller can escalate instead of silently treating burned budget as a fail.
+    bail_reason: str = ""
 
 
 def _is_link_lock(stderr: str) -> bool:
@@ -153,6 +158,7 @@ class HolisticFixer:
         """Run up to `max_iter` holistic fix passes on a crate."""
         result = HolisticResult()
         cached = self.llm.create_cached_context(system_text=SYSTEM_PROMPT)
+        no_progress = 0  # consecutive iterations that changed nothing on disk
 
         for iteration in range(self.max_iter):
             result.iterations_run = iteration + 1
@@ -199,12 +205,30 @@ class HolisticFixer:
             patch = self._extract_file_map(resp)
             if not patch:
                 console.print(f"  [yellow]holistic iter {iteration + 1}: empty patch[/yellow]")
-                continue
+                no_progress += 1
+            else:
+                changed = self._apply_patch(crate_dir, patch)
+                result.files_changed.extend(changed)
+                if changed:
+                    no_progress = 0
+                else:
+                    # A patch arrived but touched nothing on disk (all rejected
+                    # as stubs, or every file rewritten to byte-identical content).
+                    console.print(
+                        f"  [yellow]holistic iter {iteration + 1}: no-op patch "
+                        f"(no file content changed)[/yellow]")
+                    no_progress += 1
 
-            changed = self._apply_patch(crate_dir, patch)
-            result.files_changed.extend(changed)
-            if not changed:
-                console.print(f"  [yellow]holistic iter {iteration + 1}: no changes applied[/yellow]")
+            # Never grind out the whole budget on a model that's stuck. Two
+            # consecutive no-op iterations means more calls won't help — bail with
+            # a reason so the caller escalates (structural decomp, etc.) instead of
+            # reading exhausted iterations as an ordinary compile failure.
+            if no_progress >= 2:
+                result.bail_reason = (
+                    f"holistic stopped after {iteration + 1} iters: "
+                    f"{no_progress} consecutive no-op patches (model not converging)")
+                console.print(f"  [yellow]{result.bail_reason}[/yellow]")
+                break
 
         # Final compile status after all iterations
         ok_chk, final_stderr = cargo_check(crate_dir)
@@ -257,6 +281,14 @@ class HolisticFixer:
                 content, _ = scrub_toml(content)
             content = content.replace("\r\n", "\n").replace("\r", "\n")
             target = crate_dir / rel
+            # A patch that rewrites a file to byte-identical content is a no-op —
+            # do NOT count it as a change, or the loop reads "progress" and burns
+            # another iteration recompiling the same errors.
+            if target.exists():
+                existing = target.read_text(encoding="utf-8").replace(
+                    "\r\n", "\n").replace("\r", "\n")
+                if existing == content:
+                    continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             changed.append(rel)
