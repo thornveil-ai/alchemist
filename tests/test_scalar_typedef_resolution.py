@@ -14,6 +14,7 @@ from pathlib import Path
 
 from alchemist.verifier.struct_lift import (
     collect_scalar_typedefs,
+    collect_enum_typedefs,
     structs_in_dir,
     emit_safe_struct,
 )
@@ -60,3 +61,31 @@ def test_struct_fields_resolve_typedefs(tmp_path):
     assert "pub datalen: u32" in out
     assert "pub bitlen: u64" in out
     assert "impl Default for Sha256Context" in out
+
+
+def test_enum_typedef_and_ifdef_and_keyword_field(tmp_path):
+    """jsmn: a token struct with an enum-typedef field (`jsmntype_t type;`), a
+    preprocessor-conditional field (`#ifdef JSMN_PARENT_LINKS int parent;`), and a
+    field named `type` (a Rust keyword). All three previously broke struct-carry."""
+    _write(tmp_path, "jsmn.h",
+           "typedef enum { JSMN_UNDEFINED = 0, JSMN_OBJECT = 1 } jsmntype_t;\n"
+           "typedef struct jsmntok {\n"
+           "    jsmntype_t type;\n"
+           "    int start;\n"
+           "    int end;\n"
+           "    int size;\n"
+           "#ifdef JSMN_PARENT_LINKS\n"
+           "    int parent;\n"
+           "#endif\n"
+           "} jsmntok_t;\n")
+    assert collect_enum_typedefs(tmp_path) == {"jsmntype_t": "int"}
+    structs = structs_in_dir(tmp_path)
+    tok = structs.get("jsmntok_t") or structs.get("jsmntok")
+    types = {f.name: f.ctype for f in tok}
+    assert types["type"] == "int"          # enum typedef resolved
+    assert types["parent"] == "int"        # #ifdef stripped, field kept
+    out = emit_safe_struct("JsmnTok", tok)
+    assert out is not None
+    assert "pub r#type: i32" in out        # Rust keyword escaped
+    assert "pub parent: i32" in out
+    assert "r#type: 0" in out              # ...in the Default impl too

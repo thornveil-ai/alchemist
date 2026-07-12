@@ -73,6 +73,29 @@ def collect_scalar_typedefs(c_source_dir) -> dict[str, str]:
     return out
 
 
+_ENUM_TYPEDEF_RE = re.compile(
+    r"\btypedef\s+enum\s+(?:\w+\s*)?\{[^{}]*\}\s*([A-Za-z_]\w*)\s*;", re.DOTALL)
+
+
+def collect_enum_typedefs(c_source_dir) -> dict[str, str]:
+    """Map `typedef enum {...} NAME;` aliases to the enum's underlying C integer
+    (`int`). A C enum is int-sized, so a struct field typed with the alias (jsmn's
+    `jsmntok_t.type: jsmntype_t`) carries as an i32 instead of failing to map."""
+    root = Path(c_source_dir)
+    files = list(root.rglob("*.h")) + list(root.rglob("*.c"))
+    out: dict[str, str] = {}
+    for cf in sorted(files):
+        if {p.lower() for p in cf.relative_to(root).parts[:-1]} & _TYPEDEF_NONLIB:
+            continue
+        try:
+            text = _strip_comments(cf.read_text(errors="replace"))
+        except Exception:  # noqa: BLE001
+            continue
+        for m in _ENUM_TYPEDEF_RE.finditer(text):
+            out[m.group(1)] = "int"
+    return out
+
+
 class Field:
     def __init__(self, name: str, ctype: str, arr, is_ptr: bool):
         self.name = name
@@ -137,6 +160,12 @@ def parse_struct(text: str, name: str) -> list[Field] | None:
     body = _find_body(text, name)
     if body is None:
         return None
+    # Drop preprocessor directive lines inside the struct body. A conditional
+    # field like `#ifdef JSMN_PARENT_LINKS\n int parent;\n#endif` otherwise
+    # glues the directive into the field's ctype ("#ifdef JSMN_PARENT_LINKS int").
+    # Removing the `#...` lines keeps the field itself (the common/default build),
+    # which is the safe choice for a state struct that must compile.
+    body = re.sub(r"(?m)^\s*#.*$", " ", body)
     fields: list[Field] = []
     for decl in body.split(";"):
         decl = decl.strip()
@@ -172,9 +201,11 @@ def structs_in_dir(c_source_dir) -> dict[str, list[Field]]:
     root = Path(c_source_dir)
     _NONLIB = {"test", "tests", "example", "examples", "bench", "benches", "fuzz",
                "doc", "docs", "build", "vendor", "third_party", ".git", ".alchemist"}
-    # Resolve the library's own scalar typedefs (BYTE/WORD/…) so struct fields
-    # declared with them map to a Rust scalar instead of silently failing.
+    # Resolve the library's own scalar typedefs (BYTE/WORD/…) AND enum typedefs
+    # (jsmntype_t → int) so struct fields declared with them map to a Rust scalar
+    # instead of silently failing to carry the whole state struct.
     tdefs = collect_scalar_typedefs(c_source_dir)
+    tdefs.update(collect_enum_typedefs(c_source_dir))
     # Structs can live in headers or .c files, possibly in subdirs of a real library.
     files = list(root.rglob("*.h")) + list(root.rglob("*.c"))
     for cf in sorted(files):
@@ -204,6 +235,22 @@ def single_scalar_field(fields) -> str | None:
     return c_scalar_to_rust(f.ctype)
 
 
+_RUST_KEYWORDS = {
+    "as", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+    "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
+    "trait", "true", "type", "unsafe", "use", "where", "while", "async", "await",
+    "box", "final", "macro", "override", "priv", "typeof", "unsized", "virtual",
+    "yield", "abstract", "become", "do",
+}
+
+
+def _safe_field_name(name: str) -> str:
+    """A C field name that is a Rust keyword (`type`, `match`, …) needs a raw
+    identifier (`r#type`) or the emitted struct won't compile."""
+    return f"r#{name}" if name in _RUST_KEYWORDS else name
+
+
 def emit_ffi_struct(rust_name: str, fields) -> str | None:
     """Emit a #[repr(C)] mirror struct. Returns None if any field type is unmappable."""
     lines = ["#[repr(C)]", "#[derive(Clone, Copy)]", f"pub struct {rust_name} {{"]
@@ -211,7 +258,7 @@ def emit_ffi_struct(rust_name: str, fields) -> str | None:
         t = f.rust_ffi
         if t is None:
             return None
-        lines.append(f"    pub {f.name}: {t},")
+        lines.append(f"    pub {_safe_field_name(f.name)}: {t},")
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -250,11 +297,12 @@ def emit_safe_struct(rust_name: str, fields) -> str | None:
         if base is None:
             return None
         t = f"[{base}; {f.arr}]" if f.arr is not None else base
-        body.append(f"    pub {f.name}: {t},")
+        fname = _safe_field_name(f.name)
+        body.append(f"    pub {fname}: {t},")
         dv = _default_expr(f)
         if dv is None:
             return None
-        defaults.append(f"{f.name}: {dv}")
+        defaults.append(f"{fname}: {dv}")
     if not body:
         return None
     note = ""
