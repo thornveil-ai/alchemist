@@ -49,22 +49,35 @@ class ModuleDetector:
         return modules
 
     def _group_by_file(self, parsed_files: dict[str, dict]) -> dict[str, dict]:
-        """Group parsed data by source file (only .c files, skip .h)."""
+        """Group parsed data by source file. `.c` files are always modules; a
+        `.h` file is a module too WHEN it carries function DEFINITIONS (bodies),
+        not just prototypes — that is a header-only library (jsmn, stb-style,
+        many single-header libs), whose entire implementation lives in the `.h`.
+        The parser only records functions that have a body, so a non-empty
+        `functions` list on a header means real code to translate. Such a header
+        stays in `headers` too, so its struct/typedef info still merges into any
+        sibling `.c`."""
         groups = {}
         headers = {}
 
         for filepath, pf in parsed_files.items():
             if filepath.endswith(".h"):
                 headers[filepath] = pf
+                if pf.get("functions"):
+                    # Header-only library: the .h IS the source module.
+                    groups[filepath] = pf
             else:
                 groups[filepath] = pf
 
-        # Associate headers with their .c files
+        # Associate headers with their .c files (never a header with itself —
+        # a definition-bearing header is in both dicts; self-association would
+        # duplicate its own structs/typedefs).
         for filepath, pf in groups.items():
             stem = Path(filepath).stem
             associated_headers = [
                 h for h in headers
-                if Path(h).stem == stem or Path(h).stem in (f"{stem}_internal", f"{stem}s")
+                if h != filepath
+                and (Path(h).stem == stem or Path(h).stem in (f"{stem}_internal", f"{stem}s"))
             ]
             pf["_associated_headers"] = associated_headers
             # Merge struct/typedef info from headers
