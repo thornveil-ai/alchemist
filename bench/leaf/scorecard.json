@@ -1,12 +1,12 @@
 {
-  "subjects": 23,
-  "subjects_overall_pass": 21,
-  "total_functions": 23,
-  "verified": 21,
+  "subjects": 26,
+  "subjects_overall_pass": 24,
+  "total_functions": 26,
+  "verified": 24,
   "refused": 2,
-  "verified_rate": 0.913,
-  "first_pass_rate": 0.913,
-  "refusal_rate": 0.087,
+  "verified_rate": 0.9231,
+  "first_pass_rate": 0.9231,
+  "refusal_rate": 0.0769,
   "by_category": {
     "checksum": {
       "total": 8,
@@ -18,6 +18,11 @@
       "verified": 10,
       "first_pass": 10
     },
+    "cstr_scalar": {
+      "total": 1,
+      "verified": 1,
+      "first_pass": 1
+    },
     "uncovered": {
       "total": 2,
       "verified": 0,
@@ -27,6 +32,11 @@
       "total": 3,
       "verified": 3,
       "first_pass": 3
+    },
+    "iarray_reduce": {
+      "total": 2,
+      "verified": 2,
+      "first_pass": 2
     }
   },
   "results": [
@@ -68,19 +78,19 @@
     },
     {
       "subject": "count_char",
-      "category": "uncovered",
-      "overall": "FAIL",
+      "category": "cstr_scalar",
+      "overall": "PASS",
       "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "refusal_rate": 1.0,
-      "first_pass": 0,
+      "verified": 1,
+      "refused": 0,
+      "refusal_rate": 0.0,
+      "first_pass": 1,
       "functions": [
         {
           "name": "count_char",
-          "verified": false,
+          "verified": true,
           "iterations": 0,
-          "reason": "no verifiable test vectors \u2014 add spec.test_vectors, extend fuzz_vectors bindings, or add to standards catalog"
+          "reason": ""
         }
       ]
     },
@@ -115,8 +125,26 @@
         {
           "name": "djb2buf",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
+        }
+      ]
+    },
+    {
+      "subject": "dsquare",
+      "category": "uncovered",
+      "overall": "FAIL",
+      "total": 1,
+      "verified": 0,
+      "refused": 1,
+      "refusal_rate": 1.0,
+      "first_pass": 0,
+      "functions": [
+        {
+          "name": "dsquare",
+          "verified": false,
+          "iterations": 0,
+          "reason": "no verifiable test vectors \u2014 add spec.test_vectors, extend fuzz_vectors bindings, or add to standards catalog"
         }
       ]
     },
@@ -186,6 +214,24 @@
       "functions": [
         {
           "name": "hex_encode",
+          "verified": true,
+          "iterations": 0,
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "subject": "imax_array",
+      "category": "iarray_reduce",
+      "overall": "PASS",
+      "total": 1,
+      "verified": 1,
+      "refused": 0,
+      "refusal_rate": 0.0,
+      "first_pass": 1,
+      "functions": [
+        {
+          "name": "imax_array",
           "verified": true,
           "iterations": 0,
           "reason": ""
@@ -265,6 +311,24 @@
       ]
     },
     {
+      "subject": "negate_all",
+      "category": "uncovered",
+      "overall": "FAIL",
+      "total": 1,
+      "verified": 0,
+      "refused": 1,
+      "refusal_rate": 1.0,
+      "first_pass": 0,
+      "functions": [
+        {
+          "name": "negate_all",
+          "verified": false,
+          "iterations": 0,
+          "reason": "no verifiable test vectors \u2014 add spec.test_vectors, extend fuzz_vectors bindings, or add to standards catalog"
+        }
+      ]
+    },
+    {
       "subject": "next_pow2",
       "category": "scalar",
       "overall": "PASS",
@@ -295,7 +359,7 @@
         {
           "name": "parity32",
           "verified": true,
-          "iterations": 1,
+          "iterations": 0,
           "reason": ""
         }
       ]
@@ -410,19 +474,19 @@
     },
     {
       "subject": "sum_array",
-      "category": "uncovered",
-      "overall": "FAIL",
+      "category": "iarray_reduce",
+      "overall": "PASS",
       "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "refusal_rate": 1.0,
-      "first_pass": 0,
+      "verified": 1,
+      "refused": 0,
+      "refusal_rate": 0.0,
+      "first_pass": 1,
       "functions": [
         {
           "name": "sum_array",
-          "verified": false,
+          "verified": true,
           "iterations": 0,
-          "reason": "no verifiable test vectors \u2014 add spec.test_vectors, extend fuzz_vectors bindings, or add to standards catalog"
+          "reason": ""
         }
       ]
     },
