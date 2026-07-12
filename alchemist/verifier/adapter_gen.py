@@ -832,10 +832,10 @@ def plan_adapters(
                     f"    let mut ctx: {ffi_ident}::{st} = unsafe {{ core::mem::zeroed() }};\n"
                     f"    unsafe {{ {ffi_ident}::{h.seq_init}(&mut ctx as *mut _); }}\n"
                     f"    unsafe {{ {ffi_ident}::{h.seq_gen}(&mut ctx as *mut _, "
-                    f"data.as_ptr(), data.len() as _); }}\n"
+                    f"data.as_ptr() as *const _, data.len() as _); }}\n"
                     f"    let mut out = [0u8; {n}];\n"
                     f"    unsafe {{ {ffi_ident}::{h.algorithm}(&mut ctx as *mut _, "
-                    f"out.as_mut_ptr()); }}\n"
+                    f"out.as_mut_ptr() as *mut _); }}\n"
                     f"    out\n}}\n"
                 )
                 plan.resolved.append(ResolvedAdapter(
