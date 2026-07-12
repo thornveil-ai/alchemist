@@ -861,6 +861,15 @@ def run_implement_stage(
             console.print(f"[cyan]type-lift: {_nb} char*+len param(s) -> &[u8] (byte buffer, not &str)[/cyan]")
     except Exception as _e:  # noqa: BLE001
         console.print(f"[yellow]byte-buffer type-lift skipped: {_e}[/yellow]")
+    # A C `char` VALUE arg (byte compared/indexed, e.g. count_char's needle) lifts to Rust
+    # `char` (4-byte Unicode) — no int literal, can't round-trip the byte oracle. Re-lift to i8/u8.
+    try:
+        from alchemist.verifier.auto_config import normalize_char_scalar_params
+        _nc = normalize_char_scalar_params(source, specs)
+        if _nc:
+            console.print(f"[cyan]type-lift: {_nc} C `char` value-arg(s) -> i8/u8 (byte, not Rust char)[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]char-scalar type-lift skipped: {_e}[/yellow]")
     # Digest-shape spec normalization (SipHash/SHA family): the generic lifter turns
     # `int f(const in*, inlen, out*, outlen)` into `f(&[u8], &mut [u8]) -> Result<(), E>`,
     # which mismatches the digest differential adapter AND (being fallible) invites the

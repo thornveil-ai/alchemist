@@ -1066,6 +1066,163 @@ def fuzz_cstr_out_vectors(dll, alg, sig, *, count: int = 24):
     return vectors
 
 
+# A pointer to an array of a NON-byte integer scalar (int/long/short/...). The
+# checksum/digest shapes own single-byte element pointers (char/uint8_t), so this
+# deliberately excludes them to avoid stealing byte-buffer checksums.
+_INT_ARRAY_PTR = re.compile(
+    r"^(const\s+)?(unsigned\s+long\s+long|long\s+long|unsigned\s+long|unsigned\s+short|"
+    r"unsigned\s+int|unsigned|int|long|short|"
+    r"uint16_t|uint32_t|uint64_t|int16_t|int32_t|int64_t)\s*\*$")
+
+
+def classify_iarray_reduce(sig):
+    """C `<scalar> f(const T* a, <int> n)` — a pointer to an array of a non-byte
+    integer scalar T plus a length, reducing to a scalar (sum/min/max/dot/count).
+    Byte-element pointers stay with the checksum/digest shapes; this covers
+    int/long/short arrays. The extractor lifts it to `fn(a: &[T]) -> R`.
+
+    Returns {elem_c, elem_rust, ret_rust} or None."""
+    ret = (sig.return_type or "").strip()
+    if _ctype(ret) is None:
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if len(params) != 2:
+        return None
+    m = _INT_ARRAY_PTR.match(params[0])
+    if m is None:
+        return None
+    if _INT_C_TYPES.match(params[1]) is None and _SIZE_T.match(params[1]) is None:
+        return None
+    from alchemist.verifier import struct_lift
+    elem_c = m.group(2)
+    return {
+        "elem_c": elem_c,
+        "elem_rust": struct_lift.c_scalar_to_rust(elem_c) or "i32",
+        "ret_rust": struct_lift.c_scalar_to_rust(ret) or "i64",
+    }
+
+
+def _elem_range(elem_rust: str, cap: int = 1 << 20):
+    """(lo, hi) for a scalar element, clamped to +-cap so a reduction (sum) over a
+    bounded-length array cannot overflow the C reference into signed-overflow UB —
+    which would make the oracle undefined. Verification is honest over this domain."""
+    signed = elem_rust.startswith("i")
+    mm = re.search(r"(8|16|32|64)", elem_rust)
+    w = int(mm.group(1)) if mm else 32
+    lo = -(1 << (w - 1)) if signed else 0
+    hi = (1 << (w - 1)) - 1 if signed else (1 << w) - 1
+    return max(lo, -cap), min(hi, cap)
+
+
+def fuzz_iarray_reduce_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint fill-loop vectors for an int-array reduction: build a random array of the
+    element type, run the compiled C over (ptr, len), compare the scalar result.
+    Emits `&[T] -> R` vectors with `exact` tolerance."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    desc = classify_iarray_reduce(sig)
+    if desc is None:
+        return []
+    slice_param = next((p for p in (alg.inputs or []) if "[" in (p.rust_type or "")), None)
+    if slice_param is None:
+        return []
+    elem_ct = _ctype(desc["elem_c"]) or ctypes.c_int
+    fn = getattr(dll, sig.name)
+    fn.restype = _ctype(sig.return_type) or ctypes.c_long
+    fn.argtypes = (ctypes.POINTER(elem_ct), ctypes.c_int)
+    rng = _rng(_FUZZ_SEED)
+    elem_rust = desc["elem_rust"]
+    lo, hi = _elem_range(elem_rust)
+    vectors = []
+    for i in range(count):
+        n = rng.randint(0, 16)
+        arr = [rng.randint(lo, hi) for _ in range(n)]
+        carr = (elem_ct * n)(*arr)
+        try:
+            out = fn(carr, n)
+        except Exception:  # noqa: BLE001
+            continue
+        lit = "&[" + ", ".join(f"{v}{elem_rust}" for v in arr) + "]"
+        vectors.append(SpecTestVector(
+            description=f"iarray_{i}_len{n}",
+            source=f"C reference (iarray_reduce): {sig.name}",
+            inputs={slice_param.name: lit},
+            expected_output=str(int(out)),
+            tolerance="exact",
+        ))
+    return vectors
+
+
+def classify_cstr_scalar(sig):
+    """C `<scalar> f(const char* s, <scalar>...)` — a NUL-terminated string plus zero
+    or more by-value scalars, returning a scalar (count_char, strlen, atoi, char-index).
+    The extractor lifts it to `fn(s: &str|&[u8], ...) -> R`.
+
+    Returns the list of extra-scalar C param types (possibly empty), or None.
+    A `(const char*, <int-len>)` shape is a byte BUFFER, owned by classify_checksum
+    (checked first in build_diff_config); this catches the string+char / bare-string
+    cases that shape misses."""
+    if _ctype(sig.return_type or "") is None:
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if not params or _CHAR_PTR.match(params[0]) is None:
+        return None
+    extras = params[1:]
+    if not all(_SCALAR_ARG.match(p) for p in extras):
+        return None
+    return extras
+
+
+def fuzz_cstr_scalar_vectors(dll, alg, sig, *, count: int = 32):
+    """Mint fill-loop vectors for a `<scalar> f(const char* s, ...scalars)` fn: fuzz a
+    printable string + random scalars, run the compiled C, compare the scalar result.
+    Emits vectors with `exact` tolerance."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    extras = classify_cstr_scalar(sig)
+    if extras is None:
+        return []
+    str_param = next((p for p in (alg.inputs or [])
+                      if "str" in (p.rust_type or "").lower() or "[u8]" in (p.rust_type or "")), None)
+    if str_param is None:
+        return []
+    scalar_params = [p for p in (alg.inputs or []) if p is not str_param]
+    if len(scalar_params) != len(extras):
+        return []
+    is_bytes = "[u8]" in (str_param.rust_type or "")
+    fn = getattr(dll, sig.name)
+    fn.restype = _ctype(sig.return_type) or ctypes.c_int
+    fn.argtypes = tuple([ctypes.c_char_p] + [_ctype(e) or ctypes.c_int for e in extras])
+    rng = _rng(_FUZZ_SEED)
+    alphabet = [ord(c) for c in
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,-_"]
+    vectors = []
+    for i in range(count):
+        n = rng.randint(0, 24)
+        s = bytes(alphabet[rng.randint(0, len(alphabet) - 1)] for _ in range(n))
+        svals = []
+        for sp in scalar_params:
+            lo, hi = _elem_range((sp.rust_type or "i32").strip(), cap=127)
+            svals.append(rng.randint(lo, hi))
+        try:
+            out = fn(s, *svals)
+        except Exception:  # noqa: BLE001
+            continue
+        row = {str_param.name: (_rust_bytes_lit(s) if is_bytes else _rust_str_lit(s.decode("ascii", "replace")))}
+        for sp, v in zip(scalar_params, svals):
+            row[sp.name] = f"{v}{(sp.rust_type or 'i32').strip()}"
+        vectors.append(SpecTestVector(
+            description=f"cstr_scalar_{i}_len{n}",
+            source=f"C reference (cstr_scalar): {sig.name}",
+            inputs=row,
+            expected_output=str(int(out)),
+            tolerance="exact",
+        ))
+    return vectors
+
+
 def normalize_byte_buffer_types(c_source_dir, specs) -> int:
     """Force `&[u8]` for any spec input whose C type is a char*/byte pointer that comes
     with a length parameter. Such params are byte BUFFERS, not C strings; lifting them to
@@ -1090,6 +1247,37 @@ def normalize_byte_buffer_types(c_source_dir, specs) -> int:
                 ct = c_by_name.get(inp.name, "")
                 if char_ptr.match(ct) and inp.rust_type != "&[u8]":
                     inp.rust_type = "&[u8]"
+                    changed += 1
+    return changed
+
+
+_C_CHAR_SCALAR = re.compile(r"^(const\s+)?(signed\s+|unsigned\s+)?char$")
+
+
+def normalize_char_scalar_params(c_source_dir, specs) -> int:
+    """A C `char` VALUE arg (a byte being compared/indexed, e.g. count_char's needle)
+    gets lifted by the generic lifter to Rust `char` — a 4-byte Unicode scalar that has
+    no integer-literal form, can't round-trip the byte-oriented C oracle (the delimiter
+    ends up mis-rendered), and casts awkwardly to the FFI byte. Re-lift such params to
+    `i8`/`u8` (C `char` is signed on x86-64) so the fill + differential machinery treats
+    them as the bytes they are. Only touches by-value scalars whose C type is a plain
+    char; pointers (`char*` strings) are untouched. Returns the count changed."""
+    try:
+        sigs = {s.name: s for s in collect_subject_signatures(Path(c_source_dir))}
+    except Exception:  # noqa: BLE001
+        return 0
+    changed = 0
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = sigs.get(alg.name)
+            if sig is None:
+                continue
+            c_params = [t.strip() for _, t in sig.params]
+            for idx, inp in enumerate(alg.inputs or []):
+                if (inp.rust_type or "").strip() != "char":
+                    continue
+                if idx < len(c_params) and _C_CHAR_SCALAR.match(c_params[idx]):
+                    inp.rust_type = "u8" if "unsigned" in c_params[idx] else "i8"
                     changed += 1
     return changed
 
@@ -1744,6 +1932,25 @@ def build_diff_config(
                 ))
                 used_signatures.append(sig)
                 continue
+            _iar = classify_iarray_reduce(sig)
+            if _iar is not None:
+                # `<scalar> f(const T* a, int n)` — an int-array reduction. The Rust
+                # fn is `(&[T]) -> R`; the C side passes ptr+len. Element values are
+                # bounded so the C reduction can't hit signed-overflow UB.
+                _erust = _iar["elem_rust"]
+                _lo, _hi = _elem_range(_erust)
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="iarray_reduce",
+                    rust_call=f"rust_{alg.name}(&input)",
+                    c_call=f"c_{alg.name}(&input)",
+                    input_strategy=(
+                        f"prop::collection::vec({_lo}{_erust}..={_hi}{_erust}, 0..64)"),
+                    state_rust=_erust,
+                    cases=4000,
+                ))
+                used_signatures.append(sig)
+                continue
             if classify_scalar_shape(sig) is not None:
                 _sargs = [(i.rust_type or "u64").strip() for i in (alg.inputs or [])] or ["u64"]
                 _snames = [f"a{_i}" for _i in range(len(_sargs))]
@@ -1865,6 +2072,35 @@ def build_diff_config(
                     encoder_c_call=_enc_call,
                 ))
                 used_signatures.append(sig)
+                continue
+            _cse = classify_cstr_scalar(sig)
+            if _cse is not None:
+                # `<scalar> f(const char* s, ...scalars)` — string + scalars -> scalar
+                # (count_char, char-index, strlen-with-flags). Checked LAST so the
+                # byte-buffer shapes (checksum/digest/buf_transform) claim a
+                # `(char*, len)` first; this catches the string+char / bare-string
+                # leftovers that carry a sound differential.
+                # Map a `char` value-arg to i8 (as normalize_char_scalar_params does
+                # for the model's fn). The verify stage can hold a pre-normalization
+                # spec, so coerce here too — the proptest scalar type MUST match the
+                # wrapper's (which adapter_gen derives from the normalized model source).
+                _sc_extra = ["i8" if (p.rust_type or "").strip() == "char"
+                             else (p.rust_type or "i32").strip()
+                             for p in (alg.inputs or [])
+                             if not ("str" in (p.rust_type or "").lower()
+                                     or "[u8]" in (p.rust_type or ""))]
+                # proptest binds (s, a0, a1, ...); the wrappers take (&str, T0, ...).
+                _sc_args = ", ".join(["&s"] + [f"a{_i}" for _i in range(len(_sc_extra))])
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="cstr_scalar",
+                    rust_call=f"rust_{alg.name}({_sc_args})",
+                    c_call=f"c_{alg.name}({_sc_args})",
+                    scalar_arg_types=_sc_extra,
+                    cases=4000,
+                ))
+                used_signatures.append(sig)
+                continue
     if not harnesses:
         return None
 
@@ -2045,10 +2281,14 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 vecs = fuzz_scalar_vectors(dll, alg, sig)
             elif classify_inplace_shape(sig) is not None:
                 vecs = fuzz_inplace_vectors(dll, alg, sig)
+            elif classify_iarray_reduce(sig) is not None:
+                vecs = fuzz_iarray_reduce_vectors(dll, alg, sig)
             elif classify_cstr_out(sig) is not None:
                 vecs = fuzz_cstr_out_vectors(dll, alg, sig)
             elif classify_cbuf_out(sig) is not None:
                 vecs = fuzz_cbuf_out_vectors(dll, alg, sig)
+            elif classify_cstr_scalar(sig) is not None:
+                vecs = fuzz_cstr_scalar_vectors(dll, alg, sig)
             elif classify_buf_transform(sig) is not None:
                 vecs = fuzz_buf_transform_vectors(dll, alg, sig)
             elif (_mi := classify_scalar_mutator_shape(sig, _structs)) is not None:

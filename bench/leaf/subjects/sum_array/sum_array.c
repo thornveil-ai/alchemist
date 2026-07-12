@@ -1,4 +1,4 @@
-/* leaf-bench subject: sum_array (category: uncovered) */
+/* leaf-bench subject: sum_array (category: iarray_reduce) */
 #include <stdint.h>
 long sum_array(const int *a, int n) {
     long s = 0;

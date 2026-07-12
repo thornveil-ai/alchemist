@@ -861,6 +861,75 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (scalar)",
                 ))
+            elif h.category == "iarray_reduce":
+                # `<scalar> f(const T* a, int n)` -> Rust `(&[T]) -> R`. The C side
+                # passes ptr+len; both wrappers return R so prop_assert_eq compares.
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of iarray_reduce '{h.algorithm}': not found")
+                ptype = (fn.params[0][1] if fn.params else "&[i32]").strip()
+                ret = fn.ret
+                if ret.startswith("Result<") or "Vec" in ret or "[" in ret:
+                    raise AdapterError(
+                        f"iarray_reduce '{h.algorithm}' return {ret!r} is not a scalar")
+                rust_wrapper = (
+                    f"/// Scalar reduction of {fn.crate}::{fn.name} over a slice.\n"
+                    f"pub fn rust_{h.algorithm}(input: {ptype}) -> {ret} {{\n"
+                    f"    {fn.crate_ident}::{fn.name}(input)\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(input: {ptype}) -> {ret} {{\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}("
+                    f"input.as_ptr() as _, input.len() as _) as {ret} }}\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (iarray_reduce)",
+                ))
+            elif h.category == "cstr_scalar":
+                # `<scalar> f(const char* s, ...scalars)` -> Rust `(&str, ...) -> R`.
+                # C side builds a CString and calls the extern; both return R.
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of cstr_scalar '{h.algorithm}': not found")
+                ret = fn.ret
+                if ret.startswith("Result<") or "Vec" in ret or "[" in ret:
+                    raise AdapterError(
+                        f"cstr_scalar '{h.algorithm}' return {ret!r} is not a scalar")
+                in_ty = (fn.params[0][1] if fn.params else "&str").strip()
+                s_arg = "s" if "str" in in_ty else "s.as_bytes()"
+                extras = [t for _, t in fn.params[1:]]
+                enames = [f"a{i}" for i in range(len(extras))]
+                params = ", ".join(["s: &str"] + [f"{n}: {t}" for n, t in zip(enames, extras)])
+                rcall = ", ".join([s_arg] + enames)
+                ccall = ", ".join(["cs.as_ptr() as _"] + [f"{n} as _" for n in enames])
+                rust_wrapper = (
+                    f"/// Scalar result of {fn.crate}::{fn.name} (string + scalars).\n"
+                    f"pub fn rust_{h.algorithm}({params}) -> {ret} {{\n"
+                    f"    {fn.crate_ident}::{fn.name}({rcall})\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}({params}) -> {ret} {{\n"
+                    f"    let cs = match std::ffi::CString::new(s) "
+                    f"{{ Ok(c) => c, Err(_) => return Default::default() }};\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}({ccall}) as {ret} }}\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (cstr_scalar)",
+                ))
             elif h.category in ("compression", "decompression"):
                 rust_c_name = _call_ident(h.rust_call, "rust_call")
                 rust_d_name = _call_ident(h.rust_decompress_call or "",

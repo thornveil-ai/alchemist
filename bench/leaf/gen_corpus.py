@@ -179,19 +179,40 @@ char *hex_encode(char *s) {
     return out;
 }
 """),
-    # ---- intentionally-uncovered shapes (honest refusals expected) ----
-    "count_char": ("uncovered", r"""
+    # ---- string + scalar -> scalar: cstr_scalar shape (P0.8) ----
+    "count_char": ("cstr_scalar", r"""
 int count_char(const char *s, char c) {
     int n = 0;
     while (*s) { if (*s == c) n++; s++; }
     return n;
 }
 """),
-    "sum_array": ("uncovered", r"""
+    # ---- int-array reduction: iarray_reduce shape (P0.8) ----
+    "sum_array": ("iarray_reduce", r"""
 long sum_array(const int *a, int n) {
     long s = 0;
     for (int i = 0; i < n; i++) s += a[i];
     return s;
+}
+"""),
+    "imax_array": ("iarray_reduce", r"""
+int imax_array(const int *a, int n) {
+    if (n <= 0) return 0;
+    int m = a[0];
+    for (int i = 1; i < n; i++) if (a[i] > m) m = a[i];
+    return m;
+}
+"""),
+    # ---- intentionally-uncovered shapes (honest refusals expected) ----
+    # float scalar (the scalar shape is integer-only) and a void in-place int
+    # array (the in-place shape is byte-only) — kept as the benchmark's honest
+    # coverage-gap probes so the refusal rate stays a real measurement.
+    "dsquare": ("uncovered", r"""
+double dsquare(double x) { return x * x; }
+"""),
+    "negate_all": ("uncovered", r"""
+void negate_all(int *a, int n) {
+    for (int i = 0; i < n; i++) a[i] = -a[i];
 }
 """),
 }

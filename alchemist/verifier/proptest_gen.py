@@ -35,7 +35,8 @@ VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
-    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "cstr_out", "buf_transform"}
+    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "cstr_out", "buf_transform",
+    "iarray_reduce", "cstr_scalar"}
 
 
 @dataclass
@@ -245,6 +246,10 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_cbuf_out_block(h)
     if h.category == "cstr_out":
         return _proptest_cstr_out_block(h)
+    if h.category == "iarray_reduce":
+        return _proptest_iarray_reduce_block(h)
+    if h.category == "cstr_scalar":
+        return _proptest_cstr_scalar_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -358,6 +363,52 @@ def _proptest_cstr_out_block(h: AlgorithmHarness) -> str:
 
             #[test]
             fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+                let rust_out = {h.rust_call};
+                let c_out = {h.c_call};
+                prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_iarray_reduce_block(h: AlgorithmHarness) -> str:
+    """Differential for an int-array reduction `(&[T]) -> R`: fuzz a bounded-value
+    array of the element type (bounds keep the C reduction free of signed-overflow
+    UB) and compare the scalar result."""
+    elem = h.state_rust or "i32"
+    strategy = h.input_strategy or f"prop::collection::vec(any::<{elem}>(), 0..64)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+                let rust_out = {h.rust_call};
+                let c_out = {h.c_call};
+                prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_cstr_scalar_block(h: AlgorithmHarness) -> str:
+    """Differential for `<scalar> f(const char* s, ...scalars)`: fuzz a printable
+    string plus each extra scalar arg and compare the scalar result. The Rust and C
+    wrappers take `(&str, ...)`, so `input` is bound to `(s, a0, a1, ...)`."""
+    extras = h.scalar_arg_types or []
+    names = ["s"] + [f"a{i}" for i in range(len(extras))]
+    parts = ['"[ -~]{0,48}"'] + [f"any::<{t}>()" for t in extras]
+    if len(names) == 1:
+        bind, strat = "s", parts[0]
+    else:
+        bind = "(" + ", ".join(names) + ")"
+        strat = "(" + ", ".join(parts) + ")"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference({bind} in {strat}) {{
                 let rust_out = {h.rust_call};
                 let c_out = {h.c_call};
                 prop_assert_eq!(rust_out, c_out);
