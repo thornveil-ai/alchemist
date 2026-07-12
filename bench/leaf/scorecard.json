@@ -53,7 +53,7 @@
         {
           "name": "adler32s",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -71,7 +71,7 @@
         {
           "name": "clz32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -89,7 +89,7 @@
         {
           "name": "count_char",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -107,7 +107,7 @@
         {
           "name": "crc32b",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -161,7 +161,7 @@
         {
           "name": "fletcher16b",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -179,7 +179,7 @@
         {
           "name": "fnv1a",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -197,7 +197,7 @@
         {
           "name": "gcd32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -215,7 +215,7 @@
         {
           "name": "hex_encode",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -233,7 +233,7 @@
         {
           "name": "imax_array",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -251,7 +251,7 @@
         {
           "name": "imin",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -269,7 +269,7 @@
         {
           "name": "isqrt32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -287,7 +287,7 @@
         {
           "name": "jenkins_oaat",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -305,7 +305,7 @@
         {
           "name": "myabs",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -341,7 +341,7 @@
         {
           "name": "next_pow2",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -359,7 +359,7 @@
         {
           "name": "parity32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -377,7 +377,7 @@
         {
           "name": "popcount32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -395,7 +395,7 @@
         {
           "name": "reverse_bits32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -413,7 +413,7 @@
         {
           "name": "rot13",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -431,7 +431,7 @@
         {
           "name": "rotl32",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -467,7 +467,7 @@
         {
           "name": "sum8",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -485,7 +485,7 @@
         {
           "name": "sum_array",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
@@ -503,7 +503,7 @@
         {
           "name": "to_upper",
           "verified": true,
-          "iterations": 0,
+          "iterations": 1,
           "reason": ""
         }
       ]
