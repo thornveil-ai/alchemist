@@ -36,6 +36,8 @@ def build_refusal_ledger(result, subject: str = "") -> dict:
             "iterations": getattr(a, "iterations", 0),
             "escalated_holistic": bool(getattr(a, "escalated_to_holistic", False)),
             "escalated_decomposition": bool(getattr(a, "escalated_to_decomposition", False)),
+            # P0.6 escalation-ladder audit: which tier produced the win.
+            "won_via": (getattr(a, "won_via", "") or "") if ok else "",
             # P0.14 per-function telemetry: wall-clock + model spend.
             "elapsed_s": round(float(getattr(a, "elapsed_s", 0.0) or 0.0), 3),
             "llm_calls": int(getattr(a, "llm_calls", 0) or 0),
@@ -52,6 +54,15 @@ def build_refusal_ledger(result, subject: str = "") -> dict:
     total_tokens = sum(f["output_tokens"] for f in fns)
     slowest = max(fns, key=lambda f: f["elapsed_s"], default=None)
     costliest = max(fns, key=lambda f: f["output_tokens"], default=None)
+    # P0.6 escalation-ladder audit: how many verified fns each tier won. Zero for
+    # a tier over a corpus = it isn't earning its budget (dead weight or a rare
+    # safety net). Ordered cheap→expensive.
+    _tiers = ("cached", "template", "single", "multi_sample", "holistic", "decomposition")
+    by_tier = {t: 0 for t in _tiers}
+    for f in fns:
+        wv = f.get("won_via") or ""
+        if wv in by_tier:
+            by_tier[wv] += 1
     return {
         "subject": subject,
         "total_functions": total,
@@ -67,6 +78,8 @@ def build_refusal_ledger(result, subject: str = "") -> dict:
             "costliest_fn": costliest["name"] if costliest else None,
             "costliest_fn_output_tokens": costliest["output_tokens"] if costliest else 0,
         },
+        # P0.6: verified-wins-by-escalation-tier (proves each tier adds wins).
+        "wins_by_tier": by_tier,
         "functions": fns,
     }
 

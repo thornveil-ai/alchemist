@@ -10,13 +10,13 @@ from alchemist.reporter.refusal_ledger import build_refusal_ledger, write_refusa
 
 class _Attempt:
     def __init__(self, name, ok, iters=1, hol=False, dec=False, err="",
-                 elapsed_s=0.0, llm_calls=0, output_tokens=0):
+                 elapsed_s=0.0, llm_calls=0, output_tokens=0, won_via=""):
         self.algorithm = name; self.crate = "c"; self.module = "m"
         self.tests_passed = ok; self.iterations = iters
         self.escalated_to_holistic = hol; self.escalated_to_decomposition = dec
         self.last_error = err
         self.elapsed_s = elapsed_s; self.llm_calls = llm_calls
-        self.output_tokens = output_tokens
+        self.output_tokens = output_tokens; self.won_via = won_via
 
 
 class _Result:
@@ -62,6 +62,29 @@ def test_ledger_telemetry_rollup():
     # a cached-win restore is visible as elapsed>0 but zero model spend
     cached = next(f for f in led["functions"] if f["name"] == "cached")
     assert cached["llm_calls"] == 0 and cached["elapsed_s"] == 0.5
+
+
+def test_ledger_wins_by_tier():
+    """P0.6: each verified fn is attributed to the escalation tier that won it,
+    and the roll-up counts wins per tier (a refused fn contributes to no tier)."""
+    r = _Result([
+        _Attempt("a", True, won_via="cached"),
+        _Attempt("b", True, won_via="single"),
+        _Attempt("c", True, won_via="single"),
+        _Attempt("d", True, won_via="multi_sample"),
+        _Attempt("e", True, won_via="holistic", hol=True),
+        _Attempt("f", True, won_via="decomposition", dec=True),
+        _Attempt("g", False, err="refused"),   # no tier
+    ])
+    led = build_refusal_ledger(r, "s")
+    wt = led["wins_by_tier"]
+    assert wt == {"cached": 1, "template": 0, "single": 2,
+                  "multi_sample": 1, "holistic": 1, "decomposition": 1}
+    assert sum(wt.values()) == led["verified"]  # every verified fn attributed
+    b = next(f for f in led["functions"] if f["name"] == "b")
+    assert b["won_via"] == "single"
+    g = next(f for f in led["functions"] if f["name"] == "g")
+    assert g["won_via"] == ""  # refused fns carry no tier
 
 
 def test_ledger_all_verified_zero_rate():

@@ -83,6 +83,11 @@ class FunctionAttempt:
     elapsed_s: float = 0.0
     llm_calls: int = 0
     output_tokens: int = 0
+    # P0.6 escalation-ladder audit: which tier actually PRODUCED the win —
+    # "cached" | "single" | "multi_sample" | "holistic" | "decomposition", or ""
+    # if refused. Aggregated across a corpus this proves each tier earns its
+    # budget (a tier with zero wins is dead weight or a rare safety net).
+    won_via: str = ""
 
 
 @dataclass
@@ -529,6 +534,7 @@ class TDDGenerator:
                         attempt.iterations = 0
                         attempt.final_compiled = True
                         attempt.tests_passed = True
+                        attempt.won_via = "cached"
                         console.print(
                             f"  [green]{alg.name}: cached win restored "
                             f"(0 LLM calls, 2x verified, {total_tests} tests)[/green]"
@@ -556,6 +562,7 @@ class TDDGenerator:
                     attempt.iterations = 0
                     attempt.final_compiled = True
                     attempt.tests_passed = True
+                    attempt.won_via = "template"
                     try:
                         self._save_cached_win(
                             workspace_dir, crate_spec.name, module.name,
@@ -632,6 +639,7 @@ class TDDGenerator:
                             attempt.iterations = 0
                             attempt.final_compiled = True
                             attempt.tests_passed = True
+                            attempt.won_via = "template"
                             try:
                                 self._save_cached_win(
                                     workspace_dir, crate_spec.name, module.name,
@@ -749,6 +757,7 @@ class TDDGenerator:
                         continue
                     attempt.final_compiled = True
                     attempt.tests_passed = True
+                    attempt.won_via = "multi_sample"
                     # Snapshot the winning FULL fn item (signature + body) from
                     # the module file. Prior bug: saved body-only, which the
                     # splice guard (5cf38f3) then rejects at restore time,
@@ -947,6 +956,10 @@ class TDDGenerator:
                     )
                     continue
                 attempt.tests_passed = True
+                # Attribute the win: if the holistic fixer already ran in a prior
+                # iteration, its multi-file repair set up this convergence; else
+                # it's a plain single-sample fill/repair.
+                attempt.won_via = "holistic" if attempt.escalated_to_holistic else "single"
                 # Persist the winning body so the next run skips iteration
                 # for this function (huge accumulation effect across runs).
                 if new_fn:
@@ -1020,6 +1033,7 @@ class TDDGenerator:
                     attempt.final_compiled = True
                     attempt.tests_passed = True
                     attempt.escalated_to_decomposition = True
+                    attempt.won_via = "decomposition"
             except Exception as e:  # noqa: BLE001
                 console.print(
                     f"  [yellow]{alg.name}: structural-decomposition "

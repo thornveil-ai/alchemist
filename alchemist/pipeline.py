@@ -939,6 +939,11 @@ def run_implement_stage(
                        f"({_tel.get('slowest_fn_elapsed_s', 0):.1f}s)" if _slow else "")
                     + "[/cyan]"
                 )
+                # P0.6 — which escalation tier won each fn (only non-zero tiers).
+                _tiers = _ledger.get("wins_by_tier") or {}
+                _nz = [f"{k}={v}" for k, v in _tiers.items() if v]
+                if _nz:
+                    console.print(f"[cyan]wins by tier: {', '.join(_nz)}[/cyan]")
         except Exception as _e:  # noqa: BLE001
             console.print(f"[yellow]refusal ledger skipped: {_e}[/yellow]")
         summary = (
