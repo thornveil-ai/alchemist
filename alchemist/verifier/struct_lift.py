@@ -29,6 +29,50 @@ def c_scalar_to_rust(ctype: str) -> str | None:
     return _SCALAR.get((ctype or "").strip())
 
 
+_SCALAR_TYPEDEF_RE = re.compile(
+    r"\btypedef\s+([A-Za-z_][\w ]*?)\s+([A-Za-z_]\w*)\s*;")
+_TYPEDEF_NONLIB = {"test", "tests", "example", "examples", "bench", "benches",
+                   "fuzz", "doc", "docs", "build", "vendor", "third_party",
+                   ".git", ".alchemist"}
+
+
+def collect_scalar_typedefs(c_source_dir) -> dict[str, str]:
+    """Map SCALAR typedef aliases to their base C scalar, e.g. `typedef unsigned
+    char BYTE;` -> {"BYTE": "unsigned char"}, `typedef unsigned int WORD;` ->
+    {"WORD": "unsigned int"}. Resolved transitively (a typedef of a typedef).
+
+    Only scalar typedefs are kept — the base must resolve via c_scalar_to_rust,
+    so struct/pointer/function typedefs are skipped. Without this, any struct
+    field or param declared with a library's own integer alias (BYTE/WORD/DWORD/
+    uchar/…, ubiquitous in real C) is un-mappable and the state struct silently
+    fails to carry, breaking the whole library's skeleton (found on sha256)."""
+    root = Path(c_source_dir)
+    files = list(root.rglob("*.h")) + list(root.rglob("*.c"))
+    raw: dict[str, str] = {}
+    for cf in sorted(files):
+        if {p.lower() for p in cf.relative_to(root).parts[:-1]} & _TYPEDEF_NONLIB:
+            continue
+        try:
+            text = _strip_comments(cf.read_text(errors="replace"))
+        except Exception:  # noqa: BLE001
+            continue
+        for m in _SCALAR_TYPEDEF_RE.finditer(text):
+            base = re.sub(r"\s+", " ", m.group(1).strip())
+            alias = m.group(2)
+            if alias and alias != base:
+                raw.setdefault(alias, base)
+    out: dict[str, str] = {}
+    for alias, base in raw.items():
+        seen: set[str] = set()
+        b = base
+        while b in raw and b not in seen:
+            seen.add(b)
+            b = raw[b]
+        if c_scalar_to_rust(b) is not None:
+            out[alias] = b
+    return out
+
+
 class Field:
     def __init__(self, name: str, ctype: str, arr, is_ptr: bool):
         self.name = name
@@ -128,6 +172,9 @@ def structs_in_dir(c_source_dir) -> dict[str, list[Field]]:
     root = Path(c_source_dir)
     _NONLIB = {"test", "tests", "example", "examples", "bench", "benches", "fuzz",
                "doc", "docs", "build", "vendor", "third_party", ".git", ".alchemist"}
+    # Resolve the library's own scalar typedefs (BYTE/WORD/…) so struct fields
+    # declared with them map to a Rust scalar instead of silently failing.
+    tdefs = collect_scalar_typedefs(c_source_dir)
     # Structs can live in headers or .c files, possibly in subdirs of a real library.
     files = list(root.rglob("*.h")) + list(root.rglob("*.c"))
     for cf in sorted(files):
@@ -140,6 +187,9 @@ def structs_in_dir(c_source_dir) -> dict[str, list[Field]]:
         for nm in all_struct_names(text):
             f = parse_struct(text, nm)
             if f:
+                for fld in f:
+                    if fld.ctype in tdefs:
+                        fld.ctype = tdefs[fld.ctype]
                 out.setdefault(nm, f)
     return out
 
