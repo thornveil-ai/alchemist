@@ -66,10 +66,12 @@ Status: `[ ]` to-do · `[~]` active · `[x]` done · `[!]` blocked
 
 ---
 
-## P1 · Whole Small/Mid C Library — Push-Button (NEAR)
+## P1 · Whole Small/Mid C Library — Push-Button (IN PROGRESS)
 
 *A never-seen C library → a verified Rust workspace, under 5% refusal, zero human touches. The first genuinely fundable claim.*
 **Exit:** 5+ unseen C libs converted hands-off · refusal <5% · signed receipts · a stranger can clone & reproduce.
+
+> **Baseline (2026-07-12, `bench/lib/run_libbench.py`, 8 unseen libs cold):** 4/8 OVERALL PASS (siphash, murmur3, rc4, hashkit), overall function-level refusal 23.5%. Batch surfaced TWO problem classes: (a) shape-coverage refusals (base64_decode binary-out, rc4_keystream, heap alloc/free); (b) **whole libraries producing 0/0 functions** — the dangerous one, invisible to the refusal metric. Both 0/0 cases (sha256, jsmn) were STRUCT-CARRY failures now FIXED: **scalar typedefs (BYTE/WORD → u8/u32; commit 9513ed6) + enum typedefs (jsmntype_t → i32) + `#ifdef`-in-struct-body + Rust-keyword field names (`type`→`r#type`; commit b0f0227).** sha256's SHA256_CTX + jsmn's jsmntok_t/jsmn_parser now carry & compile cold (sha256 went total-failure → normal in-progress fill; the transform is just slow). +5 regression tests. **Remaining refusal worklist: base64_decode (binary-out decoder shape), rc4_keystream (cipher keystream), heap make/free_buffer (alloc/free shapes).**
 
 - [ ] **P1.1** zlib full workspace green on a FRESH clone (no cached wins) `model`
 - [ ] **P1.2** libcrc all-green cold (9/9) from scratch `model`
@@ -80,11 +82,11 @@ Status: `[ ]` to-do · `[~]` active · `[x]` done · `[!]` blocked
 - [ ] **P1.7** A compression codec (heatshrink / miniz) `model`
 - [ ] **P1.8** A protocol parser (http-parser subset) — goto-heavy state machine `research`
 - [ ] **P1.9** A crypto primitive lib (monocypher subset) — constant-time-sensitive `model`
-- [ ] **P1.10** Unattended batch runner — N libs, walk away, collect scorecards `infra`
-- [ ] **P1.11** Build-system discovery robustness — make/cmake/autotools/amalgamations `eng`
-- [ ] **P1.12** Dependency-ordered fill at 50–150 fns `eng`
+- [x] **P1.10** Unattended batch runner — N libs, walk away, collect scorecards — `bench/lib/run_libbench.py` (commit c235111): cold-runs a curated lib set, aggregates per-lib + overall function-level refusal + a triage worklist `infra`
+- [x] **P1.11** Build-system discovery robustness — already covered by WALL-4 (`build_c_dll`): non-lib-dir exclusion, amalgamation detection, `main()` filtering, make/cmake `prepare_native_build` `eng`
+- [x] **P1.12** Dependency-ordered fill at 50–150 fns — covered by P2-I (`_topo_sort_algorithms` orders per-module fills leaf-first) `eng`
 - [ ] **P1.13** Refusal <5% exit criterion met on an unseen lib `model`
-- [ ] **P1.14** Cold-start reproducibility — stranger clones, runs, reproduces + signed receipt `infra`
+- [~] **P1.14** Cold-start reproducibility + signed receipt — receipt engine DONE (`verifier/receipt.py`: sealed receipt w/ content-SHA256 + optional HMAC via `ALCHEMIST_RECEIPT_KEY`, records gates/harnesses/oracle/env; `verify_receipt_integrity` recomputes) + deterministic-replay mode (P0.13). Remaining: a documented stranger-clone reproduce run. `infra`
 
 ---
 
