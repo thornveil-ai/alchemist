@@ -36,17 +36,37 @@ def build_refusal_ledger(result, subject: str = "") -> dict:
             "iterations": getattr(a, "iterations", 0),
             "escalated_holistic": bool(getattr(a, "escalated_to_holistic", False)),
             "escalated_decomposition": bool(getattr(a, "escalated_to_decomposition", False)),
+            # P0.14 per-function telemetry: wall-clock + model spend.
+            "elapsed_s": round(float(getattr(a, "elapsed_s", 0.0) or 0.0), 3),
+            "llm_calls": int(getattr(a, "llm_calls", 0) or 0),
+            "output_tokens": int(getattr(a, "output_tokens", 0) or 0),
             # A refused fn carries its last error as the reason; verified fns have none.
             "reason": None if ok else (getattr(a, "last_error", "") or "refused"),
         })
     total = len(attempts)
     refused = total - verified
+    # P0.14 subject-level roll-up: total cost + the slowest / most-expensive
+    # function, so a scan of the ledger surfaces where the budget went.
+    total_elapsed = round(sum(f["elapsed_s"] for f in fns), 3)
+    total_calls = sum(f["llm_calls"] for f in fns)
+    total_tokens = sum(f["output_tokens"] for f in fns)
+    slowest = max(fns, key=lambda f: f["elapsed_s"], default=None)
+    costliest = max(fns, key=lambda f: f["output_tokens"], default=None)
     return {
         "subject": subject,
         "total_functions": total,
         "verified": verified,
         "refused": refused,
         "refusal_rate": round(refused / total, 4) if total else 0.0,
+        "telemetry": {
+            "total_elapsed_s": total_elapsed,
+            "total_llm_calls": total_calls,
+            "total_output_tokens": total_tokens,
+            "slowest_fn": slowest["name"] if slowest else None,
+            "slowest_fn_elapsed_s": slowest["elapsed_s"] if slowest else 0.0,
+            "costliest_fn": costliest["name"] if costliest else None,
+            "costliest_fn_output_tokens": costliest["output_tokens"] if costliest else 0,
+        },
         "functions": fns,
     }
 

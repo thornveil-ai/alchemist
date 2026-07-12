@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,6 +77,12 @@ class FunctionAttempt:
     escalated_to_holistic: bool = False
     escalated_to_decomposition: bool = False
     last_error: str = ""
+    # P0.14 telemetry: wall-clock and model spend for THIS function's fill, so
+    # slow/expensive functions are visible and budgets can be set. A cached-win
+    # restore reads as elapsed>0 but llm_calls==0 — the cheapest outcome.
+    elapsed_s: float = 0.0
+    llm_calls: int = 0
+    output_tokens: int = 0
 
 
 @dataclass
@@ -295,9 +302,23 @@ class TDDGenerator:
                 # still `unimplemented!()` stubs.
                 ordered_algs = self._topo_sort_algorithms(module.algorithms)
                 for alg in ordered_algs:
+                    # P0.14: measure wall-clock + model spend per function. Tolerant
+                    # of an LLM shim without a `.stats` dict (test fakes) — telemetry
+                    # is diagnostic and must never break a fill.
+                    def _usage():
+                        s = getattr(self.llm, "stats", None)
+                        if isinstance(s, dict):
+                            return s.get("call_count", 0), s.get("total_output_tokens", 0)
+                        return 0, 0
+                    _t0 = time.perf_counter()
+                    _c0, _o0 = _usage()
                     attempt = self._fill_in_function(
                         alg, module, crate_spec, specs, architecture, output_dir,
                     )
+                    _c1, _o1 = _usage()
+                    attempt.elapsed_s = round(time.perf_counter() - _t0, 3)
+                    attempt.llm_calls = _c1 - _c0
+                    attempt.output_tokens = _o1 - _o0
                     result.attempts.append(attempt)
 
         # Phase D: API completeness

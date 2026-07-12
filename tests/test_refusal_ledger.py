@@ -9,11 +9,14 @@ from alchemist.reporter.refusal_ledger import build_refusal_ledger, write_refusa
 
 
 class _Attempt:
-    def __init__(self, name, ok, iters=1, hol=False, dec=False, err=""):
+    def __init__(self, name, ok, iters=1, hol=False, dec=False, err="",
+                 elapsed_s=0.0, llm_calls=0, output_tokens=0):
         self.algorithm = name; self.crate = "c"; self.module = "m"
         self.tests_passed = ok; self.iterations = iters
         self.escalated_to_holistic = hol; self.escalated_to_decomposition = dec
         self.last_error = err
+        self.elapsed_s = elapsed_s; self.llm_calls = llm_calls
+        self.output_tokens = output_tokens
 
 
 class _Result:
@@ -39,6 +42,26 @@ def test_ledger_counts_and_rate():
     assert hard["escalated_holistic"] is True
     good = next(f for f in led["functions"] if f["name"] == "adler32")
     assert good["verified"] is True and good["reason"] is None
+
+
+def test_ledger_telemetry_rollup():
+    """P0.14: per-function timing/cost + a subject roll-up (total spend, slowest,
+    costliest) so a ledger scan shows where the budget went."""
+    r = _Result([
+        _Attempt("cheap", True, 1, elapsed_s=2.0, llm_calls=1, output_tokens=300),
+        _Attempt("cached", True, 0, elapsed_s=0.5, llm_calls=0, output_tokens=0),
+        _Attempt("expensive", True, 4, elapsed_s=41.0, llm_calls=6, output_tokens=9000),
+    ])
+    led = build_refusal_ledger(r, "s")
+    t = led["telemetry"]
+    assert t["total_elapsed_s"] == 43.5
+    assert t["total_llm_calls"] == 7
+    assert t["total_output_tokens"] == 9300
+    assert t["slowest_fn"] == "expensive" and t["slowest_fn_elapsed_s"] == 41.0
+    assert t["costliest_fn"] == "expensive" and t["costliest_fn_output_tokens"] == 9000
+    # a cached-win restore is visible as elapsed>0 but zero model spend
+    cached = next(f for f in led["functions"] if f["name"] == "cached")
+    assert cached["llm_calls"] == 0 and cached["elapsed_s"] == 0.5
 
 
 def test_ledger_all_verified_zero_rate():

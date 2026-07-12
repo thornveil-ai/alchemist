@@ -927,6 +927,18 @@ def run_implement_stage(
                 f"(refusal rate {_ledger['refusal_rate'] * 100:.1f}%)"
                 + (f" → {_lpath}" if _lpath else "") + "[/cyan]"
             )
+            # P0.14 — one-line spend summary so slow/expensive fills are visible.
+            _tel = _ledger.get("telemetry") or {}
+            if _tel.get("total_llm_calls") or _tel.get("total_elapsed_s"):
+                _slow = _tel.get("slowest_fn")
+                console.print(
+                    f"[cyan]telemetry: {_tel.get('total_elapsed_s', 0):.1f}s, "
+                    f"{_tel.get('total_llm_calls', 0)} LLM calls, "
+                    f"{_tel.get('total_output_tokens', 0)} out-tok"
+                    + (f" · slowest {_slow} "
+                       f"({_tel.get('slowest_fn_elapsed_s', 0):.1f}s)" if _slow else "")
+                    + "[/cyan]"
+                )
         except Exception as _e:  # noqa: BLE001
             console.print(f"[yellow]refusal ledger skipped: {_e}[/yellow]")
         summary = (
