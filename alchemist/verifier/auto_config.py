@@ -1129,7 +1129,14 @@ def fuzz_cstr_roundtrip_vectors(dll, alg, sig, enc_name, *, count: int = 24):
         alphabet = [ord(c) for c in
                     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,-_+/"]
     else:
-        alphabet = list(range(1, 256))
+        # ASCII, non-NUL. High bytes (>=128) are deliberately excluded: a C
+        # encoder that indexes a lookup table by a SIGNED `char` (base64's
+        # `buffer[0] >> 2`) has undefined behavior on them and emits garbage —
+        # a memory-safe Rust decoder cannot (and must not) reproduce that, so
+        # minting from those inputs would forge an unsatisfiable vector. ASCII
+        # plaintext keeps every reasonable char-based codec in its defined
+        # domain while still exercising the full decode alphabet.
+        alphabet = list(range(1, 128))
     seen: set[bytes] = set()
     vectors = []
     tries = 0
