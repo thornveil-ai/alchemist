@@ -348,11 +348,24 @@ class TDDGenerator:
     def _wins_cache_path(
         self, workspace_dir: Path, crate: str, module: str, fn_name: str,
     ) -> Path:
-        # Stored alongside output, not under output/, so a target/ clean
-        # doesn't wipe accumulated progress. Path is stable across runs.
-        return (
-            workspace_dir.parent / "wins" / crate / module / f"{fn_name}.rs"
-        )
+        # Anchor the wins cache to the SUBJECT (source root), not to
+        # workspace_dir.parent. With an EXTERNAL --output (e.g. /tmp/xxx) the old
+        # .parent anchor pointed at the shared temp ROOT, so every subject wrote to
+        # one /tmp/wins keyed only by crate/module/fn — non-deterministic across
+        # --output locations, cross-subject collision-prone, and it silently made
+        # the leaf benchmark NOT cold (prior-run wins short-circuited fills, so the
+        # "first-pass" number was mostly cached restores). The subject dir is stable
+        # regardless of --output and is exactly what run_leafbench's _clean_state
+        # clears, so a cleaned run is genuinely cold. (P0.4)
+        root = getattr(self, "_source_root", None)
+        if root is not None:
+            base = Path(root) / ".alchemist" / "wins"
+        else:
+            # Legacy fallback for callers that don't pass source_root (regen/solo
+            # paths where workspace_dir is subject/.alchemist/output, so .parent is
+            # already subject/.alchemist — the same location, kept stable).
+            base = workspace_dir.parent / "wins"
+        return base / crate / module / f"{fn_name}.rs"
 
     def _hardport_path(
         self, subject_hint: str, crate: str, module: str, fn_name: str,
