@@ -1864,6 +1864,220 @@ def _rust_name_from_spec(specs, fn_name, default):
     return default
 
 
+# A byte BUFFER parameter in a hash context API — accepts the raw C array-declarator
+# form (`const BYTE data[]`, `BYTE hash[]`) AND the pointer form, with the BYTE/uint8
+# typedef unresolved (signature params are not typedef-expanded like struct fields are).
+_HASH_BYTE_BUF = re.compile(
+    r"^(?P<const>const\s+)?(BYTE|unsigned\s+char|uint8_t|char|u8|int8_t)\b"
+    r"[^,]*?(\[\s*\d*\s*\]|\*)\s*$")
+
+
+def _is_const_byte_buf(t: str) -> bool:
+    m = _HASH_BYTE_BUF.match((t or "").strip())
+    return bool(m and m.group("const"))
+
+
+def _is_mut_byte_buf(t: str) -> bool:
+    m = _HASH_BYTE_BUF.match((t or "").strip())
+    return bool(m and not m.group("const"))
+
+
+def _digest_len_from_specs(specs, fn_name) -> "int | None":
+    """The digest byte-count for a `final` fn, read from its Rust lift: the extractor
+    turns `void final(ctx, BYTE hash[])` into `final(ctx, hash: &mut [u8; N])` — N is
+    the digest length (SHA-256=32, SHA-1=20, MD5=16)."""
+    for m in specs or []:
+        for alg in getattr(m, "algorithms", None) or []:
+            if alg.name == fn_name:
+                for p in (alg.inputs or []):
+                    mm = re.search(r"\[\s*u8\s*;\s*(\d+)\s*\]", p.rust_type or "")
+                    if mm:
+                        return int(mm.group(1))
+    return None
+
+
+def classify_hash_digest_sequence(by_name, structs, specs=None):
+    """CONTEXT-HASH sequence: `init(S*)` + `update(S*, const byte*, int)` +
+    `final(S*, byte* out)` sharing a MULTI-FIELD, pointer-free struct S, where
+    `final` writes an N-byte DIGEST into an out-buffer (SHA-256/SHA-1/SHA-512/MD5/
+    HMAC shape). Distinct from `hash_seq` (FNV: single-scalar state + scalar-returning
+    final). Optionally captures a `transform(S*, const block[])` block-compressor.
+    Needs `specs` to read the digest length from `final`'s `&mut [u8; N]` lift.
+    Returns a group dict or None."""
+    from alchemist.verifier import struct_lift as _sl
+    groups: dict[str, list] = {}
+    for name, sig in by_name.items():
+        if not sig.params:
+            continue
+        m = _STRUCT_PTR_RE.match(re.sub(r"^const\s+", "", (sig.params[0][1] or "").strip()))
+        if not m or m.group(1) not in structs:
+            continue
+        groups.setdefault(m.group(1), []).append((name, sig))
+    for sname, fns_ in groups.items():
+        fields = structs[sname]
+        if _sl.single_scalar_field(fields) is not None:  # single-scalar -> hash_seq
+            continue
+        if any(f.is_ptr for f in fields):
+            continue
+        init = update = final = transform = None
+        for name, sig in fns_:
+            ps = [(p[1] or "").strip() for p in sig.params]
+            retv = (sig.return_type or "").strip() == "void"
+            if len(ps) == 1 and retv:
+                init = (name, sig)
+            elif len(ps) == 3 and _is_const_byte_buf(ps[1]) and _INT_C_TYPES.match(ps[2]) and retv:
+                update = (name, sig)
+            elif len(ps) == 2 and _is_mut_byte_buf(ps[1]) and retv:
+                final = (name, sig)
+            elif len(ps) == 2 and _is_const_byte_buf(ps[1]) and retv:
+                transform = (name, sig)  # transform(ctx, const block[]) — block compressor
+        if not (init and update and final):
+            continue
+        digest_len = _digest_len_from_specs(specs, final[0])
+        if digest_len is None:
+            continue
+        rust = _rust_name_from_spec(specs, init[0], _sl.rust_struct_name(sname))
+        return {"struct": sname, "rust": rust, "fields": fields,
+                "init": init, "update": update, "final": final,
+                "transform": transform, "digest_len": digest_len}
+    return None
+
+
+def _hash_field_asserts(st, fields, var="ctx") -> str:
+    """Rust `assert_eq!` lines comparing every carried struct field of `var` against
+    the post-run C state `st`. Arrays render as `[a, b, ...]`, scalars as ints."""
+    from alchemist.verifier.struct_lift import _safe_field_name
+    lines = []
+    for f in fields:
+        cval = getattr(st, f.name)
+        fname = _safe_field_name(f.name)
+        if f.arr is not None:
+            lit = "[" + ", ".join(str(int(cval[i])) for i in range(int(f.arr))) + "]"
+        else:
+            lit = str(int(cval))
+        lines.append(f'assert_eq!({var}.{fname}, {lit}, "field {fname}");')
+    return "\n".join(lines)
+
+
+def fuzz_hash_digest_sequence_vectors(dll, group, *, count: int = 10):
+    """Drive the compiled-C init/update/final (+transform) sequence on fuzzed data and
+    author self-contained (`rust_body`) tests per function: init and update are verified
+    by their POST-STATE (every ctx field vs C), transform by post-transform state, and
+    final by the composed init->update->final DIGEST bytes. Each function is verified in
+    isolation-once-its-dependencies-are-filled (init, then transform, then update, then
+    final — matching leaf-first fill order). Returns {fn_name: [rust_body vectors]}."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    fields = group["fields"]
+    rust = group["rust"]
+    dlen = group["digest_len"]
+    StructC = _ctypes_struct_cls(group["struct"], fields)
+    if StructC is None:
+        return {}
+    init_name = group["init"][0]
+    upd_name, upd_sig = group["update"]
+    fin_name = group["final"][0]
+    tr = group.get("transform")
+    try:
+        c_init = getattr(dll, init_name)
+        c_upd = getattr(dll, upd_name)
+        c_fin = getattr(dll, fin_name)
+    except AttributeError:
+        return {}
+    c_init.restype = None
+    c_init.argtypes = (ctypes.POINTER(StructC),)
+    c_upd.restype = None
+    c_upd.argtypes = (ctypes.POINTER(StructC), ctypes.POINTER(ctypes.c_ubyte),
+                      _ctype(upd_sig.params[2][1]) or ctypes.c_size_t)
+    c_fin.restype = None
+    c_fin.argtypes = (ctypes.POINTER(StructC), ctypes.POINTER(ctypes.c_ubyte))
+    c_tr = None
+    if tr is not None:
+        try:
+            c_tr = getattr(dll, tr[0])
+            c_tr.restype = None
+            c_tr.argtypes = (ctypes.POINTER(StructC), ctypes.POINTER(ctypes.c_ubyte))
+        except AttributeError:
+            c_tr = None
+    # The block size for a transform is the size of the byte-array state field.
+    block_len = next((int(f.arr) for f in fields if f.arr is not None
+                      and f.ctype in ("unsigned char", "char", "uint8_t")), 64)
+    rng = _rng(_FUZZ_SEED)
+    init_v, upd_v, fin_v, tr_v = [], [], [], []
+
+    def _data_lit(b: bytes) -> str:
+        return "&[" + ", ".join(str(x) for x in b) + "]"
+
+    # init: deterministic — one post-init state observer suffices, but take a couple.
+    for i in range(2):
+        st = StructC()
+        c_init(ctypes.byref(st))
+        body = (f"let mut ctx = super::{rust}::default();\n"
+                f"super::{init_name}(&mut ctx);\n"
+                f"{_hash_field_asserts(st, fields)}")
+        init_v.append(SpecTestVector(
+            description=f"post_init_{i}", source=f"C reference (post-init state): {init_name}",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+
+    for vi in range(count):
+        dl = vi if vi < 6 else rng.randrange(0, 200)
+        data = bytes(rng.randrange(0, 256) for _ in range(dl))
+        dbuf = (ctypes.c_ubyte * dl)(*data) if dl else (ctypes.c_ubyte * 0)()
+        # update: post-init+update state observer.
+        st = StructC()
+        c_init(ctypes.byref(st))
+        c_upd(ctypes.byref(st), dbuf, dl)
+        body = (f"let mut ctx = super::{rust}::default();\n"
+                f"super::{init_name}(&mut ctx);\n"
+                f"let data: &[u8] = {_data_lit(data)};\n"
+                f"super::{upd_name}(&mut ctx, data);\n"
+                f"{_hash_field_asserts(st, fields)}")
+        upd_v.append(SpecTestVector(
+            description=f"post_update_{dl}", source=f"C reference (post-update state): {upd_name}",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+        # final: composed init->update->final digest.
+        st2 = StructC()
+        c_init(ctypes.byref(st2))
+        c_upd(ctypes.byref(st2), dbuf, dl)
+        out = (ctypes.c_ubyte * dlen)()
+        c_fin(ctypes.byref(st2), out)
+        digest = bytes(out[i] for i in range(dlen))
+        body = (f"let mut ctx = super::{rust}::default();\n"
+                f"super::{init_name}(&mut ctx);\n"
+                f"let data: &[u8] = {_data_lit(data)};\n"
+                f"super::{upd_name}(&mut ctx, data);\n"
+                f"let mut out = [0u8; {dlen}];\n"
+                f"super::{fin_name}(&mut ctx, &mut out);\n"
+                f"assert_eq!(out, [{', '.join(str(x) for x in digest)}], \"digest_dl_{dl}\");")
+        fin_v.append(SpecTestVector(
+            description=f"digest_dl_{dl}", source=f"C reference (init+update+final): {fin_name}",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+
+    # transform: post-init+transform(one block) state observer.
+    if c_tr is not None and tr is not None:
+        for vi in range(4):
+            blk = bytes(rng.randrange(0, 256) for _ in range(block_len))
+            bbuf = (ctypes.c_ubyte * block_len)(*blk)
+            st = StructC()
+            c_init(ctypes.byref(st))
+            c_tr(ctypes.byref(st), bbuf)
+            body = (f"let mut ctx = super::{rust}::default();\n"
+                    f"super::{init_name}(&mut ctx);\n"
+                    f"let block: &[u8] = {_data_lit(blk)};\n"
+                    f"super::{tr[0]}(&mut ctx, block);\n"
+                    f"{_hash_field_asserts(st, fields)}")
+            tr_v.append(SpecTestVector(
+                description=f"post_transform_{vi}",
+                source=f"C reference (post-transform state): {tr[0]}",
+                inputs={}, expected_output=body, tolerance="rust_body"))
+
+    out_map = {init_name: init_v, upd_name: upd_v, fin_name: fin_v}
+    if tr is not None and tr_v:
+        out_map[tr[0]] = tr_v
+    return out_map
+
+
 def classify_alloc_sequence(by_name, structs, specs=None):
     """init(S*, byte*, int) + op(S*, int) -> int, sharing a multi-field struct S
     (bump/arena allocator: init sets a buffer+capacity, op returns offsets/-1). Returns a
@@ -2561,6 +2775,20 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 for alg in getattr(module, "algorithms", None) or []:
                     if alg.name in _hbyfn and _hbyfn[alg.name] and not getattr(alg, "test_vectors", None):
                         alg.test_vectors = _hbyfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
+    # Context-hash digest sequence (SHA-256/SHA-1/MD5/HMAC): multi-field ctx +
+    # final(ctx, out_digest). init/update/transform verified by post-state, final
+    # by the composed digest — all as self-contained rust_body tests.
+    try:
+        _dg = classify_hash_digest_sequence(by_name, _structs, specs)
+        if _dg is not None:
+            _dbyfn = fuzz_hash_digest_sequence_vectors(dll, _dg)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _dbyfn and _dbyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _dbyfn[alg.name]
                         augmented += 1
     except Exception:  # noqa: BLE001
         pass
