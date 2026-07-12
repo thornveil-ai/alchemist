@@ -344,7 +344,7 @@ def _proptest_cstr_roundtrip_block(h: AlgorithmHarness) -> str:
     `char*` return is NUL-lossy for binary output, so it is never called; the
     encoder is the oracle. Decoding random (un-encoded) bytes would exercise the
     C decoder's UB-on-malformed-input, which memory-safe Rust cannot replicate."""
-    strategy = h.input_strategy or "prop::collection::vec(1u8..=255u8, 0..48)"
+    strategy = h.input_strategy or "prop::collection::vec(1u8..=127u8, 0..48)"
     return dedent(f"""\
         proptest! {{
             #![proptest_config(ProptestConfig::with_cases({h.cases}))]

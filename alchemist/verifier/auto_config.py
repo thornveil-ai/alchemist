@@ -2197,7 +2197,10 @@ def build_diff_config(
                     rust_call=f"rust_{alg.name}(&input)",
                     c_call="",
                     encoder_c_call=f"c_{alg.name}_enc(&pt)",
-                    input_strategy="prop::collection::vec(1u8..=255u8, 0..48)",
+                    # ASCII plaintext (1..=127): a signed-char encoder has UB on
+                    # high bytes (see fuzz_cstr_roundtrip_vectors) — keep it in
+                    # its defined domain so the roundtrip identity holds.
+                    input_strategy="prop::collection::vec(1u8..=127u8, 0..48)",
                     cases=2000,
                 ))
                 used_signatures.append(sig)
