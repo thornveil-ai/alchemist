@@ -48,6 +48,8 @@ _CONST_IN_PTR = re.compile(
 # A writable output byte buffer.
 _MUT_BYTE_PTR = re.compile(r"^(unsigned char|uint8_t|u_char)\s*\*$")
 _SIZE_T = re.compile(r"^(const\s+)?(size_t|z_size_t|unsigned long|uInt|uLong)$")
+# A NUL-terminated C string pointer: `char*` / `const char*` / `unsigned char*`.
+_CHAR_PTR = re.compile(r"^(const\s+)?(unsigned\s+)?char\s*\*$")
 
 # Canonical key length for keyed digests whose C reads a fixed-size key with
 # no length parameter (SipHash reads 16 bytes). Overridable per subject.
@@ -968,6 +970,97 @@ def fuzz_cbuf_out_vectors(dll, alg, sig, *, count: int = 24):
             source=f"C reference (cbuf_out): {sig.name}",
             inputs={str_param.name: _rust_str_lit(inp)},
             expected_output=_rust_str_lit(res),
+            tolerance="str_exact",
+        ))
+    return vectors
+
+
+def classify_cstr_out(sig) -> str | None:
+    """C `char* f(char*)` — a single NUL-terminated string in, returns a heap-allocated
+    NUL-terminated string (caller frees). Text transforms / encoders: base64_encode,
+    to_upper, url_encode. The extractor lifts it to `fn(&[u8]|&str) -> String`.
+
+    Only the TEXT-out case is oracle-able through the C `char*` return; a binary-out lift
+    (decoders → `Vec<u8>`/`Result`) can't be compared this way because the C string is
+    truncated at the first NUL — the fuzzer declines those (returns []) so they refuse
+    honestly rather than verify against a lossy oracle."""
+    if _CHAR_PTR.match((sig.return_type or "").strip()) is None:
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if len(params) == 1 and _CHAR_PTR.match(params[0]):
+        return "cstr_out"
+    return None
+
+
+def _rust_bytes_lit(b: bytes) -> str:
+    """A Rust byte-string literal `b"..."` for arbitrary bytes (used when the extractor
+    lifted a `char*` input to `&[u8]` rather than `&str`)."""
+    out = []
+    for o in b:
+        ch = chr(o)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif 32 <= o < 127:
+            out.append(ch)
+        else:
+            out.append(f"\\x{o:02x}")
+    return 'b"' + "".join(out) + '"'
+
+
+def fuzz_cstr_out_vectors(dll, alg, sig, *, count: int = 24):
+    """Mint fill-loop vectors for a cstr_out fn: run the compiled C on a fuzzed printable
+    input string, read the returned `char*` as a NUL-terminated string. Emits
+    `(&[u8]|&str) -> String` vectors with `str_exact` tolerance. Declines any function
+    whose Rust return isn't a plain `String` (binary-out lifts are NUL-lossy here)."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if classify_cstr_out(sig) is None:
+        return []
+    # Oracle-able only when the Rust side returns a plain String (text out).
+    ret = (alg.return_type or "").strip()
+    if "String" not in ret or "Result" in ret or "Vec" in ret:
+        return []
+    in_param = next(
+        (p for p in (alg.inputs or [])
+         if "[u8]" in (p.rust_type or "") or "str" in (p.rust_type or "").lower()),
+        None,
+    )
+    if in_param is None:
+        return []
+    is_bytes = "[u8]" in (in_param.rust_type or "")
+    fn = getattr(dll, sig.name)
+    fn.restype = ctypes.c_char_p
+    fn.argtypes = (ctypes.c_char_p,)
+    rng = _rng(_FUZZ_SEED)
+    # Printable ASCII only (no NUL, no control chars) so both sides see identical input and
+    # the C `char*` result reads back losslessly.
+    alphabet = [ord(c) for c in
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,-_+/"]
+    seen: set[bytes] = set()
+    vectors = []
+    tries = 0
+    while len(vectors) < count and tries < count * 12:
+        tries += 1
+        n = rng.randint(0, 24)
+        s = bytes(alphabet[rng.randint(0, len(alphabet) - 1)] for _ in range(n))
+        if s in seen:
+            continue
+        seen.add(s)
+        try:
+            res = fn(s)  # c_char_p restype → bytes up to NUL (or None)
+        except Exception:  # noqa: BLE001
+            continue
+        res_s = res.decode("ascii", "replace") if isinstance(res, (bytes, bytearray)) else ""
+        inp = s.decode("ascii", "replace")
+        in_lit = _rust_bytes_lit(s) if is_bytes else _rust_str_lit(inp)
+        vectors.append(SpecTestVector(
+            description=f"cstr_len_{n}",
+            source=f"C reference (cstr_out): {sig.name}",
+            inputs={in_param.name: in_lit},
+            expected_output=_rust_str_lit(res_s),
             tolerance="str_exact",
         ))
     return vectors
@@ -1930,6 +2023,8 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 vecs = fuzz_scalar_vectors(dll, alg, sig)
             elif classify_inplace_shape(sig) is not None:
                 vecs = fuzz_inplace_vectors(dll, alg, sig)
+            elif classify_cstr_out(sig) is not None:
+                vecs = fuzz_cstr_out_vectors(dll, alg, sig)
             elif classify_cbuf_out(sig) is not None:
                 vecs = fuzz_cbuf_out_vectors(dll, alg, sig)
             elif classify_buf_transform(sig) is not None:
