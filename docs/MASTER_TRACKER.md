@@ -284,7 +284,7 @@ Status: `[ ]` to-do · `[~]` active · `[x]` done · `[!]` blocked
 *From differential testing toward equivalence proof. Every function earns a sound gate — or an honest refusal.*
 **Exit:** zero unverified emissions · each fn tagged with its proof method · cyclic cores verifiable · the oracle itself audited.
 
-- [ ] **VER.1** Byte-exact FFI differential (harden/generalize any signature) `eng`
+- [ ] **VER.1** Byte-exact FFI differential (harden/generalize any signature) `eng` — **known gap (found via refusal ledger 2026-07-11):** no `cstr → malloc'd cstr` shape (`char* f(char*)`, e.g. base64_encode/decode). Such fns are skipped as "no test vectors" → 100% refusal despite being FFI-verifiable. Add the shape: marshal NUL-terminated in, read returned C string, compare, free.
 - [~] **VER.2** Whole-program e2e observable differential — wired; now exercise widely `eng`
 - [ ] **VER.3** Stateful sequence differential (generalize state_mutator) `eng`
 - [ ] **VER.4** Coverage-guided fuzz-vector generation `eng`
