@@ -242,3 +242,52 @@ def test_adapter_cstr_scalar(tmp_path):
     assert "pub fn c_count_char(s: &str, a0: i8) -> i32" in lib
     assert "CString::new(s)" in lib
     assert "c_cc_ref::count_char(cs.as_ptr() as _, a0 as _)" in lib
+
+
+def test_classify_buf_gen():
+    from alchemist.verifier.auto_config import classify_buf_gen
+    assert classify_buf_gen(
+        _Sig("make_buffer", "unsigned char *",
+             [("n", "unsigned long"), ("fill", "unsigned char")])) == ["unsigned char"]
+    # a byte-BUFFER input (checksum shape) is not a generator
+    assert classify_buf_gen(
+        _Sig("f", "int", [("b", "const unsigned char *"), ("n", "int")])) is None
+    # non-byte return is not a buffer generator
+    assert classify_buf_gen(_Sig("f", "int", [("n", "int")])) is None
+
+
+def test_build_diff_config_buf_gen(tmp_path):
+    from alchemist.verifier.auto_config import build_diff_config
+    (tmp_path / "heap.c").write_text(
+        "#include <stdlib.h>\n"
+        "unsigned char *make_buffer(unsigned long n, unsigned char fill) {\n"
+        "  unsigned char *p = (unsigned char*)malloc(n);\n"
+        "  for (unsigned long i=0;i<n;i++) p[i]=(unsigned char)(fill+i); return p; }\n",
+        encoding="utf-8")
+    alg = _Alg("make_buffer", "Vec<u8>", [_P("n", "usize"), _P("fill", "u8")])
+    module = type("Mod", (), {"algorithms": [alg]})()
+    cfg = build_diff_config(tmp_path, [module])
+    h = next(h for h in cfg.harnesses if h.category == "buf_gen")
+    assert h.rust_call == "rust_make_buffer(n, a0)"
+    assert h.scalar_arg_types == ["u8"]
+
+
+def test_adapter_buf_gen(tmp_path):
+    from alchemist.verifier.adapter_gen import emit_adapter_lib, plan_adapters
+    from alchemist.verifier.proptest_gen import AlgorithmHarness
+    from alchemist.verifier.auto_ffi import CSignature
+    _write_crate(tmp_path, "heapbuf", "#![forbid(unsafe_code)]\n"
+                 "pub fn make_buffer(n: usize, fill: u8) -> Vec<u8> "
+                 "{ (0..n).map(|i| fill.wrapping_add(i as u8)).collect() }\n")
+    h = AlgorithmHarness(algorithm="make_buffer", category="buf_gen",
+                         rust_call="rust_make_buffer(n, a0)", c_call="c_make_buffer(n, a0)",
+                         scalar_arg_types=["u8"])
+    sig = CSignature(name="make_buffer", return_type="unsigned char *",
+                     params=[("n", "unsigned long"), ("fill", "unsigned char")])
+    plan = plan_adapters([h], rust_workspace=tmp_path, ffi_crate_name="c_heap_ref",
+                         c_signatures=[sig])
+    lib = emit_adapter_lib(plan, ffi_crate_name="c_heap_ref")
+    assert "pub fn rust_make_buffer(n: usize, a0: u8) -> Vec<u8>" in lib
+    assert "pub fn c_make_buffer(n: usize, a0: u8) -> Vec<u8>" in lib
+    assert "from_raw_parts(p as *const u8, n)" in lib
+    assert "c_heap_ref::make_buffer(n as _, a0 as _)" in lib

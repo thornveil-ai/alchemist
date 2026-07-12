@@ -1223,6 +1223,74 @@ def fuzz_cstr_scalar_vectors(dll, alg, sig, *, count: int = 32):
     return vectors
 
 
+def classify_buf_gen(sig):
+    """C `<byteptr> f(<size> n, <scalar>...)` — a buffer GENERATOR: allocates and
+    returns a heap byte buffer of `n` bytes computed from the scalar args
+    (make_buffer's `buf[i]=fill+i`, memset/pattern/PRNG fills). Param 0 is the
+    length. The extractor lifts it to `fn(n: usize, ...) -> Vec<u8>`.
+
+    Returns the list of extra-scalar C param types (after the length), or None."""
+    if _BYTE_PTR.match((sig.return_type or "").strip()) is None:
+        return None
+    params = [t.strip() for _, t in sig.params]
+    if not params:
+        return None
+    if _INT_C_TYPES.match(params[0]) is None and _SIZE_T.match(params[0]) is None:
+        return None
+    extras = params[1:]
+    if not all(_SCALAR_ARG.match(p) for p in extras):
+        return None
+    return extras
+
+
+def fuzz_buf_gen_vectors(dll, alg, sig, *, count: int = 32):
+    """Mint fill-loop vectors for a buffer generator: fuzz the length + scalar args,
+    run the compiled C, read the returned `n` bytes back, compare as a byte Vec.
+    Leaks the C pointer (never freeing is sound; the fuzz lengths are small)."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED, _bytes_to_rust_literal
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    extras = classify_buf_gen(sig)
+    if extras is None:
+        return []
+    ret = (alg.return_type or "").strip()
+    len_param = (alg.inputs or [None])[0]
+    scalar_params = list(alg.inputs or [])[1:]
+    if len_param is None or len(scalar_params) != len(extras):
+        return []
+    fn = getattr(dll, sig.name)
+    fn.restype = ctypes.c_void_p
+    fn.argtypes = tuple([_ctype(sig.params[0][1]) or ctypes.c_size_t]
+                        + [_ctype(e) or ctypes.c_int for e in extras])
+    rng = _rng(_FUZZ_SEED)
+    vectors = []
+    for i in range(count):
+        n = rng.randint(0, 48)
+        svals = []
+        for sp in scalar_params:
+            lo, hi = _elem_range((sp.rust_type or "u8").strip(), cap=255)
+            svals.append(rng.randint(lo, hi))
+        try:
+            ptr = fn(n, *svals)
+        except Exception:  # noqa: BLE001
+            continue
+        if not ptr and n > 0:
+            continue
+        buf = ctypes.string_at(ptr, n) if (ptr and n) else b""
+        row = {len_param.name: f"{n}usize"}
+        for sp, v in zip(scalar_params, svals):
+            row[sp.name] = f"{v}{(sp.rust_type or 'u8').strip()}"
+        lit = _bytes_to_rust_literal(buf)
+        vectors.append(SpecTestVector(
+            description=f"buf_gen_{i}_n{n}",
+            source=f"C reference (buf_gen): {sig.name}",
+            inputs=row,
+            expected_output=(f"Ok({lit})" if ret.startswith("Result<") else lit),
+            tolerance="exact",
+        ))
+    return vectors
+
+
 def normalize_byte_buffer_types(c_source_dir, specs) -> int:
     """Force `&[u8]` for any spec input whose C type is a char*/byte pointer that comes
     with a length parameter. Such params are byte BUFFERS, not C strings; lifting them to
@@ -1951,6 +2019,23 @@ def build_diff_config(
                 ))
                 used_signatures.append(sig)
                 continue
+            _bg = classify_buf_gen(sig)
+            if _bg is not None:
+                # `<byteptr> f(<size> n, <scalar>...)` -> Rust `(usize, ...) -> Vec<u8>`.
+                # proptest binds (n, a0, ...); the wrappers read n bytes back and compare.
+                _bg_extra = [(struct_lift.c_scalar_to_rust(e) or "u8") for e in _bg]
+                _bg_names = ["n"] + [f"a{_i}" for _i in range(len(_bg_extra))]
+                _bg_args = ", ".join(_bg_names)
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="buf_gen",
+                    rust_call=f"rust_{alg.name}({_bg_args})",
+                    c_call=f"c_{alg.name}({_bg_args})",
+                    scalar_arg_types=_bg_extra,
+                    cases=4000,
+                ))
+                used_signatures.append(sig)
+                continue
             if classify_scalar_shape(sig) is not None:
                 _sargs = [(i.rust_type or "u64").strip() for i in (alg.inputs or [])] or ["u64"]
                 _snames = [f"a{_i}" for _i in range(len(_sargs))]
@@ -2283,6 +2368,8 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 vecs = fuzz_inplace_vectors(dll, alg, sig)
             elif classify_iarray_reduce(sig) is not None:
                 vecs = fuzz_iarray_reduce_vectors(dll, alg, sig)
+            elif classify_buf_gen(sig) is not None:
+                vecs = fuzz_buf_gen_vectors(dll, alg, sig)
             elif classify_cstr_out(sig) is not None:
                 vecs = fuzz_cstr_out_vectors(dll, alg, sig)
             elif classify_cbuf_out(sig) is not None:
