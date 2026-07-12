@@ -35,7 +35,7 @@ VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
-    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "buf_transform"}
+    "cipher_seq", "alloc_seq", "hash_seq", "cbuf_out", "cstr_out", "buf_transform"}
 
 
 @dataclass
@@ -243,6 +243,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_buf_transform_block(h)
     if h.category == "cbuf_out":
         return _proptest_cbuf_out_block(h)
+    if h.category == "cstr_out":
+        return _proptest_cstr_out_block(h)
     if h.category == "inplace":
         return _proptest_inplace_block(h)
     if h.category in ("compression", "decompression"):
@@ -330,6 +332,26 @@ def _proptest_cbuf_out_block(h: AlgorithmHarness) -> str:
     ASCII string (no interior NUL — CString rejects it) that exercises the '$' start marker
     and the '*'/CR/LF terminators, and compare the two result strings."""
     strategy = h.input_strategy or r'"[A-Za-z0-9,.$*\r\n-]{0,40}"'
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(input in {strategy}) {{
+                let rust_out = {h.rust_call};
+                let c_out = {h.c_call};
+                prop_assert_eq!(rust_out, c_out);
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_cstr_out_block(h: AlgorithmHarness) -> str:
+    """Differential for a `char* f(char*)` text transform (to_upper/rot13/hex_encode):
+    fuzz a printable-ASCII string (no interior NUL — CString rejects it; the range
+    spans lowercase AND uppercase so case-changing transforms are actually exercised)
+    and compare the two result strings."""
+    strategy = h.input_strategy or r'"[ -~]{0,48}"'
     return dedent(f"""\
         proptest! {{
             #![proptest_config(ProptestConfig::with_cases({h.cases}))]

@@ -1694,10 +1694,13 @@ def build_diff_config(
             # buf_transform whose byte-exact differential harness (with encoder
             # round-trip for decoders) IS built below — do NOT skip it, or the
             # final gate gets no config and refuses a fully-translated codec.
-            # Ciphers and any compression that is NOT a clean buf_transform have
-            # no scalar/checksum harness and are skipped as before.
+            # Likewise a `char* f(char*)` text transform the extractor labelled
+            # "cipher" (rot13 IS a substitution cipher) is a clean cstr_out shape
+            # with a sound differential — the semantic label must not starve the
+            # gate. Only ciphers/compression that fit NEITHER shape are skipped.
             if (alg.category or "") in ("cipher", "compression", "decompression") \
-                    and classify_buf_transform(sig) is None:
+                    and classify_buf_transform(sig) is None \
+                    and classify_cstr_out(sig) is None:
                 continue
             if _cs is not None and alg.name in (_cs['init'][0], _cs['gen'][0]):
                 continue
@@ -1772,6 +1775,25 @@ def build_diff_config(
                     input_strategy=_sstrat,
                     scalar_arg_types=_sargs,
                     mutator_bind=_sbind,
+                ))
+                used_signatures.append(sig)
+                continue
+            if classify_cstr_out(sig) is not None:
+                # C `char* f(char*)`: string in -> freshly-allocated string out
+                # (to_upper / rot13 / hex_encode / *_encode). Checked before
+                # cbuf_out (its 1-param shape is disjoint from cbuf_out's 2-param
+                # shape, but this mirrors synthesize_c_vectors' dispatch order).
+                # Without this branch the final differential gate found no harness
+                # for a byte-exact-verified text transform and refused it —
+                # the "verified-function but workspace-FAIL" gap the leaf
+                # benchmark (P0.11) surfaced.
+                harnesses.append(AlgorithmHarness(
+                    algorithm=alg.name,
+                    category="cstr_out",
+                    rust_call=f"rust_{alg.name}(&input)",
+                    c_call=f"c_{alg.name}(&input)",
+                    input_strategy=r'"[ -~]{0,48}"',
+                    cases=4000,
                 ))
                 used_signatures.append(sig)
                 continue

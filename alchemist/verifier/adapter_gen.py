@@ -610,6 +610,53 @@ def plan_adapters(
                     rust_crates={fn.crate},
                     resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (cbuf_out)",
                 ))
+            elif h.category == "cstr_out":
+                # C `char* f(char*)`: one NUL-terminated string in, a freshly
+                # heap-allocated NUL-terminated string out. The Rust fn is
+                # `(&str|&[u8]) -> String|Vec<u8>`; the C side calls the extern,
+                # reads the returned C string back, and DELIBERATELY leaks it —
+                # never freeing is always sound, whereas calling libc free on a
+                # pointer the C reference may not have malloc'd (a static, or the
+                # input itself) would be UB. The leak is bounded (short fuzz
+                # strings × a test process that exits), so it is the correct call.
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt rust side of cstr_out '{h.algorithm}': not found")
+                path = f"{fn.crate_ident}::{fn.name}"
+                in_ty = (fn.params[0][1] if fn.params else "&str").strip()
+                arg = "input" if "str" in in_ty else "input.as_bytes()"
+                call = f"{path}({arg})"
+                if fn.ret.startswith("Result<"):
+                    call = f"({call}).unwrap_or_default()"
+                if "Vec" in fn.ret or "[u8" in fn.ret:
+                    norm = f"String::from_utf8_lossy(&{{ let r = {call}; r }}).into_owned()"
+                else:
+                    norm = f"({call}).to_string()"
+                rust_wrapper = (
+                    f"/// String result of {fn.crate}::{fn.name} (heap-string-returning fn).\n"
+                    f"pub fn rust_{h.algorithm}(input: &str) -> String {{\n"
+                    f"    {norm}\n"
+                    f"}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(input: &str) -> String {{\n"
+                    f"    let cin = match std::ffi::CString::new(input) "
+                    f"{{ Ok(c) => c, Err(_) => return String::new() }};\n"
+                    f"    let rp = unsafe {{ {ffi_ident}::{h.algorithm}(cin.as_ptr() as _) }};\n"
+                    f"    if rp.is_null() {{ return String::new(); }}\n"
+                    f"    // Leak rp on purpose (see adapter comment): sound, bounded.\n"
+                    f"    unsafe {{ std::ffi::CStr::from_ptr(rp as *const _) }}"
+                    f".to_string_lossy().into_owned()\n"
+                    f"}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h,
+                    rust_wrapper=rust_wrapper,
+                    c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {fn.crate_ident}::{fn.name} (cstr_out)",
+                ))
             elif h.category == "inplace":
                 fn = _pick_unambiguous(h.algorithm, api)
                 if fn is None:
