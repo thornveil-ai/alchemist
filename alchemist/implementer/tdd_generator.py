@@ -2710,6 +2710,19 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
             f"test_{name}_str_",
             f"test_{name}_body_",
             f"test_{name}_roundtrip_",
+            # Stateful-sequence + mutator emitters (test_generator.py): without
+            # these the fill loop runs 0 tests for a cipher keystream / alloc op /
+            # hash update+final / scalar mutator and FALSELY reports "no test
+            # vectors", refusing a function the gate-5 sequence differential
+            # actually proves correct. This inflated the refusal metric for every
+            # stateful subject (rc4 keystream, bump_alloc op, FNV update/final).
+            f"test_{name}_seq_",     # cipher_seq keystream
+            f"test_{name}_aseq_",    # alloc_seq op
+            f"test_{name}_ainit_",   # alloc_seq init
+            f"test_{name}_hinit_",   # hash_seq init
+            f"test_{name}_hupd_",    # hash_seq update
+            f"test_{name}_hfin_",    # hash_seq final (digest)
+            f"test_{name}_mut_",     # scalar_mutator
             f"smoke_{name}",
         ])
     return filters
