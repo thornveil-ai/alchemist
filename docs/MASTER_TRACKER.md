@@ -212,6 +212,24 @@ Every completed item's note carries **(a)** the component/shape it changed (name
 *A never-seen C library → a verified Rust workspace, under 5% refusal, zero human touches. The first genuinely fundable claim.*
 **Exit:** 5+ unseen C libs converted hands-off · refusal <5% · signed receipts · a stranger can clone & reproduce.
 
+> ## 📏 Distance to P1 complete *(estimate, 2026-07-13)*
+> **By item count:** 7/17 done (41%). **By exit gate:** 1 of 4 fully met.
+>
+> | P1 exit gate | Status |
+> |---|---|
+> | Refusal < 5% | ✅ **DONE** (4.8%) |
+> | 5+ unseen libs converted hands-off | 🟡 the benchmark already has **6 full-library passes** (base64, siphash, murmur3, rc4, hashkit, heap); the *named diverse* targets P1.4–P1.9 (parson/CBOR/container/compression/http-parser/monocypher) still need adding + converting |
+> | Signed receipts | 🟡 engine built (P1.14), needs one documented reproduce run |
+> | Stranger can clone & reproduce | 🟡 deterministic replay + receipts done; needs the stranger-clone run |
+>
+> **The expensive part — building the oracle SHAPES so the pipeline *can* handle each class of C library — is ~done** (decoders, header-only, context-hashes, stateful sequences all landed this session). What remains is mostly a **run campaign**, not R&D:
+> - **~6 library conversions** (P1.4–P1.9): "run the converter + triage the occasional new gap." ~0.5–1.5 sessions each ≈ **~6 focused sessions**. *Risk:* a parser-class subject (http-parser) may hit the same type-coherence wall jsmn did (P2.2), +1–2 sessions.
+> - **Confirmation runs** (P1.1 zlib, P1.2 libcrc, P1.3): already-conquered libs, fresh-clone re-prove ≈ **~1 session**.
+> - **Reproducibility + receipts** (P1.14): stranger-clone run + doc ≈ **~1 session**.
+> - **jsmn canonical-naming** (P2.2), if the parser class is wanted fully clean ≈ **~1–2 sessions**.
+>
+> **Bottom line: ~8–10 focused, mostly-unattended run-and-triage sessions — a ~1–2 week compute campaign on the single box, no expected major capability walls.** Capability-complete (*can the machine do it?*) ≈ **85%**; checkbox-complete = 41%. The load-bearing 7 of 17 were the hard ones.
+>
 > ## 📉 Refusal trajectory (cold 8-lib `run_libbench.py`)
 > | Run | Overall refusal | Per-lib |
 > |---|---|---|

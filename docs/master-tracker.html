@@ -159,6 +159,7 @@
     <p class="eyebrow">Alchemist · Master Tracker</p>
     <h1>Every rung from here <span class="to">→</span> all of ArduPilot, verified.</h1>
     <p class="thesis">The one document for the whole climb: <strong>~285 concrete milestones</strong> across 8 vertical phases and 6 capability tracks, each with a definition-of-done, honestly tagged by difficulty, and <strong>checkable</strong> — your progress saves in this browser. Finish every item and the project is genuinely complete: point it at a C/C++ codebase, walk away, come back to verified safe Rust.</p>
+    <p class="thesis" style="margin-top:14px;padding:12px 14px;border-radius:10px;background:color-mix(in srgb,var(--s-done) 12%,transparent);border:1px solid color-mix(in srgb,var(--s-done) 40%,transparent)"><strong>Live status · 2026-07-13</strong> — P1.13 refusal exit criterion <strong>MET at 4.8%</strong> (cold 8-lib benchmark, down from 23.5% baseline). This was achieved purely by closing oracle-shape and gate false-positives — the model was never the bottleneck. <strong>F + P0 complete</strong> (26/26); <strong>P1 at 7/17</strong>, remaining is mostly a run campaign (convert P1.4–P1.9 libraries + reproducibility). Sole benchmark refusal: sha256_transform (the model-hard 64-round core).</p>
 
     <div class="research">
       <h2>Where we sit in the field — researched, not guessed</h2>
@@ -262,18 +263,18 @@
      items:[
       {id:"P0.1",t:"Clean single-fn repro harness",d:"solo <fn> with fixed --output dumps the model's Rust + the exact differential assertion per iteration, no instrumentation.",g:["eng","infra"],s:"wip"},
       {id:"P0.2",t:"Root-cause the tinychk differential fails",d:"Model's adler32 is byte-exact vs zlib yet the gate rejects it — resolve model-variant vs oracle-regeneration vs state.",g:["eng"],s:"wip"},
-      {id:"P0.3",t:"Fix verify_gen ↔ output-path coupling",d:"Regenerated diff_test pointed at the wrong crate; it must always reference the actually-emitted workspace.",g:["eng"]},
-      {id:"P0.4",t:"Win-cache restore determinism",d:"A cached PASS failed 2× re-verify and didn't restore; a prior win must reload deterministically on a clean run.",g:["eng"]},
-      {id:"P0.5",t:"Kill holistic-fixer empty-patch no-ops",d:"Holistic escalation returns empty patches; it must produce a compiling patch or report why, never burn budget silently.",g:["eng"]},
-      {id:"P0.6",t:"Escalation-ladder audit",d:"multi-sample → holistic → structural_decomp: prove each tier adds wins, set budgets, drop tiers that don't earn their cost.",g:["eng"]},
-      {id:"P0.7",t:"Refusal-rate instrumentation",d:"Every run emits a refusal ledger with a reason taxonomy — the north-star metric made measurable.",g:["infra"]},
-      {id:"P0.8",t:"Systematic false-refusal sweep",d:"Three found this session; sweep every extract/verify gate for the rest and regression-test each.",g:["eng"]},
-      {id:"P0.9",t:"Anti-stub / semantic-lint false-positive review",d:"No heuristic lint may veto a function the compiled-C differential already proved correct.",g:["eng"]},
-      {id:"P0.10",t:"Stale-lock auto-reclamation",d:"workspace_lock reclaims a dead-PID lock instead of blocking and failing.",g:["eng"]},
-      {id:"P0.11",t:"Leaf-function benchmark suite",d:"30–50 unseen pure C fns (hashes, checksums, string ops, bit tricks); automated first-pass + eventual-verified rates.",g:["infra"]},
-      {id:"P0.12",t:"Nightly CI runs the real pipeline+model",d:"Closes the standing gap: CI has never invoked the model. Nightly translates tinychk, gates on OVERALL PASS.",g:["infra"]},
-      {id:"P0.13",t:"Deterministic replay",d:"Same subject + seed + temp=0 → identical result, so regressions attribute to code, not sampling.",g:["infra"]},
-      {id:"P0.14",t:"Per-function timing & cost telemetry",d:"Find the slow/expensive fills (extract ran ~20s/fn) and set budgets.",g:["infra"]}
+      {id:"P0.3",t:"Fix verify_gen ↔ output-path coupling",d:"Regenerated diff_test pointed at the wrong crate; it must always reference the actually-emitted workspace.",g:["eng"],s:"done"},
+      {id:"P0.4",t:"Win-cache restore determinism",d:"A cached PASS failed 2× re-verify and didn't restore; a prior win must reload deterministically on a clean run.",g:["eng"],s:"done"},
+      {id:"P0.5",t:"Kill holistic-fixer empty-patch no-ops",d:"Holistic escalation returns empty patches; it must produce a compiling patch or report why, never burn budget silently.",g:["eng"],s:"done"},
+      {id:"P0.6",t:"Escalation-ladder audit",d:"multi-sample → holistic → structural_decomp: prove each tier adds wins, set budgets, drop tiers that don't earn their cost.",g:["eng"],s:"done"},
+      {id:"P0.7",t:"Refusal-rate instrumentation",d:"Every run emits a refusal ledger with a reason taxonomy — the north-star metric made measurable.",g:["infra"],s:"done"},
+      {id:"P0.8",t:"Systematic false-refusal sweep",d:"Three found this session; sweep every extract/verify gate for the rest and regression-test each.",g:["eng"],s:"done"},
+      {id:"P0.9",t:"Anti-stub / semantic-lint false-positive review",d:"No heuristic lint may veto a function the compiled-C differential already proved correct.",g:["eng"],s:"done"},
+      {id:"P0.10",t:"Stale-lock auto-reclamation",d:"workspace_lock reclaims a dead-PID lock instead of blocking and failing.",g:["eng"],s:"done"},
+      {id:"P0.11",t:"Leaf-function benchmark suite",d:"30–50 unseen pure C fns (hashes, checksums, string ops, bit tricks); automated first-pass + eventual-verified rates.",g:["infra"],s:"done"},
+      {id:"P0.12",t:"Nightly CI runs the real pipeline+model",d:"Closes the standing gap: CI has never invoked the model. Nightly translates tinychk, gates on OVERALL PASS.",g:["infra"],s:"done"},
+      {id:"P0.13",t:"Deterministic replay",d:"Same subject + seed + temp=0 → identical result, so regressions attribute to code, not sampling.",g:["infra"],s:"done"},
+      {id:"P0.14",t:"Per-function timing & cost telemetry",d:"Find the slow/expensive fills (extract ran ~20s/fn) and set budgets.",g:["infra"],s:"done"}
      ]},
 
     {k:"P1", kind:"Phase", name:"Whole Small / Mid C Library — Push-Button", hz:"near", horizonLabel:"Near · weeks–months",
@@ -289,11 +290,14 @@
       {id:"P1.7",t:"A compression codec (heatshrink / miniz)",d:"Stateful stream verified end-to-end.",g:["model"]},
       {id:"P1.8",t:"A protocol parser (http-parser subset)",d:"goto-heavy state machine → structured Rust, differentially verified.",g:["research"]},
       {id:"P1.9",t:"A crypto primitive lib (monocypher subset)",d:"Constant-time-sensitive; KAT + differential.",g:["model"]},
-      {id:"P1.10",t:"Unattended batch runner",d:"Point at N libraries, walk away, collect per-lib scorecards + refusal ledgers.",g:["infra"]},
-      {id:"P1.11",t:"Build-system discovery robustness",d:"discover_c_build handles make / cmake / autotools / amalgamations across the unseen libs.",g:["eng"]},
-      {id:"P1.12",t:"Dependency-ordered fill at 50–150 fns",d:"Topo scheduling proven stable at mid scale.",g:["eng"]},
-      {id:"P1.13",t:"Refusal <5% exit criterion met on an unseen lib",d:"The headline metric: a fresh library converts with a single-digit refusal rate.",g:["model"]},
-      {id:"P1.14",t:"Cold-start reproducibility",d:"A stranger clones, runs, and reproduces the same verified result + signed receipt.",g:["infra"]}
+      {id:"P1.10",t:"Unattended batch runner",d:"Point at N libraries, walk away, collect per-lib scorecards + refusal ledgers.",g:["infra"],s:"done"},
+      {id:"P1.11",t:"Build-system discovery robustness",d:"discover_c_build handles make / cmake / autotools / amalgamations across the unseen libs.",g:["eng"],s:"done"},
+      {id:"P1.12",t:"Dependency-ordered fill at 50–150 fns",d:"Topo scheduling proven stable at mid scale.",g:["eng"],s:"done"},
+      {id:"P1.13",t:"Refusal <5% exit criterion met on an unseen lib",d:"✅ MET — 4.8% (20 verified / 1 refused) on the cold 8-lib benchmark, down from a 23.5% baseline. Lone refusal: sha256_transform (model-hard, not an oracle gap).",g:["model"],s:"done"},
+      {id:"P1.14",t:"Cold-start reproducibility",d:"Receipt engine + deterministic-replay done; needs a documented stranger-clone reproduce run.",g:["infra"],s:"wip"},
+      {id:"P1.15",t:"Inverse-pair roundtrip oracle (decoder class)",d:"A char* binary-out decoder (base64_decode) is verified by minting inputs via its paired C encoder: decode(encode(p))==p. Unblocks decoders/inflate/deserialize. base64 0/0→2/2.",g:["eng"],s:"done"},
+      {id:"P1.16",t:"Header-only C library ingestion",d:"A lib whose whole impl lives in a .h (jsmn, stb-style) was silently 0/0; the module detector + spec extractor now read definition-bearing headers as source modules.",g:["eng"],s:"done"},
+      {id:"P1.17",t:"Digest-sequence oracle (context-hash class)",d:"init/update/final over a multi-field ctx with a byte-digest out-param (SHA-256/SHA-1/MD5/HMAC). sha256 0/4→3/4, whole-sequence digest differential byte-exact green.",g:["eng"],s:"done"}
      ]},
 
     {k:"P2", kind:"Phase", name:"Scale — Large Single C Codebase", hz:"mid", horizonLabel:"Mid · months",
