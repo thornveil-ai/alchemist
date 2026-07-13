@@ -283,14 +283,58 @@ def pointer_field_names(fields) -> list[str]:
     return [f.name for f in (fields or []) if f.is_ptr]
 
 
-def emit_safe_struct(rust_name: str, fields) -> str | None:
-    """Emit a SAFE (non-repr-C) struct + Default. Raw-pointer fields are DROPPED — a borrowed
-    or raw buffer pointer has no faithful safe field, and stateful logic that only tracks
-    scalar offsets/indices doesn't observe it. Returns None if no representable field remains
-    or a non-pointer scalar is unmappable."""
-    body, defaults, dropped = [], [], []
+# Struct-pointer field names that read as a COUNTED ARRAY of children (JSON array,
+# n-ary tree) when the struct also carries a length scalar -> lift to `Vec<T>`.
+_ARRAYISH_PTR_NAMES = {
+    "items", "elements", "children", "entries", "data", "values", "keys",
+    "array", "arr", "nodes", "cells", "members", "tokens", "list", "buckets",
+}
+# Scalar field names that read as the length of a sibling array pointer.
+_COUNT_FIELD_NAMES = {
+    "count", "size", "len", "length", "n", "num", "nmemb", "capacity",
+    "cap", "used", "nitems", "ntokens", "nmemb", "nkeys", "nvalues",
+}
+
+
+def _pointee_c_name(f: "Field") -> str:
+    """The C struct a pointer field points at: `struct node *` -> `node`, `Node *` -> `Node`."""
+    return re.sub(r"^(?:const\s+)?struct\s+", "", (f.ctype or "").strip())
+
+
+def emit_safe_struct(rust_name: str, fields, *, c_to_rust: dict | None = None) -> str | None:
+    """Emit a SAFE (non-repr-C) struct + Default.
+
+    KEYSTONE #3 (ownership at library scale): a pointer field to ANOTHER CARRIED struct
+    is LIFTED to an owned safe form instead of being dropped — `T* next` -> `Option<Box<T>>`
+    (single owned child: linked list, binary-tree left/right), or `Vec<T>` when the field
+    reads as a counted array and the struct carries a length scalar (JSON array / DOM). This
+    is what lets a heap-linked data-structure library's skeleton compile cold. `c_to_rust`
+    maps C struct names -> their canonical Rust names (only structs that WILL be emitted, so
+    the reference always resolves); pass it from the whole-program canonicalization pass.
+
+    Raw scalar/char buffer pointers (no carried-struct pointee) are still DROPPED — a borrowed
+    or raw buffer pointer has no faithful safe field, and scalar offset/index state doesn't
+    observe it (rc4/allocators rely on this). Returns None if no representable field remains or
+    a non-pointer scalar is unmappable."""
+    c_to_rust = c_to_rust or {}
+    scalar_names = {f.name for f in fields if not f.is_ptr and f.arr is None}
+    has_count = bool(scalar_names & _COUNT_FIELD_NAMES)
+    body, defaults, dropped, lifted = [], [], [], []
     for f in fields:
         if f.is_ptr:
+            # Self-references are fine: Box breaks the infinite-size cycle.
+            rust_pointee = c_to_rust.get(_pointee_c_name(f))
+            if rust_pointee:
+                fname = _safe_field_name(f.name)
+                if f.name in _ARRAYISH_PTR_NAMES and has_count:
+                    body.append(f"    pub {fname}: Vec<{rust_pointee}>,")
+                    defaults.append(f"{fname}: Vec::new()")
+                    lifted.append(f"{f.name} -> Vec<{rust_pointee}>")
+                else:
+                    body.append(f"    pub {fname}: Option<Box<{rust_pointee}>>,")
+                    defaults.append(f"{fname}: None")
+                    lifted.append(f"{f.name} -> Option<Box<{rust_pointee}>>")
+                continue
             dropped.append(f.name)
             continue
         base = c_scalar_to_rust(f.ctype)
@@ -306,9 +350,12 @@ def emit_safe_struct(rust_name: str, fields) -> str | None:
     if not body:
         return None
     note = ""
+    if lifted:
+        note += ("// Owned pointer field(s) lifted to safe Rust (malloc/free -> Box/Vec): "
+                 + ", ".join(lifted) + "\n")
     if dropped:
-        note = ("// Raw-pointer field(s) dropped (no safe representation; not observed by the\n"
-                "// scalar state logic): " + ", ".join(dropped) + "\n")
+        note += ("// Raw-pointer field(s) dropped (no safe representation; not observed by the\n"
+                 "// scalar state logic): " + ", ".join(dropped) + "\n")
     struct = note + "#[derive(Clone)]\npub struct " + rust_name + " {\n" + "\n".join(body) + "\n}\n"
     fields_init = ", ".join(defaults)
     dflt = (
@@ -402,11 +449,32 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
                     inp.rust_type = re.sub(r"\b" + re.escape(bare) + r"\b",
                                            canon, inp.rust_type or "")
 
-    # PASS 3: emit ONE SharedType per canonical struct each module references.
+    # Subject-wide C-struct -> Rust-name map (canonical where known, else the
+    # extractor's convention). KEYSTONE #3 uses it to lift a pointer-to-carried-struct
+    # field to `Option<Box<Rust>>` / `Vec<Rust>` instead of dropping it.
+    c_to_rust = dict(canon_of_c)
+    for cn in structs:
+        c_to_rust.setdefault(cn, rust_struct_name(cn))
+
+    def _referenced_struct_pointees(fields) -> list:
+        """C struct names a struct's POINTER fields point at (that are themselves carried
+        structs) — the transitive closure roots for owning linked/tree/DOM data."""
+        out = []
+        for f in fields:
+            if f.is_ptr:
+                p = _pointee_c_name(f)
+                if p in structs and single_scalar_field(structs[p]) is None:
+                    out.append(p)
+        return out
+
+    # PASS 3: emit ONE SharedType per canonical struct each module references, PLUS the
+    # transitive closure of structs reachable through owned pointer fields (so a linked
+    # list / tree / DOM library gets a coherent, compilable skeleton — every node type
+    # its owned links reference is defined).
     added = 0
     for module in specs:
         present = {t.name for t in (getattr(module, "shared_types", None) or [])}
-        want: dict[str, tuple] = {}  # canonical_name -> (c_struct, fields)
+        want: dict[str, tuple] = {}  # rust_name -> (c_struct, fields)
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
             if sig is None or not sig.params or not alg.inputs:
@@ -418,10 +486,19 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
                 canon = canon_of_c.get(cn)
                 if canon and (canon[0].isalpha() or canon[0] == "_"):
                     want.setdefault(canon, (cn, structs[cn]))
+        # transitive closure over owned pointer fields
+        queue = list(want.values())
+        while queue:
+            _cn, _fields = queue.pop()
+            for p in _referenced_struct_pointees(_fields):
+                rn = c_to_rust.get(p)
+                if rn and rn not in want and (rn[0].isalpha() or rn[0] == "_"):
+                    want[rn] = (p, structs[p])
+                    queue.append((p, structs[p]))
         for rust_name, (cn, fields) in want.items():
             if rust_name in present:
                 continue
-            definition = emit_safe_struct(rust_name, fields)
+            definition = emit_safe_struct(rust_name, fields, c_to_rust=c_to_rust)
             if definition is None:
                 continue
             module.shared_types = list(getattr(module, "shared_types", None) or []) + [
