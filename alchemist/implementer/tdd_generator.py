@@ -334,6 +334,17 @@ class TDDGenerator:
                     attempt.llm_calls = _c1 - _c0
                     attempt.output_tokens = _o1 - _o0
                     result.attempts.append(attempt)
+                    # Compile-isolation (crate-level verified-core + honest-refusal-tail):
+                    # a refused function's last (broken/non-compiling) body must NOT stay in
+                    # the crate — it fails compilation and blocks EVERY subsequently-filled
+                    # sibling from verifying (jsmn_parse's type error was dragging down the
+                    # correct jsmn_init). Reset it to a compiling unimplemented!() stub so
+                    # the functions the model CAN translate still compile + verify.
+                    if not attempt.tests_passed:
+                        try:
+                            self._stub_refused_fn(alg, module, crate_spec, output_dir)
+                        except Exception:  # noqa: BLE001
+                            pass
 
         # Phase D: API completeness
         console.print("[bold cyan]TDD Phase D: API completeness check[/bold cyan]")
@@ -1726,6 +1737,30 @@ class TDDGenerator:
         start = m["body_start"]
         end = m["body_end"]
         return text[start:end]
+
+    def _stub_refused_fn(self, alg, module, crate_spec, workspace_dir) -> bool:
+        """Reset a REFUSED function to a compiling `unimplemented!()` stub so its last
+        (broken/non-compiling) body cannot poison the crate and block EVERY verified
+        sibling's verification. This is the crate-level "verified core + honest refusal
+        tail": a function the model couldn't translate becomes an honest stub, and the
+        functions it CAN translate still compile and verify. The signature is preserved
+        exactly (only the body becomes the stub). Returns True if a reset was applied."""
+        module_path = workspace_dir / crate_spec.name / "src" / f"{module.name}.rs"
+        if not module_path.exists():
+            return False
+        src = module_path.read_text(encoding="utf-8")
+        sig_m = re.search(
+            r"((?:pub\s+)?fn\s+" + re.escape(alg.name) + r"\s*(?:<[^>]*>)?\s*\([^{]*?)\{",
+            src, re.DOTALL)
+        if not sig_m:
+            return False
+        stub_fn = sig_m.group(1).rstrip() + (
+            f' {{\n    unimplemented!("refused: {alg.name} — no verified translation")\n}}')
+        replaced = self._replace_fn_in_source(src, alg.name, stub_fn)
+        if replaced is None or replaced == src:
+            return False
+        module_path.write_text(replaced, encoding="utf-8")
+        return True
 
     def _replace_fn_in_source(self, text: str, name: str, new_fn_text: str) -> str | None:
         m = self._find_fn(text, name)
