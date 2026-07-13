@@ -2183,6 +2183,295 @@ def fuzz_alloc_sequence_vectors(dll, group, op_ret_kind="int", init_kinds_csv="b
     return {init_name: init_vecs, op_name: seq_vecs}
 
 
+# ---------------------------------------------------------------------------
+# Parser-class oracle (P1 keystone #2)
+# ---------------------------------------------------------------------------
+# Differentially verify a `parse(input) -> structured token output` function
+# against the compiled C reference on FUZZED inputs -- valid, malformed, and
+# truncated. A memory-safe parser must reproduce C's return/error code AND its
+# filled token array byte-for-byte on every input. This is the shape jsmn (and
+# the recursive-descent core of parson / http-parser) needs, which no existing
+# oracle covered: the "output" is a variable-length array of small structs plus
+# a signed return code, not a scalar or a byte buffer.
+
+_PARSE_FUZZ_INPUTS = [
+    b"", b"{}", b"[]", b"null", b"true", b"false", b"0", b"123", b"-42", b"3.14",
+    b'"hi"', b'{"a":1}', b'[1,2,3]', b'{"k":"v","n":42,"b":true,"z":null}',
+    b'{"a":[1,{"b":2}]}', b'  {  "x" : [ true , false ] }  ',
+    b'{"nested":{"deep":{"x":[1,2,[3]]}}}', b'["a","b","c"]', b'{"":0}',
+    # malformed / truncated -- a safe parser must match C's ERROR return, not crash
+    b"{", b"[", b"[1,", b'{"a":}', b'{"a"', b"tru", b"123abc", b'"unterm',
+    b"}", b"]", b",", b":", b'{"a":1,}', b"[,]", b"{{{{", b"[[[[[[[[[[",
+    b"\x00\x01\x02", b'{"a":"b"', b"  \t\n  ", b'{"x":-}', b'[1 2 3]',
+]
+
+
+def _extract_struct_body(text: str, struct_name: str) -> "str | None":
+    """The `{ ... }` body text of `struct_name`, handling both the typedef form
+    (`typedef struct tag { ... } struct_name;`) and the tagged form
+    (`struct struct_name { ... }`). Brace-matched so nested braces don't confuse it."""
+    for m in re.finditer(r"\}\s*" + re.escape(struct_name) + r"\s*;", text):
+        close, depth, i = m.start(), 0, m.start()
+        while i >= 0:
+            if text[i] == "}":
+                depth += 1
+            elif text[i] == "{":
+                depth -= 1
+                if depth == 0:
+                    return text[i + 1:close]
+            i -= 1
+    m = re.search(r"struct\s+" + re.escape(struct_name) + r"\s*\{", text)
+    if m:
+        depth, i, start = 0, m.end() - 1, m.end() - 1
+        while i < len(text):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start + 1:i]
+            i += 1
+    return None
+
+
+def _ifdef_guarded_fields(c_source_dir, struct_name, field_names) -> set:
+    """Which of `struct_name`'s fields are declared inside a `#if/#ifdef/#ifndef`
+    block WITHIN the struct body. The differential DLL is compiled with DEFAULT
+    macros, so such fields are ABSENT from the compiled layout -- a ctypes overlay
+    must exclude them or every read past that offset is misaligned (jsmntok's
+    `parent`, gated by `#ifdef JSMN_PARENT_LINKS`). Scoped to the struct body so a
+    file-wide `#ifndef HEADER` guard around the impl can't mask real fields."""
+    fset, guarded = set(field_names), set()
+    cdir = Path(c_source_dir)
+    for fp in list(cdir.rglob("*.h")) + list(cdir.rglob("*.c")):
+        try:
+            body = _extract_struct_body(fp.read_text(errors="replace"), struct_name)
+        except OSError:
+            continue
+        if body is None:
+            continue
+        depth = 0
+        for line in body.splitlines():
+            s = line.strip()
+            if re.match(r"#\s*(if|ifdef|ifndef)\b", s):
+                depth += 1
+            elif re.match(r"#\s*endif\b", s):
+                depth = max(0, depth - 1)
+            elif depth > 0:
+                m = re.match(r"[A-Za-z_][\w ]*?\s+\*?([A-Za-z_]\w*)\s*;", s)
+                if m and m.group(1) in fset:
+                    guarded.add(m.group(1))
+    return guarded
+
+
+def _compiled_token_cls(tok_struct, fields, guarded):
+    """A ctypes overlay for the token struct matching the DEFAULT compiled layout:
+    scalar fields only, ifdef-guarded fields dropped, unresolved enum scalars ->
+    c_int (a C enum is an int). Returns (cls, kept_field_names)."""
+    import ctypes
+    from alchemist.verifier.struct_lift import c_scalar_to_rust
+    cf, kept = [], []
+    for f in fields:
+        if f.name in guarded or f.is_ptr or f.arr is not None:
+            continue
+        base = _ct_for(c_scalar_to_rust(f.ctype)) or ctypes.c_int
+        cf.append((f.name, base)); kept.append(f.name)
+    if not cf:
+        return None, []
+    return type(tok_struct + "_Tok", (ctypes.Structure,), {"_fields_": cf}), kept
+
+
+def _tok_rust_from_spec(specs, parse_name, default):
+    """The Rust name of the token struct, read from the parse spec's token-slice
+    input (`Option<&mut [Token]>` -> `Token`). Falls back to `default`."""
+    from alchemist.verifier.struct_lift import _bare_struct_name, _RUST_PRIMS
+    for module in specs or []:
+        for alg in getattr(module, "algorithms", None) or []:
+            if alg.name != parse_name:
+                continue
+            for inp in (alg.inputs or []):
+                if "[" in (inp.rust_type or ""):
+                    bare = _bare_struct_name(inp.rust_type)
+                    if bare and bare not in _RUST_PRIMS:
+                        return bare
+    return default
+
+
+def classify_parse_sequence(by_name, structs, c_source_dir, specs=None):
+    """`init(S*)` + `parse(S*, const char* in, <int len>, Tok* out, <uint max>) -> int`
+    sharing a state struct S, where `out` points at a token struct in `structs` and
+    the return is an int (token count, negative on error). The recursive-descent /
+    tokenizer parser shape. Returns a group dict or None."""
+    from alchemist.verifier import struct_lift as _sl
+
+    def _bare(t: str) -> str:
+        return re.sub(r"^const\s+", "", (t or "").strip())
+
+    groups: dict[str, list] = {}
+    for name, sig in by_name.items():
+        if not sig.params:
+            continue
+        m = _STRUCT_PTR_RE.match(_bare(sig.params[0][1]))
+        if not m or m.group(1) not in structs:
+            continue
+        groups.setdefault(m.group(1), []).append((name, sig))
+    for sname, fns_ in groups.items():
+        fields = structs[sname]
+        if _sl.single_scalar_field(fields) is not None or any(f.is_ptr for f in fields):
+            continue
+        init = parse = None
+        for name, sig in fns_:
+            ps = [(p[1] or "").strip() for p in sig.params]
+            ret = (sig.return_type or "").strip()
+            if len(ps) == 1 and ret == "void":
+                init = (name, sig)
+            elif len(ps) == 5 and _INT_C_TYPES.match(ret) and _CHAR_PTR.match(ps[1]) \
+                    and _INT_C_TYPES.match(_bare(ps[2])) and _INT_C_TYPES.match(_bare(ps[4])):
+                tm = _STRUCT_PTR_RE.match(_bare(ps[3]))
+                if tm and tm.group(1) in structs:
+                    parse = (name, sig, tm.group(1))
+        if not (init and parse):
+            continue
+        tok_struct = parse[2]
+        return {
+            "struct": sname, "rust": _rust_name_from_spec(specs, init[0], _sl.rust_struct_name(sname)),
+            "fields": fields, "tok_struct": tok_struct, "tok_fields": structs[tok_struct],
+            "tok_rust": _tok_rust_from_spec(specs, parse[0], _sl.rust_struct_name(tok_struct)),
+            "guarded": _ifdef_guarded_fields(c_source_dir, tok_struct,
+                                             [f.name for f in structs[tok_struct]]),
+            "init": init, "parse": (parse[0], parse[1]),
+        }
+    return None
+
+
+def _parse_rust_arglist(specs, parse_name, group):
+    """Reconstruct the Rust arg expressions for `super::<parse>(...)` from the parse
+    spec's (possibly length-folded) input list. Each C role maps to a Rust arg:
+    state -> `&mut st`; input -> `input` (a &str via from_utf8, or &[u8]); token
+    slice -> `&mut toks` (Some(...)-wrapped if Option); an UNFOLDED length -> either
+    `input.len()` (before the token slice) or `MAX` (after). Returns
+    (args:list[str], input_is_str:bool, ret_is_result:bool) or None if unmappable."""
+    from alchemist.verifier.struct_lift import _bare_struct_name
+    palg = None
+    for module in specs or []:
+        for alg in getattr(module, "algorithms", None) or []:
+            if alg.name == parse_name:
+                palg = alg
+    if palg is None:
+        return None
+    ret_is_result = "Result" in (getattr(palg, "return_type", "") or "")
+    args, input_is_str, seen_tok = [], False, False
+    for inp in (palg.inputs or []):
+        rt = inp.rust_type or ""
+        bare = _bare_struct_name(rt)
+        if bare == group["rust"]:
+            args.append("&mut st")
+        elif group["tok_rust"] in rt and "[" in rt:
+            seen_tok = True
+            args.append("Some(&mut toks)" if "Option" in rt else "&mut toks")
+        elif "str" in rt or rt.strip() in ("String", "&String"):
+            input_is_str = True
+            args.append("input")
+        elif "[u8]" in rt or "[i8]" in rt:
+            args.append("input")
+        elif re.search(r"\b(usize|u32|u64|i32|i64|c_int|c_uint|u16)\b", rt):
+            args.append("MAX" if seen_tok else "input.len()")
+        else:
+            return None  # an input we don't know how to supply -> don't emit a broken test
+    return args, input_is_str, ret_is_result
+
+
+def fuzz_parse_sequence_vectors(dll, group, specs=None, *, max_tokens: int = 128, count: int = 24):
+    """Drive the compiled-C init+parse on a fuzz corpus (curated JSON + malformed +
+    truncated + random ASCII) and author self-contained `rust_body` tests: each asserts
+    the Rust parse's RETURN code AND every filled token's fields against the C reference.
+    Returns {parse_name: [rust_body vectors]}."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    from alchemist.verifier.struct_lift import _safe_field_name
+    StateC = _ctypes_struct_cls(group["struct"], group["fields"])
+    TokC, kept = _compiled_token_cls(group["tok_struct"], group["tok_fields"], group["guarded"])
+    if StateC is None or TokC is None:
+        return {}
+    init_name = group["init"][0]
+    parse_name = group["parse"][0]
+    try:
+        c_init = getattr(dll, init_name)
+        c_parse = getattr(dll, parse_name)
+    except AttributeError:
+        return {}
+    c_init.restype = None
+    c_init.argtypes = (ctypes.POINTER(StateC),)
+    c_parse.restype = ctypes.c_int
+    c_parse.argtypes = (ctypes.POINTER(StateC), ctypes.c_char_p, ctypes.c_size_t,
+                        ctypes.POINTER(TokC), ctypes.c_uint)
+    built = _parse_rust_arglist(specs, parse_name, group)
+    if built is None:
+        return {}
+    args, input_is_str, ret_is_result = built
+    argstr = ", ".join(args)
+    rust_state, rust_tok = group["rust"], group["tok_rust"]
+
+    rng = _rng(_FUZZ_SEED)
+    inputs = list(_PARSE_FUZZ_INPUTS)
+    for _ in range(count):
+        n = rng.randrange(0, 40)
+        inputs.append(bytes(rng.randrange(0x20, 0x7f) for _ in range(n)))
+
+    def _bytes_lit(b: bytes) -> str:
+        return "&[" + ", ".join(str(x) for x in b) + "]"
+
+    vecs = []
+    for idx, js in enumerate(inputs):
+        if input_is_str:
+            try:
+                js.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # a &str-typed parser can't be handed non-UTF-8 bytes
+        st = StateC()
+        c_init(ctypes.byref(st))
+        toks = (TokC * max_tokens)()
+        r = int(c_parse(ctypes.byref(st), js, len(js), toks, max_tokens))
+        ntok = r if r > 0 else 0
+        # token field assertions (Rust field names may be keyword-sanitized, e.g. type->r#type)
+        tok_asserts = []
+        for i in range(ntok):
+            for fn in kept:
+                val = int(getattr(toks[i], fn))
+                rf = _safe_field_name(fn)
+                tok_asserts.append(
+                    f'assert_eq!(toks[{i}].{rf} as i64, {val}, "tok{i}.{fn}");')
+        tok_block = "\n".join(tok_asserts)
+        setup = (
+            f"let mut st = super::{rust_state}::default();\n"
+            f"super::{init_name}(&mut st);\n"
+            + (f"let ibytes: &[u8] = {_bytes_lit(js)};\n"
+               f"let input = core::str::from_utf8(ibytes).unwrap();\n" if input_is_str
+               else f"let input: &[u8] = {_bytes_lit(js)};\n")
+            + f"const MAX: usize = {max_tokens};\n"
+            f"let mut toks: Vec<super::{rust_tok}> = vec![super::{rust_tok}::default(); MAX];\n"
+        )
+        if ret_is_result:
+            body = setup + (
+                f"match super::{parse_name}({argstr}) {{\n"
+                f"    Ok(n) => {{ assert_eq!(n as i64, {r}, \"return\"); {tok_block} }}\n"
+                f"    Err(_) => {{ assert!({r} < 0, \"expected error return {r}\"); }}\n"
+                f"}}"
+            )
+        else:
+            body = setup + (
+                f"let r = super::{parse_name}({argstr});\n"
+                f"assert_eq!(r as i64, {r}, \"return\");\n"
+                f"{tok_block}"
+            )
+        vecs.append(SpecTestVector(
+            description=f"parse_{idx}_ret{r}",
+            source=f"C reference (init+parse tokens+return): {parse_name}",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return {parse_name: vecs}
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -2814,6 +3103,20 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 for alg in getattr(module, "algorithms", None) or []:
                     if alg.name in _dbyfn and _dbyfn[alg.name] and not getattr(alg, "test_vectors", None):
                         alg.test_vectors = _dbyfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
+    # Parser-class oracle (P1 keystone #2): init + parse(input) -> token array + return.
+    # rust_body tests assert the Rust parse's tokens AND return code vs the compiled C
+    # reference on fuzzed valid/malformed/truncated inputs.
+    try:
+        _pg = classify_parse_sequence(by_name, _structs, cdir, specs)
+        if _pg is not None:
+            _pbyfn = fuzz_parse_sequence_vectors(dll, _pg, specs)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _pbyfn and _pbyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _pbyfn[alg.name]
                         augmented += 1
     except Exception:  # noqa: BLE001
         pass
