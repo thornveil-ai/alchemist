@@ -12,7 +12,7 @@ The one document for the whole climb: **~285 concrete milestones** across **8 ve
 |---|---|---|
 | **F** · Foundations | **12/12** | ✅ complete |
 | **P0** · Reliability Floor | **14/14** | ✅ complete (+P0.8a) |
-| **P1** · Whole Small/Mid C Library | **8/17** | 🔨 3 of 4 exit gates met; last = 5+ genuinely-unseen libs |
+| **P1** · Whole Small/Mid C Library | **8/17 items** | 🔨 EXIT REDEFINED — real-library gate 0/5 (≥1000-LOC hard libs); building keystone #1 (type coherence) |
 | P2 · Scale — Large Single Codebase | 0/12 | ⬜ not started |
 | P3 · C++ Frontier | 0/8 | ⬜ |
 | P4 · Embedded & Unsafe Boundary | 0/8 | ⬜ |
@@ -210,17 +210,29 @@ Every completed item's note carries **(a)** the component/shape it changed (name
 ## P1 · Whole Small/Mid C Library — Push-Button (IN PROGRESS)
 
 *A never-seen C library → a verified Rust workspace, under 5% refusal, zero human touches. The first genuinely fundable claim.*
-**Exit:** 5+ unseen C libs converted hands-off · refusal <5% · signed receipts · a stranger can clone & reproduce.
+**Exit (REDEFINED 2026-07-13 — the honest, fundable bar):** **≥5 genuinely-unseen libraries converted FULLY hands-off, each ≥1000 LOC AND structurally hard** (a parser/state-machine, or a pointer-linked + heap-allocation data structure — NOT a fat pile of independent leaf functions), each producing a **byte-exact verified core + an honest, specific refusal tail** (every refusal names *what* it couldn't prove and *why*), **reproducible + signed-receipted.** The refusal rate is whatever it *honestly* is — the deliverable is a trustworthy verified core + a small hand-reviewable refused worklist, which is what c2rust (100% unsafe, unverified) cannot produce. *Staged: prove the capability on jsmn (~340 LOC recursive parser — the unit test) first, then scale to the ≥1000-LOC libraries (the integration test).* The old "5+ libs · refusal <5%" bar was met on 200-line primitives (the easy 80% of C) and is retired as insufficient for the fundable claim.
+
+> ## 🎯 The real fundable claim (what P1 truly closes)
+> **Point Alchemist at a real, messy, unseen C library, walk away, and every function comes back either byte-exact-verified against the original OR honestly, specifically refused with a reason — and the verified core is genuinely trustworthy because nothing shipped without the oracle agreeing.** The verified-or-refused GUARANTEE is already always-on (fail-closed). What closes P1 is proving it, at useful COVERAGE, on ≥5 real ≥1000-LOC structurally-hard libraries.
+>
+> **The 3 keystones this requires** (the capabilities the small-lib benchmark let us skip):
+> 1. **Whole-program type coherence** *(prerequisite — building now)* — one canonical Rust type per C struct across ALL functions; carry EVERY referenced struct. jsmn exposed it: `jsmn_parser` came out as both `ParserState` and `Parser`, so a caller can't share the struct between `init` and `parse`. Without this, no multi-function real library links.
+> 2. **Parser-class oracle** *(the keystone)* — differentially verify `parse(input) → structured output`: fuzz inputs (real parsers are safe on malformed input), compare C-vs-Rust token/tree output AND error behavior. Unblocks jsmn / parson / http-parser.
+> 3. **Ownership at library scale** — `malloc/free` → `Vec/Box`, DOM trees, ownership across function boundaries (the parson class).
+>
+> **Real-library gate status: 0 / 5 done.** (jsmn is the in-flight unit test at 0/2 — skeleton compiles, needs keystones 1+2.) Candidates: parson (2760, JSON DOM), http-parser (~2500, state machine), a real hash table (pointer structure), heatshrink (stateful stream + ring buffer), tinycbor (codec).
 
 > ## 📏 Distance to P1 complete *(estimate, 2026-07-13)*
-> **By item count:** 8/17 done (47%). **By exit gate:** 3 of 4 met (2026-07-13).
+> **Under the REDEFINED bar (2026-07-13):** the infrastructure gates are met; the real-library gate is the whole remaining job.
 >
-> | P1 exit gate | Status |
+> | P1 exit gate (redefined) | Status |
 > |---|---|
-> | Refusal < 5% | ✅ **DONE** (4.8% on the 8-lib benchmark) |
-> | Signed receipts | ✅ **DONE** — content-SHA256-sealed receipt; `verify_receipt_integrity → True`, `→ False` after tamper (P1.14) |
-> | Stranger can clone & reproduce | ✅ **DONE** — fresh `git clone` → deterministic run → OVERALL PASS + valid receipt, demonstrated on box (P1.14). *Bit-identical code isn't reproducible (vLLM GPU non-determinism); the verified RESULT is, and the oracle makes correctness code-independent.* |
-> | **5+ *genuinely-unseen* libs converted hands-off** | 🟡 **the one remaining gate.** The benchmark's 6 passes (base64/siphash/murmur3/rc4/hashkit/heap) prove the capability, but they're the shape-development set. A purist "unseen" needs libraries NOT used to build the shapes — the P1.4–P1.9 diverse targets (parson/CBOR/container/compression/http-parser/monocypher), several of which are research-hard (large DOM + parser libraries needing the parser-class oracle + P2.2 canonical naming). This is the real remaining P1 work. |
+> | Signed receipts (tamper-evident) | ✅ **DONE** — `verify_receipt_integrity → True`, `→ False` after tamper (P1.14) |
+> | Reproducible (fresh-clone → same verified result) | ✅ **DONE** — demonstrated on box (P1.14) |
+> | Verified-or-refused GUARANTEE (fail-closed) | ✅ **always-on** — the architecture; every run |
+> | **≥5 real ≥1000-LOC structurally-hard libs, hands-off, verified-core + honest refusals** | 🔴 **0 / 5 — the real work.** Blocked on 3 keystones: type coherence *(building)*, parser oracle, ownership-at-scale. The easy-benchmark 4.8% and its 6 primitive passes are RETIRED as insufficient — they're the easy 80% of C. |
+>
+> **Honest distance:** the infra + guarantee are done; the fundable claim needs **~3 hard capability builds + 5 real-library conversions**. This is the genuinely-hard, genuinely-fundable stretch — call it a multi-week capability campaign, staged jsmn → real libraries. We are NOT close to P1 done under this bar, and that's the correct, non-self-deceiving read.
 >
 > **The expensive part — building the oracle SHAPES so the pipeline *can* handle each class of C library — is ~done** (decoders, header-only, context-hashes, stateful sequences all landed this session). What remains is mostly a **run campaign**, not R&D:
 > - **~6 library conversions** (P1.4–P1.9): "run the converter + triage the occasional new gap." ~0.5–1.5 sessions each ≈ **~6 focused sessions**. *Risk:* a parser-class subject (http-parser) may hit the same type-coherence wall jsmn did (P2.2), +1–2 sessions.
