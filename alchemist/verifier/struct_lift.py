@@ -319,6 +319,20 @@ def emit_safe_struct(rust_name: str, fields) -> str | None:
     return struct + dflt
 
 
+_RUST_PRIMS = {
+    "u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "u128", "i128",
+    "usize", "isize", "f32", "f64", "bool", "char", "str", "String",
+}
+
+
+def _bare_struct_name(rust_type: str) -> "str | None":
+    """Strip container syntax (`Option<`, `&mut`, `&`, `[`, `]`, `Box<`, `>`, ws)
+    from a Rust type to the innermost identifier — `Option<&mut [Token]>` -> `Token`,
+    `&[u8]` -> `u8`, `&str` -> `str`. Returns None if it isn't a bare identifier."""
+    t = re.sub(r"Option<|Box<|Vec<|&mut\b|&|\[|\]|>|\s|;\s*\d+", "", rust_type or "")
+    return t if t and (t[0].isalpha() or t[0] == "_") else None
+
+
 def inject_state_shared_types(c_source_dir, specs) -> int:
     """For each module, emit a SharedType for any struct referenced by a function param
     (as `&mut RustName`, `&RustName`, `RustName`) that isn't already defined, using the C
@@ -356,6 +370,22 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
             if not rust_name or not (rust_name[0].isalpha() or rust_name[0] == "_"):
                 continue
             want.setdefault(rust_name, (m.group(1), structs[m.group(1)]))
+            # Also carry struct types referenced by NON-first / slice-element params
+            # (jsmn's `tokens: Option<&mut [Token]>` for `jsmntok_t *`). Positional
+            # alignment breaks when the extractor folds length params, so match each
+            # Rust input to its C sig-param BY NAME, then lift the referenced struct.
+            _sig_by_name = {p[0]: (p[1] or "") for p in sig.params}
+            for _inp in (alg.inputs or []):
+                _ct = re.sub(r"^const\s+", "", _sig_by_name.get(_inp.name, "").strip())
+                _cm = struct_ptr.match(_ct)
+                if not _cm or _cm.group(1) not in structs:
+                    continue
+                if single_scalar_field(structs[_cm.group(1)]) is not None:
+                    continue
+                _bare = _bare_struct_name(_inp.rust_type)
+                if not _bare or _bare in _RUST_PRIMS:
+                    continue
+                want.setdefault(_bare, (_cm.group(1), structs[_cm.group(1)]))
         for rust_name, (cn, fields) in want.items():
             if rust_name in present:
                 continue
