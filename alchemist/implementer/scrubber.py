@@ -159,6 +159,63 @@ def _looks_like_char_literal(text: str, i: int) -> bool:
     return False
 
 
+# Valid characters after `\` in a Rust string/char/byte literal. Anything else is a
+# COMPILE ERROR ("unknown character escape"), so the only non-erroring reading is the
+# literal char — the backslash is a model over-escaping mistake (JSON/C habit, e.g.
+# `"{}\[\]"`). Includes the line-continuation newline.
+_VALID_RUST_ESCAPE = set("nrt\\0\"'xu\n\r")
+
+
+def _fix_escapes_in_literal(seg: str) -> tuple[str, int]:
+    """Drop the backslash from every INVALID escape inside a single literal `seg`."""
+    out, i, n, fixed = [], 0, len(seg), 0
+    while i < n:
+        c = seg[i]
+        if c == "\\" and i + 1 < n:
+            nx = seg[i + 1]
+            if nx in _VALID_RUST_ESCAPE:
+                out.append(c); out.append(nx)
+            else:
+                out.append(nx); fixed += 1  # strip the stray backslash
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out), fixed
+
+
+def fix_invalid_escapes(code: str) -> tuple[str, int]:
+    """Repair always-invalid backslash escapes (`\\[`, `\\]`, `\\{`, ...) that the model
+    emits inside string/char/byte literals (over-escaping). These are hard compile errors
+    that break the ENTIRE crate — so a single such typo in one function blocks verification
+    of every sibling. Only touches normal string/char literals; raw strings and comments
+    are skipped. Returns (fixed_code, num_escapes_fixed)."""
+    out, i, n, fixed = [], 0, len(code), 0
+    while i < n:
+        ch = code[i]
+        if ch == "/" and i + 1 < n and code[i + 1] == "/":       # line comment
+            j = code.find("\n", i)
+            j = n if j == -1 else j
+            out.append(code[i:j]); i = j; continue
+        if ch == "/" and i + 1 < n and code[i + 1] == "*":       # block comment
+            j = code.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            out.append(code[i:j]); i = j; continue
+        if ch in ("r", "b") and _is_raw_string_start(code, i):   # raw string — skip
+            j = _skip_raw_string(code, i)
+            out.append(code[i:j]); i = j; continue
+        if ch == '"':                                            # normal / byte string
+            end = _skip_string(code, i, '"')
+            seg, k = _fix_escapes_in_literal(code[i:end + 1])
+            out.append(seg); fixed += k; i = end + 1; continue
+        if ch == "'" and _looks_like_char_literal(code, i):      # char literal
+            end = _skip_string(code, i, "'")
+            seg, k = _fix_escapes_in_literal(code[i:end + 1])
+            out.append(seg); fixed += k; i = end + 1; continue
+        out.append(ch); i += 1
+    return "".join(out), fixed
+
+
 # Common LLM typos — Rust-specific
 TYPO_FIXES = [
     # ##! → #! (crate-level attribute typo; model sometimes doubles #)
@@ -235,6 +292,13 @@ def scrub_rust(code: str) -> tuple[str, list[str]]:
         if n > 0:
             fixes.append(f"{pattern.pattern} → {replacement} ({n}x)")
             code = new_code
+
+    # Repair always-invalid backslash escapes in literals (model over-escaping like
+    # `"{}\[\]"`) — a hard compile error that otherwise breaks the whole crate and blocks
+    # every sibling function's verification (observed on jsmn_parse's tokenizer string).
+    code, n_esc = fix_invalid_escapes(code)
+    if n_esc:
+        fixes.append(f"stripped {n_esc} invalid backslash-escape(s) in literals")
 
     # Non-existent wrapping bitwise methods. Bitwise ops can't overflow, so
     # Rust has no `wrapping_xor`/`wrapping_or`/`wrapping_and` — but models
