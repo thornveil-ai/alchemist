@@ -342,6 +342,7 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     "cannot find type Rc4State" wall). The emitted Rust name is whatever the spec's first
     (state) parameter uses — the model may name `bump_alloc`'s state `BumpAllocator`, not the
     computed `BumpAlloc` — mapped to the C struct via the function's struct-pointer param."""
+    from collections import Counter, defaultdict
     from alchemist.extractor.schemas import SharedType
     from alchemist.verifier.auto_config import collect_subject_signatures  # lazy: avoid cycle
     structs = structs_in_dir(c_source_dir)
@@ -349,43 +350,74 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
         return 0
     sigs = {s.name: s for s in collect_subject_signatures(c_source_dir)}
     struct_ptr = re.compile(r"^(?:struct\s+)?([A-Za-z_]\w*)\s*\*$")
-    added = 0
+
+    def _c_struct_of(inp_name: str, sig) -> "str | None":
+        """The C struct a Rust input maps to — matched BY PARAM NAME (positional
+        alignment breaks when the extractor folds length params). Skips single-scalar
+        structs (those unwrap to a bare primitive, not a carried struct)."""
+        by_name = {p[0]: (p[1] or "") for p in sig.params}
+        ct = re.sub(r"^const\s+", "", (by_name.get(inp_name) or "").strip())
+        m = struct_ptr.match(ct)
+        if not m or m.group(1) not in structs:
+            return None
+        if single_scalar_field(structs[m.group(1)]) is not None:
+            return None
+        return m.group(1)
+
+    # --- KEYSTONE #1: whole-program type coherence ---------------------------
+    # PASS 1 (subject-wide): map each C struct to every Rust name the extractor gave
+    # it across ALL functions. The extractor is inconsistent (jsmn's jsmn_parser came
+    # out as both `ParserState` and `Parser`), which makes init/parse take DIFFERENT
+    # Rust types for the SAME struct — a caller can't share it and the workspace is
+    # incoherent. Pick ONE canonical name per C struct and rewrite every signature to it.
+    c_to_names: dict[str, Counter] = defaultdict(Counter)
     for module in specs:
-        present = {t.name for t in (getattr(module, "shared_types", None) or [])}
-        # rust_name -> (c_struct_name, fields), keyed on how the SPEC names the state type
-        want: dict[str, tuple] = {}
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
             if sig is None or not sig.params or not alg.inputs:
                 continue
-            m = struct_ptr.match((sig.params[0][1] or "").strip())
-            if not m or m.group(1) not in structs:
-                continue
-            # Single-scalar structs are unwrapped to a bare `&mut <primitive>` (e.g.
-            # xorshift_state -> &mut u64). Do NOT emit a struct — the spec's "type name"
-            # is the primitive itself, and `struct u64 { state: u64 }` shadows + recurses.
-            if single_scalar_field(structs[m.group(1)]) is not None:
-                continue
-            rust_name = (alg.inputs[0].rust_type or "").replace("&mut", "").replace("&", "").strip()
-            if not rust_name or not (rust_name[0].isalpha() or rust_name[0] == "_"):
-                continue
-            want.setdefault(rust_name, (m.group(1), structs[m.group(1)]))
-            # Also carry struct types referenced by NON-first / slice-element params
-            # (jsmn's `tokens: Option<&mut [Token]>` for `jsmntok_t *`). Positional
-            # alignment breaks when the extractor folds length params, so match each
-            # Rust input to its C sig-param BY NAME, then lift the referenced struct.
-            _sig_by_name = {p[0]: (p[1] or "") for p in sig.params}
-            for _inp in (alg.inputs or []):
-                _ct = re.sub(r"^const\s+", "", _sig_by_name.get(_inp.name, "").strip())
-                _cm = struct_ptr.match(_ct)
-                if not _cm or _cm.group(1) not in structs:
+            for inp in alg.inputs:
+                cn = _c_struct_of(inp.name, sig)
+                if cn is None:
                     continue
-                if single_scalar_field(structs[_cm.group(1)]) is not None:
+                bare = _bare_struct_name(inp.rust_type)
+                if bare and bare not in _RUST_PRIMS:
+                    c_to_names[cn][bare] += 1
+    # canonical = most-frequent name, tie-break: longer, then alphabetically-later.
+    canon_of_c: dict[str, str] = {}
+    alias_to_canon: dict[str, str] = {}
+    for cn, cnt in c_to_names.items():
+        best = max(cnt.items(), key=lambda kv: (kv[1], len(kv[0]), kv[0]))[0]
+        canon_of_c[cn] = best
+        for name in cnt:
+            alias_to_canon[name] = best
+
+    # PASS 2: rewrite every alg.input.rust_type alias -> canonical (word-boundary).
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            for inp in (alg.inputs or []):
+                bare = _bare_struct_name(inp.rust_type)
+                canon = alias_to_canon.get(bare or "")
+                if canon and canon != bare:
+                    inp.rust_type = re.sub(r"\b" + re.escape(bare) + r"\b",
+                                           canon, inp.rust_type or "")
+
+    # PASS 3: emit ONE SharedType per canonical struct each module references.
+    added = 0
+    for module in specs:
+        present = {t.name for t in (getattr(module, "shared_types", None) or [])}
+        want: dict[str, tuple] = {}  # canonical_name -> (c_struct, fields)
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = sigs.get(alg.name)
+            if sig is None or not sig.params or not alg.inputs:
+                continue
+            for inp in alg.inputs:
+                cn = _c_struct_of(inp.name, sig)
+                if cn is None:
                     continue
-                _bare = _bare_struct_name(_inp.rust_type)
-                if not _bare or _bare in _RUST_PRIMS:
-                    continue
-                want.setdefault(_bare, (_cm.group(1), structs[_cm.group(1)]))
+                canon = canon_of_c.get(cn)
+                if canon and (canon[0].isalpha() or canon[0] == "_"):
+                    want.setdefault(canon, (cn, structs[cn]))
         for rust_name, (cn, fields) in want.items():
             if rust_name in present:
                 continue
@@ -396,7 +428,7 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
                 SharedType(
                     name=rust_name,
                     rust_definition=definition,
-                    description=f"State struct for C `{cn}` (lifted from source).",
+                    description=f"State struct for C `{cn}` (lifted from source, canonical name).",
                     fields=[],
                 )
             ]
