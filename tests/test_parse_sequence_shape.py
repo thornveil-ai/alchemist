@@ -140,4 +140,4 @@ def test_captures_c_token_output_byte_exact(tmp_path):
     assert any("expected error" in b for b in bodies)           # an error case
     for b in bodies:
         assert "jsmn_init(&mut st)" in b and "jsmn_parse(" in b
-        assert "Vec<super::Token>" in b
+        assert "alloc::vec::Vec<super::Token>" in b

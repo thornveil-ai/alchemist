@@ -2450,7 +2450,11 @@ def fuzz_parse_sequence_vectors(dll, group, specs=None, *, max_tokens: int = 128
                f"let input = core::str::from_utf8(ibytes).unwrap();\n" if input_is_str
                else f"let input: &[u8] = {_bytes_lit(js)};\n")
             + f"const MAX: usize = {max_tokens};\n"
-            f"let mut toks: Vec<super::{rust_tok}> = vec![super::{rust_tok}::default(); MAX];\n"
+            # alloc-qualified: the rust_body runs in a no_std test module (`extern crate
+            # alloc`) where bare `Vec`/`vec!` are NOT in scope; the fully-qualified paths
+            # resolve in both std and no_std crates.
+            f"let mut toks: alloc::vec::Vec<super::{rust_tok}> = "
+            f"alloc::vec![super::{rust_tok}::default(); MAX];\n"
         )
         if ret_is_result:
             body = setup + (

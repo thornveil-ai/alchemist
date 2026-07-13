@@ -133,7 +133,7 @@ def main() -> int:
     print(f"init observer: {len(vecs['jsmn_init'])} vectors, asserts parser post-state")
     # every body references init + parse + the token buffer
     for b in bodies:
-        assert "jsmn_init(&mut st)" in b and "jsmn_parse(" in b and "Vec<super::Token>" in b
+        assert "jsmn_init(&mut st)" in b and "jsmn_parse(" in b and "alloc::vec::Vec<super::Token>" in b
 
     print("\nKEYSTONE#2 PASS: parser-class oracle classifies jsmn, captures C token "
           "output byte-exact (valid + malformed), and emits well-formed differential tests.")
