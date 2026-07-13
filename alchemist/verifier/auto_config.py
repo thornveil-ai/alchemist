@@ -2469,7 +2469,36 @@ def fuzz_parse_sequence_vectors(dll, group, specs=None, *, max_tokens: int = 128
             description=f"parse_{idx}_ret{r}",
             source=f"C reference (init+parse tokens+return): {parse_name}",
             inputs={}, expected_output=body, tolerance="rust_body"))
-    return {parse_name: vecs}
+
+    # init post-state observer: `init(S*)` is deterministic and observable only by the
+    # struct fields it sets (jsmn_init: pos=0, toknext=0, toksuper=-1). Without this the
+    # init fn has "no verifiable test vectors" and is refused even though it's trivial.
+    init_v = []
+    for i in range(2):
+        st = StateC()
+        c_init(ctypes.byref(st))
+        asserts = []
+        for f in group["fields"]:
+            if f.is_ptr:
+                continue  # lifted/dropped in the safe struct — not an observable int
+            rf = _safe_field_name(f.name)
+            cval = getattr(st, f.name)
+            if f.arr is not None:
+                lit = "[" + ", ".join(str(int(cval[k])) for k in range(int(f.arr))) + "]"
+                asserts.append(f'assert_eq!(st.{rf}, {lit}, "field {f.name}");')
+            else:
+                asserts.append(f'assert_eq!(st.{rf} as i64, {int(cval)}, "field {f.name}");')
+        body = (f"let mut st = super::{rust_state}::default();\n"
+                f"super::{init_name}(&mut st);\n" + "\n".join(asserts))
+        init_v.append(SpecTestVector(
+            description=f"post_init_{i}",
+            source=f"C reference (post-init state): {init_name}",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+
+    out = {parse_name: vecs}
+    if init_v:
+        out[init_name] = init_v
+    return out
 
 
 def build_diff_config(

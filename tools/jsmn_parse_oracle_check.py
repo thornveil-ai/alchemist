@@ -125,6 +125,12 @@ def main() -> int:
     # a malformed vector must assert the error branch
     err_vec = next((b for b in bodies if 'expected error' in b), None)
     assert err_vec is not None, "no error-return vector found"
+    # init post-state observer (jsmn_init: pos=0, toknext=0, toksuper=-1)
+    assert "jsmn_init" in vecs and vecs["jsmn_init"], "no init observer vectors emitted"
+    init_body = vecs["jsmn_init"][0].expected_output
+    assert "jsmn_init(&mut st)" in init_body and "toksuper" in init_body, init_body
+    assert "-1" in init_body, "toksuper post-init should be -1"
+    print(f"init observer: {len(vecs['jsmn_init'])} vectors, asserts parser post-state")
     # every body references init + parse + the token buffer
     for b in bodies:
         assert "jsmn_init(&mut st)" in b and "jsmn_parse(" in b and "Vec<super::Token>" in b
