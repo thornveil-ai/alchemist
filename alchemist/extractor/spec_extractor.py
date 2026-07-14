@@ -275,17 +275,26 @@ class SpecExtractor:
         if func_ckpt_dir:
             func_ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Load any previously-extracted function specs
+        # Load any previously-extracted function specs — but PRUNE cached specs for
+        # functions the CURRENT filter would now exclude. Extraction-filter changes
+        # (file-I/O, static, etc.) otherwise silently have no effect on an already-
+        # extracted subject: the cached `_functions/*.json` were reloaded verbatim,
+        # so a filtered function (parson's json_parse_file) leaked back in and re-broke
+        # the crate until a manual `.alchemist` wipe. Keep only cached specs still in
+        # `significant`, so a filter improvement takes effect on the next run.
+        _kept_names = {f["name"] for f in significant}
         func_specs: list[FunctionSpec] = []
         already_done: set[str] = set()
         if func_ckpt_dir:
             for fpath in func_ckpt_dir.glob("*.json"):
                 try:
                     fs = FunctionSpec.model_validate(json.loads(fpath.read_text()))
-                    func_specs.append(fs)
-                    already_done.add(fs.name)
                 except Exception:
-                    pass
+                    continue
+                if fs.name not in _kept_names:
+                    continue  # cached spec for a now-filtered fn — drop it
+                func_specs.append(fs)
+                already_done.add(fs.name)
 
         remaining = [f for f in significant if f["name"] not in already_done]
         console.print(
