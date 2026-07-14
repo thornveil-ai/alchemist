@@ -243,11 +243,29 @@ class SpecExtractor:
                 r"(?:^|\n)[ \t]*static\s+void\b[^\n;{]*\b" + re.escape(f["name"]) + r"\s*\(",
                 f.get("source", "")))
             return is_void or _called_by_other(f)
+        # File-I/O wrappers (json_parse_file, json_serialize_to_file) read/write a file
+        # on disk — NOT a pure, differentially-fuzzable algorithm (there is no byte-exact
+        # oracle for filesystem effects), and their C `const char* filename` / `FILE*`
+        # signatures lift to `AsRef<Path>` / `FILE` that don't resolve in the crate
+        # (E0425 on Path/JsonValue/ParseError broke parson's whole skeleton). Filter them
+        # like main(): they're I/O glue, not verifiable library algorithms. The pure
+        # parse/serialize CORE they wrap (json_parse_string, json_serialize_to_string) IS
+        # kept and verified.
+        _file_io_call = re.compile(
+            r"\b(fopen|fdopen|freopen|fread|fwrite|fscanf|fprintf|fgets|fputs|fclose|"
+            r"fseek|ftell|rewind)\s*\(")
+
+        def _is_file_io(f: dict) -> bool:
+            src = f.get("source", "")
+            return (bool(_file_io_call.search(src))
+                    or bool(re.search(r"\bFILE\s*\*", src))
+                    or bool(re.search(r"_file(?:_|$)", f["name"])))
         significant = [
             f for f in func_data
             if ((5 <= f["lines"] <= 500) or (0 < f["lines"] < 5 and not _is_static_fn(f)))
             and not _is_uncalled_void_noarg(f)
             and not _is_inlinable_static(f)
+            and not _is_file_io(f)
         ]
         if not significant:
             significant = func_data[:5]
