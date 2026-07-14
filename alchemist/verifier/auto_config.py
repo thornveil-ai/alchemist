@@ -616,14 +616,22 @@ def fuzz_digest_catalog_vectors(dll, alg, sig):
     return out
 
 
+def _norm_scalar(t: str) -> str:
+    """Normalize a C scalar type for the all-scalar shape: strip a leading `const`, and
+    treat a C `enum X` as `int` (enums are int-sized). Lets an enum state-machine step
+    like `enum state parse_url_char(enum state, const char)` classify + bind as scalars."""
+    t = re.sub(r"^const\s+", "", (t or "").strip())
+    return "int" if re.match(r"^enum\s+\w+$", t) else t
+
+
 def classify_scalar_shape(sig) -> str | None:
-    """All-scalar signature: every param is an int/char scalar and the return is a scalar.
-    e.g. isqrt(unsigned)->unsigned, popcount(unsigned long)->int,
-    update_crc_32(uint32_t, unsigned char)->uint32_t. -> 'scalar' | None.
-    Works for any arity >= 1; adapter/proptest/oracle handle N by-value scalar args."""
-    if not _ctype(sig.return_type or ""):
+    """All-scalar signature: every param is an int/char/enum scalar and the return is a
+    scalar. e.g. isqrt(unsigned)->unsigned, popcount(unsigned long)->int,
+    update_crc_32(uint32_t, unsigned char)->uint32_t, parse_url_char(enum,char)->enum.
+    -> 'scalar' | None. Any arity >= 1; adapter/proptest/oracle handle N by-value args."""
+    if not _ctype(_norm_scalar(sig.return_type or "")):
         return None
-    params = [t.strip() for _, t in sig.params]
+    params = [_norm_scalar(t) for _, t in sig.params]
     if not params:
         return None
     if all(_SCALAR_ARG.match(p) for p in params):
@@ -632,8 +640,8 @@ def classify_scalar_shape(sig) -> str | None:
 
 
 def _scalar_binding(sig):
-    argtypes = tuple(_ctype(t) or ctypes.c_long for _, t in sig.params)
-    restype = _ctype(sig.return_type) or ctypes.c_long
+    argtypes = tuple(_ctype(_norm_scalar(t)) or ctypes.c_long for _, t in sig.params)
+    restype = _ctype(_norm_scalar(sig.return_type)) or ctypes.c_long
 
     def adapter(fn, values):
         return int(fn(*values))
