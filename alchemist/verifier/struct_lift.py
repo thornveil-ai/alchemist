@@ -431,6 +431,24 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     from collections import Counter, defaultdict
     from alchemist.extractor.schemas import SharedType
     from alchemist.verifier.auto_config import collect_subject_signatures  # lazy: avoid cycle
+    # Enum-typed signature references -> Rust scalar. The extractor sometimes names a C
+    # enum return/param by a Rust TYPE name (`JSON_Value_Type` -> `JsonValueType`) that is
+    # never defined -> E0425 breaks the crate. A C enum is int-sized (we already resolve
+    # enum STRUCT FIELDS to int); do the same for signature types. Runs even for a subject
+    # with NO structs (an enum-only header still fractures signatures).
+    _enum_rust = {rust_struct_name(e) for e in collect_enum_typedefs(c_source_dir)}
+    if _enum_rust:
+        for module in specs:
+            for alg in getattr(module, "algorithms", None) or []:
+                for inp in (alg.inputs or []):
+                    b = _bare_struct_name(inp.rust_type)
+                    if b in _enum_rust:
+                        inp.rust_type = re.sub(r"\b" + re.escape(b) + r"\b", "i32",
+                                               inp.rust_type or "")
+                rb = _bare_struct_name(getattr(alg, "return_type", "") or "")
+                if rb in _enum_rust:
+                    alg.return_type = re.sub(r"\b" + re.escape(rb) + r"\b", "i32",
+                                             alg.return_type or "")
     structs = structs_in_dir(c_source_dir)
     if not structs:
         return 0

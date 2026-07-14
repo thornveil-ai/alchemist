@@ -86,3 +86,22 @@ def test_tag_alias_unified_no_duplicate_type():
     defs = "\n".join(t.rust_definition for t in mod.shared_types)
     assert "JsonValueT" not in emitted and "JsonValueT" not in defs   # tag not a 2nd type
     assert "Option<alloc::boxed::Box<JsonValue>>" in defs   # self-ref parent -> canonical, not JsonValueT
+
+
+def test_enum_typed_signature_refs_resolve_to_int():
+    """A C enum named in a signature (`JSON_Value_Type` -> `JsonValueType`) is never
+    defined as a Rust type; it's int-sized, so resolve return/param references to i32."""
+    d = Path(tempfile.mkdtemp())
+    (d / "e.c").write_text(
+        "typedef enum { RED, GREEN } Color;\n"
+        "Color get_color(int x){ return (Color)x; }\n"
+        "int use_color(Color c){ return (int)c; }\n")
+    mod = ModuleSpec(name="e", display_name="e", description="", algorithms=[
+        AlgorithmSpec(name="get_color", display_name="x", category="utility",
+                      description="", inputs=[_p("x", "i32")], return_type="Color"),
+        AlgorithmSpec(name="use_color", display_name="x", category="utility",
+                      description="", inputs=[_p("c", "Color")], return_type="i32"),
+    ])
+    inject_state_shared_types(str(d), [mod])
+    assert mod.algorithms[0].return_type == "i32"       # enum return -> i32
+    assert mod.algorithms[1].inputs[0].rust_type == "i32"  # enum param -> i32
