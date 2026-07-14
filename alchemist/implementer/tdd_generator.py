@@ -2758,6 +2758,7 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
             f"test_{name}_hupd_",    # hash_seq update
             f"test_{name}_hfin_",    # hash_seq final (digest)
             f"test_{name}_mut_",     # scalar_mutator
+            f"test_{name}_co_",      # construct_observe (tagged-union DOM ctor/getter)
             f"smoke_{name}",
         ])
     return filters

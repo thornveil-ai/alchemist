@@ -3052,6 +3052,172 @@ def fuzz_checksum_vectors(dll, alg, sig, *, count: int = 24):
     return vectors
 
 
+_NUMERIC_RUST_RET = re.compile(r"^(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64)$")
+
+
+def _c_scalar_ctype(ct: str):
+    """Map a C scalar type -> its ctypes type (for a construct-observe arg/return)."""
+    import ctypes
+    ct = re.sub(r"^const\s+", "", (ct or "").strip())
+    return {
+        "double": ctypes.c_double, "float": ctypes.c_float,
+        "int": ctypes.c_int, "unsigned": ctypes.c_uint, "unsigned int": ctypes.c_uint,
+        "long": ctypes.c_long, "unsigned long": ctypes.c_ulong,
+        "short": ctypes.c_short, "size_t": ctypes.c_size_t,
+        "uint8_t": ctypes.c_uint8, "uint16_t": ctypes.c_uint16,
+        "uint32_t": ctypes.c_uint32, "uint64_t": ctypes.c_uint64,
+        "int32_t": ctypes.c_int32, "int64_t": ctypes.c_int64,
+    }.get(ct)
+
+
+def classify_construct_observe(by_name, structs, specs=None):
+    """Tagged-union DOM oracle (parson): pair scalar CONSTRUCTORS (`T* init_X(scalar?)`
+    returning a tagged-union value type T) with scalar OBSERVERS (`scalar get_Y(const T*)`).
+    The construct->observe PAIR is one differential unit — each side builds its own value
+    from a scalar seed and we compare the observed scalar — so no ABI-incompatible pointer
+    is ever shared. T is identified by carrying a C union field (the tagged-union signal).
+
+    Tier-1 restricts observers to a PLAIN NUMERIC Rust return (get_type -> i32, get_number
+    -> f64), which compares byte-exact to the C scalar; Option<bool>/&str observers and
+    string constructors are Tier-2. Returns a group dict or None."""
+    from alchemist.verifier import struct_lift as _sl
+    # Identify tagged-union value types: a struct with a field whose ctype is a union.
+    # We get the union type names from the struct fields directly (ctype not a scalar/struct).
+    union_carriers = set()
+    all_struct_names = set(structs.keys())
+    for sname, fields in structs.items():
+        for f in fields:
+            # a non-ptr field whose ctype is neither a scalar nor a known struct is a union
+            if (not f.is_ptr and f.arr is None
+                    and _sl.c_scalar_to_rust(f.ctype) is None
+                    and f.ctype not in all_struct_names):
+                union_carriers.add(sname)
+    if not union_carriers:
+        return None
+    rust_of = {}
+    ret_of = {}
+    inparam_of = {}
+    if specs:
+        for m in specs:
+            for alg in getattr(m, "algorithms", None) or []:
+                ret_of[alg.name] = (getattr(alg, "return_type", "") or "").strip()
+                ins = alg.inputs or []
+                inparam_of[alg.name] = (ins[0].rust_type or "").strip() if ins else ""
+    struct_ptr = _STRUCT_PTR_RE
+    for T in union_carriers:
+        rustT = _sl.rust_struct_name(T)
+        constructors, observers = [], []
+        for name, sig in by_name.items():
+            ps = [(p[1] or "").strip() for p in (sig.params or [])]
+            rt = re.sub(r"^const\s+", "", (sig.return_type or "").strip())
+            m_ret = struct_ptr.match(rt)
+            # CONSTRUCTOR: returns T* (or the opaque alias of T), 0-1 scalar params.
+            if m_ret and m_ret.group(1) == T and len(ps) <= 1:
+                arg_c = ps[0] if ps else None
+                if arg_c is None or _c_scalar_ctype(arg_c) is not None:
+                    constructors.append((name, sig, arg_c))
+                continue
+            # OBSERVER: first param const T*, exactly one param, scalar C return, and the
+            # extracted Rust return is a PLAIN NUMERIC scalar (Tier-1 comparability).
+            if len(ps) == 1:
+                m_in = struct_ptr.match(re.sub(r"^const\s+", "", ps[0]))
+                if m_in and m_in.group(1) == T and _c_scalar_ctype(sig.return_type) is not None:
+                    rret = ret_of.get(name, "")
+                    if _NUMERIC_RUST_RET.match(_bare_ret_scalar(rret)):
+                        observers.append((name, sig))
+        if constructors and observers:
+            return {"struct": T, "rust": rustT,
+                    "constructors": constructors, "observers": observers,
+                    "ret_of": ret_of, "inparam_of": inparam_of}
+    return None
+
+
+def _bare_ret_scalar(rust_ret: str) -> str:
+    """Unwrap a Rust return type to its bare scalar if it is a plain numeric scalar
+    (or trivially so). `f64` -> `f64`; `Option<bool>` -> `Option<bool>` (not numeric)."""
+    return (rust_ret or "").strip()
+
+
+def fuzz_construct_observe_vectors(dll, group, *, count: int = 8):
+    """Drive each (constructor, observer) pair on the compiled C: build a value from a
+    scalar seed, observe a scalar, record (seed -> observed). Attaches the pair-test to
+    BOTH the constructor and the observer so both are credited when the pair verifies."""
+    import ctypes, struct as _struct
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    rustT = group["rust"]
+    ret_of, inparam_of = group["ret_of"], group["inparam_of"]
+    out: dict[str, list] = {}
+
+    def _fmt_arg_seed(arg_c, i):
+        # deterministic seeds per constructor arg type
+        import ctypes as _c
+        cty = _c_scalar_ctype(arg_c)
+        if cty in (_c.c_double, _c.c_float):
+            return [0.0, 1.0, -1.0, 3.14159, 42.5, -273.15, 1e10, 0.5][i % 8]
+        return [0, 1, -1, 2, 7, 255, -128, 1000][i % 8]
+
+    for cname, csig, arg_c in group["constructors"]:
+        try:
+            c_init = getattr(dll, cname)
+        except AttributeError:
+            continue
+        c_init.restype = ctypes.c_void_p
+        c_init.argtypes = ([_c_scalar_ctype(arg_c)] if arg_c else [])
+        init_ret_rust = ret_of.get(cname, "")
+        init_ret_kind = "opt" if "Option<" in init_ret_rust else "plain"
+        init_param_rust = inparam_of.get(cname, "")
+        for oname, osig in group["observers"]:
+            try:
+                c_obs = getattr(dll, oname)
+            except AttributeError:
+                continue
+            obs_c_ret = _c_scalar_ctype(osig.return_type)
+            c_obs.restype = obs_c_ret
+            c_obs.argtypes = [ctypes.c_void_p]
+            obs_ret_rust = _bare_ret_scalar(ret_of.get(oname, ""))
+            is_float = obs_ret_rust in ("f64", "f32")
+            obs_in_rust = inparam_of.get(oname, "")
+            obs_in_kind = "opt_ref" if obs_in_rust.startswith("Option") else "ref"
+            for i in range(count):
+                seed = _fmt_arg_seed(arg_c, i) if arg_c else None
+                try:
+                    ptr = c_init(seed) if arg_c else c_init()
+                    if not ptr:
+                        continue
+                    val = c_obs(ptr)
+                except Exception:  # noqa: BLE001
+                    continue
+                if is_float:
+                    bits = _struct.unpack("<Q", _struct.pack("<d", float(val)))[0]
+                    expected = str(bits)
+                else:
+                    expected = str(int(val))
+                # constructor seed as a Rust literal
+                if arg_c is None:
+                    seed_lit = ""
+                elif _c_scalar_ctype(arg_c) in (ctypes.c_double, ctypes.c_float):
+                    fb = _struct.unpack("<Q", _struct.pack("<d", float(seed)))[0]
+                    seed_lit = (f"f64::from_bits({fb}u64)" if "f64" in init_param_rust
+                                else f"f64::from_bits({fb}u64) as f32")
+                elif init_param_rust == "bool":
+                    seed_lit = "true" if int(seed) != 0 else "false"
+                else:
+                    ip = init_param_rust if _NUMERIC_RUST_RET.match(init_param_rust) else "i32"
+                    seed_lit = f"{int(seed)}{ip}"
+                tol = (f"construct_observe|{rustT}|{cname}|{init_ret_kind}"
+                       f"|{obs_ret_rust}|{obs_in_kind}|{'f' if is_float else 'i'}")
+                vec = SpecTestVector(
+                    description=f"co_{cname}_{oname}_{i}",
+                    source=f"C reference (construct+observe): {cname} -> {oname}",
+                    inputs={"__seed__": seed_lit, "__obs__": oname},
+                    expected_output=expected,
+                    tolerance=tol,
+                )
+                out.setdefault(oname, []).append(vec)
+                out.setdefault(cname, []).append(vec)
+    return out
+
+
 def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
     """Auto-oracle: mint fuzz vectors by running the compiled C reference in-process.
 
@@ -3246,6 +3412,19 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 for alg in getattr(module, "algorithms", None) or []:
                     if alg.name in _pbyfn and _pbyfn[alg.name] and not getattr(alg, "test_vectors", None):
                         alg.test_vectors = _pbyfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
+    # Tagged-union DOM (parson): pair scalar constructors with scalar observers; the
+    # construct->observe pair verifies both. Attaches vectors to constructors AND observers.
+    try:
+        _cog = classify_construct_observe(by_name, _structs, specs)
+        if _cog is not None:
+            _cobyfn = fuzz_construct_observe_vectors(dll, _cog)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _cobyfn and _cobyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _cobyfn[alg.name]
                         augmented += 1
     except Exception:  # noqa: BLE001
         pass

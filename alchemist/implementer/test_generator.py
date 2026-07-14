@@ -440,6 +440,39 @@ def _emit_cipher_seq_test(fn_name: str, vec, idx: int) -> str:
     return "".join(lines)
 
 
+def _emit_construct_observe_test(fn_name: str, vec, idx: int) -> str:
+    """Tagged-union DOM (parson): build a value with a scalar constructor, then observe
+    it with a scalar getter, and assert the observed scalar equals the C oracle. The pair
+    is one differential unit — verifies BOTH the constructor and the observer. Emitted for
+    whichever of the two is `fn_name` (both call the same init + obs).
+
+    tolerance = construct_observe|{rustT}|{init_fn}|{init_ret_kind}|{obs_ret}|{obs_in_kind}|{f|i}
+    inputs = {"__seed__": <ctor arg rust literal or "">, "__obs__": <observer fn name>}
+    expected_output = observed scalar (i64 as decimal, or f64 bit pattern when {f|i}=='f')
+    """
+    parts = (vec.tolerance or "").split("|")
+    init_fn = parts[2] if len(parts) > 2 else "init"
+    init_ret_kind = parts[3] if len(parts) > 3 else "opt"
+    obs_in_kind = parts[5] if len(parts) > 5 else "ref"
+    is_float = (parts[6] if len(parts) > 6 else "i") == "f"
+    seed = vec.inputs.get("__seed__", "")
+    obs_fn = vec.inputs.get("__obs__", "observe")
+    # &T reference expression, from the constructor's return kind.
+    base = 'v.as_ref().expect("constructor returned None")' if init_ret_kind == "opt" else "&v"
+    obs_arg = f"Some({base})" if obs_in_kind == "opt_ref" else base
+    lines = [f"    #[test]\n    fn test_{fn_name}_co_{idx}() {{\n"]
+    lines.append(f"        let v = super::{init_fn}({seed});\n")
+    lines.append(f"        let out = super::{obs_fn}({obs_arg});\n")
+    if is_float:
+        lines.append(f"        assert_eq!(out.to_bits(), {vec.expected_output}u64, "
+                     f'"{_msg(vec.description)}");\n')
+    else:
+        lines.append(f"        assert_eq!(out as i64, {vec.expected_output}i64, "
+                     f'"{_msg(vec.description)}");\n')
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_alloc_init_test(fn_name: str, vec, idx: int) -> str:
     """Post-init state-observer for an allocator: init a buffer of size cap, assert fields."""
     parts = (vec.tolerance or "").split("|")
@@ -712,6 +745,8 @@ def _emit_spec_test(
         return _emit_state_observer_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("cipher_seq"):
         return _emit_cipher_seq_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("construct_observe"):
+        return _emit_construct_observe_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("scalar_mutator"):
         return _emit_scalar_mutator_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("hash_init"):
