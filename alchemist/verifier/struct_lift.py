@@ -196,6 +196,30 @@ def all_struct_names(text: str) -> list[str]:
     return names
 
 
+_STRUCT_TYPEDEF_RE = re.compile(r"\btypedef\s+struct\s+(\w+)\s+(\w+)\s*;")
+
+
+def collect_struct_typedefs(c_source_dir) -> dict[str, str]:
+    """`typedef struct TAG ALIAS;` -> {ALIAS: TAG}. An OPAQUE / forward-typedef'd struct
+    (parson: `typedef struct json_value_t JSON_Value;`) declares the struct as its TAG
+    separately (no inline `{...}` body), so all_struct_names keys only the tag — but every
+    signature uses the ALIAS. Without this mapping, a `JSON_Value*`/`JSON_Object*` param or
+    return is an UNKNOWN type, so it's never canonicalized or emitted (E0425 on the whole
+    crate). Matches the alias-of-existing-tag form only (the inline-def form has a `{`)."""
+    out: dict[str, str] = {}
+    root = Path(c_source_dir)
+    for cf in sorted(list(root.rglob("*.h")) + list(root.rglob("*.c"))):
+        try:
+            text = _strip_comments(cf.read_text(errors="replace"))
+        except Exception:  # noqa: BLE001
+            continue
+        for m in _STRUCT_TYPEDEF_RE.finditer(text):
+            tag, alias = m.group(1), m.group(2)
+            if alias != tag:
+                out.setdefault(alias, tag)
+    return out
+
+
 def structs_in_dir(c_source_dir) -> dict[str, list[Field]]:
     out: dict[str, list[Field]] = {}
     root = Path(c_source_dir)
@@ -222,6 +246,11 @@ def structs_in_dir(c_source_dir) -> dict[str, list[Field]]:
                     if fld.ctype in tdefs:
                         fld.ctype = tdefs[fld.ctype]
                 out.setdefault(nm, f)
+    # Alias opaque/forward-typedef'd structs to their fields, so `JSON_Value`
+    # (the name every signature uses) resolves to `struct json_value_t`'s fields.
+    for alias, tag in collect_struct_typedefs(c_source_dir).items():
+        if tag in out and alias not in out:
+            out[alias] = out[tag]
     return out
 
 
@@ -411,6 +440,18 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
             return None
         return m.group(1)
 
+    def _c_struct_of_return(sig) -> "str | None":
+        """The C struct a function RETURNS a pointer to (`JSON_Value* json_parse_string(...)`
+        -> `JSON_Value`). A struct that appears ONLY as a return type (never a param) is
+        otherwise invisible to the param-only canonicalization, so it's never emitted."""
+        ct = re.sub(r"^const\s+", "", (getattr(sig, "return_type", "") or "").strip())
+        m = struct_ptr.match(ct)
+        if not m or m.group(1) not in structs:
+            return None
+        if single_scalar_field(structs[m.group(1)]) is not None:
+            return None
+        return m.group(1)
+
     # --- KEYSTONE #1: whole-program type coherence ---------------------------
     # PASS 1 (subject-wide): map each C struct to every Rust name the extractor gave
     # it across ALL functions. The extractor is inconsistent (jsmn's jsmn_parser came
@@ -421,15 +462,21 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
-            if sig is None or not sig.params or not alg.inputs:
+            if sig is None:
                 continue
-            for inp in alg.inputs:
+            for inp in (alg.inputs or []):
                 cn = _c_struct_of(inp.name, sig)
                 if cn is None:
                     continue
                 bare = _bare_struct_name(inp.rust_type)
                 if bare and bare not in _RUST_PRIMS:
                     c_to_names[cn][bare] += 1
+            # return type — a struct that appears only as a return is otherwise missed
+            cr = _c_struct_of_return(sig)
+            if cr is not None:
+                bret = _bare_struct_name(getattr(alg, "return_type", "") or "")
+                if bret and bret not in _RUST_PRIMS:
+                    c_to_names[cr][bret] += 1
     # canonical = most-frequent name, tie-break: longer, then alphabetically-later.
     canon_of_c: dict[str, str] = {}
     alias_to_canon: dict[str, str] = {}
@@ -438,8 +485,20 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
         canon_of_c[cn] = best
         for name in cnt:
             alias_to_canon[name] = best
+    # Unify opaque-typedef ALIAS <-> TAG: `typedef struct json_value_t JSON_Value;`
+    # makes them the SAME struct, so they MUST share ONE canonical Rust name — else the
+    # self-ref field `struct json_value_t *parent` emits `Option<Box<JsonValueT>>` while
+    # every signature uses `JsonValue`, and the crate won't compile. Prefer a signature-
+    # derived canon; else the ALIAS's convention name (JSON_Value -> JsonValue, not the
+    # tag's JsonValueT).
+    for _alias, _tag in collect_struct_typedefs(c_source_dir).items():
+        _canon = canon_of_c.get(_alias) or canon_of_c.get(_tag) or rust_struct_name(_alias)
+        canon_of_c[_alias] = _canon
+        canon_of_c[_tag] = _canon
+        alias_to_canon.setdefault(rust_struct_name(_alias), _canon)
+        alias_to_canon.setdefault(rust_struct_name(_tag), _canon)
 
-    # PASS 2: rewrite every alg.input.rust_type alias -> canonical (word-boundary).
+    # PASS 2: rewrite every alg.input.rust_type + return_type alias -> canonical.
     for module in specs:
         for alg in getattr(module, "algorithms", None) or []:
             for inp in (alg.inputs or []):
@@ -448,6 +507,11 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
                 if canon and canon != bare:
                     inp.rust_type = re.sub(r"\b" + re.escape(bare) + r"\b",
                                            canon, inp.rust_type or "")
+            bret = _bare_struct_name(getattr(alg, "return_type", "") or "")
+            rcanon = alias_to_canon.get(bret or "")
+            if rcanon and rcanon != bret:
+                alg.return_type = re.sub(r"\b" + re.escape(bret) + r"\b",
+                                         rcanon, alg.return_type or "")
 
     # Subject-wide C-struct -> Rust-name map (canonical where known, else the
     # extractor's convention). KEYSTONE #3 uses it to lift a pointer-to-carried-struct
@@ -477,15 +541,20 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
         want: dict[str, tuple] = {}  # rust_name -> (c_struct, fields)
         for alg in getattr(module, "algorithms", None) or []:
             sig = sigs.get(alg.name)
-            if sig is None or not sig.params or not alg.inputs:
+            if sig is None:
                 continue
-            for inp in alg.inputs:
+            for inp in (alg.inputs or []):
                 cn = _c_struct_of(inp.name, sig)
                 if cn is None:
                     continue
                 canon = canon_of_c.get(cn)
                 if canon and (canon[0].isalpha() or canon[0] == "_"):
                     want.setdefault(canon, (cn, structs[cn]))
+            cr = _c_struct_of_return(sig)
+            if cr is not None:
+                canon = canon_of_c.get(cr)
+                if canon and (canon[0].isalpha() or canon[0] == "_"):
+                    want.setdefault(canon, (cr, structs[cr]))
         # transitive closure over owned pointer fields
         queue = list(want.values())
         while queue:
