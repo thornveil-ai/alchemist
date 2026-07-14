@@ -30,7 +30,7 @@ def test_self_referential_pointer_lifts_to_option_box():
     node = [Field("val", "int", None, False), Field("next", "struct node", None, True)]
     out = emit_safe_struct("Node", node, c_to_rust={"node": "Node"})
     assert out is not None
-    assert "pub next: Option<Box<Node>>," in out
+    assert "pub next: Option<alloc::boxed::Box<Node>>," in out
     assert "pub val: i32," in out
     assert "next: None" in out  # Default
 
@@ -40,15 +40,15 @@ def test_binary_tree_two_owned_children():
              Field("left", "struct tnode", None, True),
              Field("right", "struct tnode", None, True)]
     out = emit_safe_struct("TNode", tnode, c_to_rust={"tnode": "TNode"})
-    assert "pub left: Option<Box<TNode>>," in out
-    assert "pub right: Option<Box<TNode>>," in out
+    assert "pub left: Option<alloc::boxed::Box<TNode>>," in out
+    assert "pub right: Option<alloc::boxed::Box<TNode>>," in out
 
 
 def test_counted_array_pointer_lifts_to_vec():
     arr = [Field("items", "Jval", None, True), Field("count", "int", None, False)]
     out = emit_safe_struct("JArray", arr, c_to_rust={"Jval": "Jval"})
-    assert "pub items: Vec<Jval>," in out
-    assert "items: Vec::new()" in out
+    assert "pub items: alloc::vec::Vec<Jval>," in out
+    assert "items: alloc::vec::Vec::new()" in out
     assert "pub count: i32," in out
 
 
@@ -103,4 +103,4 @@ def test_inject_lifts_and_closes_over_linked_list(tmp_path: Path):
     assert n >= 1
     node_type = next((t for t in (mod.shared_types or []) if t.name == "Node"), None)
     assert node_type is not None, "Node state struct not emitted"
-    assert "Option<Box<Node>>" in node_type.rust_definition, node_type.rust_definition
+    assert "Option<alloc::boxed::Box<Node>>" in node_type.rust_definition, node_type.rust_definition

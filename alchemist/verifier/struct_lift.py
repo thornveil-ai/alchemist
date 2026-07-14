@@ -355,26 +355,35 @@ def emit_safe_struct(rust_name: str, fields, *, c_to_rust: dict | None = None) -
             rust_pointee = c_to_rust.get(_pointee_c_name(f))
             if rust_pointee:
                 fname = _safe_field_name(f.name)
+                # alloc-qualified: the emitted struct lives in a no_std crate module that
+                # does NOT import Box/Vec (only the crate root does); `extern crate alloc`
+                # at the root makes `alloc::...` resolve from any module.
                 if f.name in _ARRAYISH_PTR_NAMES and has_count:
-                    body.append(f"    pub {fname}: Vec<{rust_pointee}>,")
-                    defaults.append(f"{fname}: Vec::new()")
+                    body.append(f"    pub {fname}: alloc::vec::Vec<{rust_pointee}>,")
+                    defaults.append(f"{fname}: alloc::vec::Vec::new()")
                     lifted.append(f"{f.name} -> Vec<{rust_pointee}>")
                 else:
-                    body.append(f"    pub {fname}: Option<Box<{rust_pointee}>>,")
+                    body.append(f"    pub {fname}: Option<alloc::boxed::Box<{rust_pointee}>>,")
                     defaults.append(f"{fname}: None")
                     lifted.append(f"{f.name} -> Option<Box<{rust_pointee}>>")
                 continue
             dropped.append(f.name)
             continue
         base = c_scalar_to_rust(f.ctype)
-        if base is None:
-            return None
+        dv = _default_expr(f) if base is not None else None
+        if base is None or dv is None:
+            # Unmappable non-pointer field — a C UNION (parson's JSON_Value_Value:
+            # string|number|Object*|Array*|bool), or an unresolved typedef. DROP it rather
+            # than fail the WHOLE struct (which would leave it undefined -> E0425 breaks the
+            # crate). The struct then compiles; functions that don't touch the field can
+            # still verify byte-exact, and any function that DOES depend on it fails the
+            # differential and is honestly refused (fail-closed). Proper C-union -> Rust-enum
+            # modelling is a separate keystone.
+            dropped.append(f.name)
+            continue
         t = f"[{base}; {f.arr}]" if f.arr is not None else base
         fname = _safe_field_name(f.name)
         body.append(f"    pub {fname}: {t},")
-        dv = _default_expr(f)
-        if dv is None:
-            return None
         defaults.append(f"{fname}: {dv}")
     if not body:
         return None
@@ -383,8 +392,9 @@ def emit_safe_struct(rust_name: str, fields, *, c_to_rust: dict | None = None) -
         note += ("// Owned pointer field(s) lifted to safe Rust (malloc/free -> Box/Vec): "
                  + ", ".join(lifted) + "\n")
     if dropped:
-        note += ("// Raw-pointer field(s) dropped (no safe representation; not observed by the\n"
-                 "// scalar state logic): " + ", ".join(dropped) + "\n")
+        note += ("// Field(s) dropped (no faithful safe representation — raw buffer pointer,\n"
+                 "// C union, or unresolved type; a fn that depends on one fails the\n"
+                 "// differential and is honestly refused): " + ", ".join(dropped) + "\n")
     struct = note + "#[derive(Clone)]\npub struct " + rust_name + " {\n" + "\n".join(body) + "\n}\n"
     fields_init = ", ".join(defaults)
     dflt = (

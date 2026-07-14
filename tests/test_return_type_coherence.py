@@ -85,4 +85,4 @@ def test_tag_alias_unified_no_duplicate_type():
     emitted = [t.name for t in mod.shared_types]
     defs = "\n".join(t.rust_definition for t in mod.shared_types)
     assert "JsonValueT" not in emitted and "JsonValueT" not in defs   # tag not a 2nd type
-    assert "Option<Box<JsonValue>>" in defs   # self-ref parent -> canonical, not JsonValueT
+    assert "Option<alloc::boxed::Box<JsonValue>>" in defs   # self-ref parent -> canonical, not JsonValueT
