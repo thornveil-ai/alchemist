@@ -590,6 +590,25 @@ def extract_constants(
     for spec in _extract_static_const_tables(c_source, c_file, typedef_map):
         extracted.append(spec)
 
+    # Post-pass: drop a const whose value is a bare identifier that references a
+    # symbol we never defined. A `#define X Y` with Y a lone identifier is only
+    # sound if Y is another extracted const/enum; when it isn't, Y is a DANGLING
+    # reference and `pub const X = Y` is E0425 that breaks the whole crate. This
+    # is how libraries plant POISON macros (parson: `#define sscanf
+    # THINK_TWICE_ABOUT_USING_SSCANF`, `#define strcpy USE_MEMCPY_INSTEAD_OF_STRCPY`)
+    # to forbid a call at compile time — never real constants.
+    _defined = {c.name for c in extracted}
+    _ident = re.compile(r"^[A-Za-z_]\w*$")
+    _kept, _dangling = [], []
+    for c in extracted:
+        expr = (c.rust_expr or "").strip()
+        if _ident.match(expr) and expr not in _defined and expr not in ("true", "false"):
+            _dangling.append(c)
+            skipped.append((c.name, f"dangling identifier reference: {expr!r}"))
+        else:
+            _kept.append(c)
+    extracted = _kept
+
     return ExtractionReport(extracted=extracted, skipped=skipped)
 
 
