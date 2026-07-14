@@ -12,12 +12,13 @@ The one document for the whole climb: **~285 concrete milestones** across **8 ve
 |---|---|---|
 | **F** · Foundations | **12/12** | ✅ complete |
 | **P0** · Reliability Floor | **14/14** | ✅ complete (+P0.8a) |
-| **P1** · Whole Small/Mid C Library | **11/20 items** | 🔨 EXIT REDEFINED — real-library gate 0/5 (≥1000-LOC hard libs). **All 3 capability keystones ✅ DONE** (type coherence + parser oracle + ownership-at-scale); remaining = the ≥5 real-library conversions (each a box run) |
-| P2 · Scale — Large Single Codebase | 0/12 | ⬜ not started |
-| P3 · C++ Frontier | 0/8 | ⬜ |
-| P4 · Embedded & Unsafe Boundary | 0/8 | ⬜ |
-| P5 · ArduPilot | 0/22 | ⬜ frontier |
-| P6 · Autonomy — Point & Walk Away | 0/12 | ⬜ continuous |
+| **P1** · Whole Small/Mid C Library | **11/20 items** | 🔨 EXIT = **CONVERGENCE** (new-fixes/library → 0), not a lib count. real-library gate 1/5 (jsmn 1/2). parson 0 after 3 runs (fill wall); http-parser cold surfaced 2 new general blockers → **generality is the front line**. See re-orientation banner. |
+| P1.5 · **Generality gate** (NEW) | 0/5 | 🔨 **the real bottleneck** — general API-seq differential engine · coherence linter · per-shape e2e fixtures · decomposition · fill-scaffolding. Gates P2+. |
+| P2 · Scale — Large Single Codebase | 0/12 | ⬜ **gated on P1.5** (scaling a non-general converter = the grind ×100) |
+| P3 · C++ Frontier | 0/8 | ⬜ gated on P1.5 |
+| P4 · Embedded & Unsafe Boundary | 0/8 | ⬜ gated on P1.5 |
+| P5 · ArduPilot | 0/22 | ⬜ frontier · gated on P1.5 |
+| P6 · Autonomy — Point & Walk Away | 0/12 | 🔨 **NOW, not a finale** — the generality work IS P6, started 2026-07-14 |
 | Track · SEM (semantics) | 0/70 | ⬜ * |
 | Track · VER (verification) | 0/25 | 🔨 2 active * |
 | Track · MODEL | 0/21 | 🔨 1 active * |
@@ -36,7 +37,14 @@ The one document for the whole climb: **~285 concrete milestones** across **8 ve
 - **LLM-translation studies** — LLMs translate plausibly but unreliably; correctness demands an oracle. That finding *is* our thesis: the differential gate, not the model, is the source of truth.
 - **Verification ladder** — Miri (UB) → Kani (bounded model checking) → Prusti/Creusot/Verus (deductive) → Aeneas (functional translation validation). Climbed in the VER track.
 
-**Honest bottom line:** the machinery is built and general. What remains is a ladder of real capability and reliability. "Perfect *safe* Rust for all of ArduPilot" is impossible as literally stated (hardware code is irreducibly unsafe); the real target is verified safe logic + a thin, audited unsafe shim.
+**Honest bottom line (REVISED 2026-07-14 after the http-parser cold test):** the machinery is built but **not yet general** — that was the over-claim. A cold run of http-parser (a fresh, different-family library) surfaced **2 new general blockers before it could mint a single vector** (`&'staticstr` lifetime-emit bug that breaks every `&'static str`/`str_lookup` return; the pipeline's own C-DLL build failed though the C compiles standalone). The blockers were general (not domain-overfit), which is good — but they existed because shapes/fixes are validated *in isolation, not end-to-end on a real library*, so **every new library is the first real test and surfaces the latent bugs.** The true gate to the product is therefore **capability GENERALITY** (a new unseen library needs ~0 human touches), not climbing to bigger targets. The phase ladder past P1 (scale → C++ → embedded → ArduPilot) is correct in *content* but must be **gated on the generality bar** — scaling a non-general converter just scales the per-library grind. "Perfect *safe* Rust for all of ArduPilot" is impossible as literally stated (hardware code is irreducibly unsafe); the real target is verified safe logic + a thin, audited unsafe shim.
+
+> ### 🧭 Re-orientation (2026-07-14): generality is the gate, not target size
+> The product is *"point it at a codebase, walk away, get verified safe Rust."* This session's evidence (parson: 3 runs, 0 verified; http-parser: 2 new blockers on a fresh lib) says the bottleneck is **generality**, not scale. Re-sequencing, without discarding the ladder's content:
+> 1. **P1 exit = CONVERGENCE, not a lib count.** The bar is "the Nth unseen library needs ≤1 human touch," measured by **new-fixes-per-library → 0** (parson ~8 → http-parser 2 is the right slope; exit at ~0). A lib count alone just measures our patience.
+> 2. **Pull the generality capabilities forward as P1's real content** (today buried in the Tracks at "0/70 someday"): the **general API-sequence differential engine** (collapse the per-family shape zoo into one engine); a **coherence linter** (catch `&'staticstr`-class bugs statically in <1s, not a 30-min run); an **end-to-end fixture per shape** (no shape ships un-exercised on a real function); **decomposition** for the deep tail; **fill-scaffolding** for novel structs (the parson wall).
+> 3. **Gate P2+ on the convergence bar** — scale/domain phases start only once a *new* library is ~zero-touch.
+> 4. **P6 (autonomy / "walk away") is NOW, not a finale** — the generality work above *is* P6, started today.
 
 ## Legend
 
@@ -210,7 +218,7 @@ Every completed item's note carries **(a)** the component/shape it changed (name
 ## P1 · Whole Small/Mid C Library — Push-Button (IN PROGRESS)
 
 *A never-seen C library → a verified Rust workspace, under 5% refusal, zero human touches. The first genuinely fundable claim.*
-**Exit (REDEFINED 2026-07-13 — the honest, fundable bar):** **≥5 genuinely-unseen libraries converted FULLY hands-off, each ≥1000 LOC AND structurally hard** (a parser/state-machine, or a pointer-linked + heap-allocation data structure — NOT a fat pile of independent leaf functions), each producing a **byte-exact verified core + an honest, specific refusal tail** (every refusal names *what* it couldn't prove and *why*), **reproducible + signed-receipted.** The refusal rate is whatever it *honestly* is — the deliverable is a trustworthy verified core + a small hand-reviewable refused worklist, which is what c2rust (100% unsafe, unverified) cannot produce. *Staged: prove the capability on jsmn (~340 LOC recursive parser — the unit test) first, then scale to the ≥1000-LOC libraries (the integration test).* The old "5+ libs · refusal <5%" bar was met on 200-line primitives (the easy 80% of C) and is retired as insufficient for the fundable claim.
+**Exit (RE-REDEFINED 2026-07-14 — generality/convergence, not a lib count):** **≥5 genuinely-unseen libraries converted FULLY hands-off, each ≥1000 LOC AND structurally hard** (a parser/state-machine, or a pointer-linked + heap-allocation data structure — NOT a fat pile of independent leaf functions), each producing a **byte-exact verified core + an honest, specific refusal tail** (every refusal names *what* it couldn't prove and *why*), **reproducible + signed-receipted** — **AND the crucial addition: new-human-fixes-per-library must trend to ~0** (the last 2 of the 5 need ≤1 touch each). Five libs banked via five rounds of hand-fixing proves we can hand-fix five libs; it does NOT prove the product. The convergence metric is the real exit — it is the difference between "we made 5 libraries work" and "the machine works on libraries." See the 2026-07-14 re-orientation banner above. The refusal rate is whatever it *honestly* is — the deliverable is a trustworthy verified core + a small hand-reviewable refused worklist, which is what c2rust (100% unsafe, unverified) cannot produce. *Staged: prove the capability on jsmn (~340 LOC recursive parser — the unit test) first, then scale to the ≥1000-LOC libraries (the integration test).* The old "5+ libs · refusal <5%" bar was met on 200-line primitives (the easy 80% of C) and is retired as insufficient for the fundable claim.
 
 > ## 🎯 The real fundable claim (what P1 truly closes)
 > **Point Alchemist at a real, messy, unseen C library, walk away, and every function comes back either byte-exact-verified against the original OR honestly, specifically refused with a reason — and the verified core is genuinely trustworthy because nothing shipped without the oracle agreeing.** The verified-or-refused GUARANTEE is already always-on (fail-closed). What closes P1 is proving it, at useful COVERAGE, on ≥5 real ≥1000-LOC structurally-hard libraries.
