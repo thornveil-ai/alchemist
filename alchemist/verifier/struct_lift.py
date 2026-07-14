@@ -431,23 +431,36 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     from collections import Counter, defaultdict
     from alchemist.extractor.schemas import SharedType
     from alchemist.verifier.auto_config import collect_subject_signatures  # lazy: avoid cycle
-    # Enum-typed signature references -> Rust scalar. The extractor sometimes names a C
-    # enum return/param by a Rust TYPE name (`JSON_Value_Type` -> `JsonValueType`) that is
-    # never defined -> E0425 breaks the crate. A C enum is int-sized (we already resolve
-    # enum STRUCT FIELDS to int); do the same for signature types. Runs even for a subject
-    # with NO structs (an enum-only header still fractures signatures).
-    _enum_rust = {rust_struct_name(e) for e in collect_enum_typedefs(c_source_dir)}
-    if _enum_rust:
+    # Scalar/enum-typed signature references -> Rust scalar. The extractor sometimes names
+    # a C typedef return/param by a Rust TYPE name (`JSON_Value_Type` -> `JsonValueType`)
+    # that is never defined -> E0425 breaks the crate. Two forms fracture identically:
+    #   * enum typedef (`typedef enum {...} T;`)          -> int-sized -> i32
+    #   * scalar typedef (`typedef int JSON_Value_Type;`) -> the base Rust scalar
+    # parson is the second form: `enum json_value_type {..}` and `typedef int
+    # JSON_Value_Type;` are DECLARED SEPARATELY, so the enum-typedef scan misses the alias
+    # entirely. Resolve BOTH via the same rewrite (we already resolve enum/typedef STRUCT
+    # FIELDS the same way). Runs even for a subject with NO structs (an enum/typedef-only
+    # header still fractures signatures).
+    _type_to_scalar: dict[str, str] = {}
+    for _alias, _base in collect_scalar_typedefs(c_source_dir).items():
+        _rs = c_scalar_to_rust(_base)
+        if _rs:
+            _type_to_scalar[rust_struct_name(_alias)] = _rs
+    for _alias in collect_enum_typedefs(c_source_dir):
+        _type_to_scalar.setdefault(rust_struct_name(_alias), "i32")
+    if _type_to_scalar:
         for module in specs:
             for alg in getattr(module, "algorithms", None) or []:
                 for inp in (alg.inputs or []):
                     b = _bare_struct_name(inp.rust_type)
-                    if b in _enum_rust:
-                        inp.rust_type = re.sub(r"\b" + re.escape(b) + r"\b", "i32",
+                    s = _type_to_scalar.get(b)
+                    if s:
+                        inp.rust_type = re.sub(r"\b" + re.escape(b) + r"\b", s,
                                                inp.rust_type or "")
                 rb = _bare_struct_name(getattr(alg, "return_type", "") or "")
-                if rb in _enum_rust:
-                    alg.return_type = re.sub(r"\b" + re.escape(rb) + r"\b", "i32",
+                s = _type_to_scalar.get(rb)
+                if s:
+                    alg.return_type = re.sub(r"\b" + re.escape(rb) + r"\b", s,
                                              alg.return_type or "")
     structs = structs_in_dir(c_source_dir)
     if not structs:
