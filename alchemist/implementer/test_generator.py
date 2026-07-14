@@ -457,8 +457,16 @@ def _emit_construct_observe_test(fn_name: str, vec, idx: int) -> str:
     is_float = (parts[6] if len(parts) > 6 else "i") == "f"
     seed = vec.inputs.get("__seed__", "")
     obs_fn = vec.inputs.get("__obs__", "observe")
-    # &T reference expression, from the constructor's return kind.
-    base = 'v.as_ref().expect("constructor returned None")' if init_ret_kind == "opt" else "&v"
+    # &T reference expression, from the constructor's return kind. as_deref() turns
+    # Option<Box<T>> into Option<&T>, so an inconsistent Box-wrapped constructor return
+    # (parson's init_number vs init_boolean) still yields a &T the observer accepts.
+    _EXPECT = '.expect("constructor returned None")'
+    base = {
+        "opt_box": f"v.as_deref(){_EXPECT}",   # Option<Box<T>> -> &T
+        "opt": f"v.as_ref(){_EXPECT}",          # Option<T> -> &T
+        "box": "v.as_ref()",                     # Box<T> -> &T
+        "plain": "&v",                           # T -> &T
+    }.get(init_ret_kind, f"v.as_ref(){_EXPECT}")
     obs_arg = f"Some({base})" if obs_in_kind == "opt_ref" else base
     lines = [f"    #[test]\n    fn test_{fn_name}_co_{idx}() {{\n"]
     lines.append(f"        let v = super::{init_fn}({seed});\n")

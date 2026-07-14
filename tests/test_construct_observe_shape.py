@@ -98,6 +98,21 @@ def test_emit_float_observer_uses_bit_exact_compare():
     assert "4614256650576692846u64" in out
 
 
+def test_emit_opt_box_constructor_uses_as_deref():
+    # parson's extractor emits SOME constructors as Option<Box<JsonValue>> and others as
+    # Option<JsonValue>; the emitter must deref the Box (as_deref) or the observer's
+    # &JsonValue param mismatches &Box<JsonValue> and the whole test module fails to compile.
+    v = TestVector(
+        description="cx", source="s",
+        inputs={"__seed__": "f64::from_bits(1u64)", "__obs__": "json_value_get_number"},
+        expected_output="0",
+        tolerance="construct_observe|JsonValue|json_value_init_number|opt_box|f64|ref|f",
+    )
+    out = _emit_construct_observe_test("json_value_get_number", v, 0)
+    assert "v.as_deref().expect" in out
+    assert "v.as_ref().expect" not in out
+
+
 def test_emit_int_observer_opt_ref_input():
     v = TestVector(
         description="co_y", source="s",

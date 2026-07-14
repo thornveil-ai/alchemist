@@ -3164,7 +3164,15 @@ def fuzz_construct_observe_vectors(dll, group, *, count: int = 8):
         c_init.restype = ctypes.c_void_p
         c_init.argtypes = ([_c_scalar_ctype(arg_c)] if arg_c else [])
         init_ret_rust = ret_of.get(cname, "")
-        init_ret_kind = "opt" if "Option<" in init_ret_rust else "plain"
+        # The extractor is inconsistent about the constructor return shape for the SAME
+        # C `T*` return: some come out `Option<Box<JsonValue>>`, others `Option<JsonValue>`.
+        # Encode the exact shape so the emitter derefs correctly (a mismatch makes the
+        # WHOLE test module fail to compile, reverting every paired function).
+        _has_box = "Box<" in init_ret_rust
+        if "Option<" in init_ret_rust:
+            init_ret_kind = "opt_box" if _has_box else "opt"
+        else:
+            init_ret_kind = "box" if _has_box else "plain"
         init_param_rust = inparam_of.get(cname, "")
         for oname, osig in group["observers"]:
             try:
