@@ -755,13 +755,23 @@ def _lib_rs_for(
             # Match `, X>` so nested generics (`Result<Vec<u8>, DecodeError>`) work.
             for em in re.finditer(r",\s*([A-Z][A-Za-z0-9_]*)\s*>", m.signature or ""):
                 referenced.add(em.group(1))
-    # Types referenced by module FUNCTION signatures. Only trust the broad scan
-    # when this crate has NO dependency crates: a dep crate's glob re-export
-    # (`use foo_types::*;`) can supply a type we don't see, so emitting a
-    # placeholder for it would DUPLICATE-define and break the compile. With deps,
+    # Types referenced by module FUNCTION signatures, and (broadly) by synthesized TRAIT
+    # method signatures. Only trust the broad scan when this crate has NO dependency crates:
+    # a dep crate's glob re-export (`use foo_types::*;`) can supply a type we don't see, so
+    # emitting a placeholder for it would DUPLICATE-define and break the compile. With deps,
     # fall back to the trait-only error-position heuristic (prior behaviour).
+    #
+    # The trait broad-scan matters because a trait is synthesized during ARCHITECT — a
+    # snapshot of the member types BEFORE the module functions' enum/typedef refs are
+    # normalized to i32 during skeleton — so a trait like `fn compute(arg0: HttpErrno)`
+    # keeps the un-normalized `HttpErrno` even though the real functions became `i32`
+    # (http-parser). Without this, that one frozen trait type sinks the whole crate.
     if not (dep_crate_names or []):
         referenced |= (sig_referenced_types or set())
+        for t in traits:
+            for m in t.methods:
+                for tm in re.finditer(r"[A-Z][A-Za-z0-9_]*", m.signature or ""):
+                    referenced.add(tm.group(0))
     undefined = sorted((referenced - defined) - _KNOWN)
     has_dep_glob = bool(dep_crate_names)
     for et in undefined:
