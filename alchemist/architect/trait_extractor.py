@@ -118,10 +118,16 @@ def extract_traits(
         for a in members:
             crate_votes[alg_to_crate.get(a.name, "unknown")] += 1
         owning_crate = max(crate_votes.items(), key=lambda x: x[1])[0]
-        # Synthesize a single trait method based on the shared shape.
+        # Synthesize a single trait method. Render the signature from a REPRESENTATIVE
+        # member's ORIGINAL (properly-spaced) types — NOT the shape's normalized types.
+        # The shape's types are whitespace-collapsed for grouping consistency, which is
+        # correct as a hash key but invalid as rendered Rust (`&'static str` -> the
+        # un-compilable `&'staticstr`, and it also broke the `&mut self` promotion that
+        # matched on `"&mut "`). All members share the shape, so any is a faithful render.
+        rep = members[0]
         method = TraitMethod(
             name="compute",
-            signature=f"fn compute({_shape_as_params(shape)}) -> {shape.return_type}",
+            signature=f"fn compute({_render_params(rep)}) -> {(rep.return_type or '()').strip()}",
             description=(
                 f"Computes the {shape.category} value for the given input. "
                 f"Shared across {len(members)} implementors."
@@ -140,10 +146,12 @@ def extract_traits(
     return new_traits
 
 
-def _shape_as_params(shape: _Shape) -> str:
-    """Emit a comma-separated param list for a trait method signature."""
+def _render_params(alg: AlgorithmSpec) -> str:
+    """Emit a comma-separated param list for a trait method signature, using the
+    algorithm's ORIGINAL rust_types (correct spacing) so the emitted Rust compiles."""
     out = []
-    for i, t in enumerate(shape.param_types):
+    for i, p in enumerate(alg.inputs or []):
+        t = (p.rust_type or "").strip()
         # self-like first-borrow params: promote to &self / &mut self.
         if i == 0 and t.startswith("&mut "):
             out.append("&mut self")

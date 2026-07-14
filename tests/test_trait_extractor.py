@@ -151,3 +151,49 @@ def test_extract_groups_across_modules():
     traits = extract_traits([m1, m2], arch)
     assert len(traits) == 1
     assert set(traits[0].implementors) == {"adler32", "crc32"}
+
+
+def _str_lookup(name: str) -> AlgorithmSpec:
+    # http-parser's http_errno_name/http_method_str etc: enum -> &'static str
+    return AlgorithmSpec(
+        name=name, display_name=name, category="utility",
+        description="",
+        inputs=[Parameter(name="e", rust_type="HttpErrno", description="")],
+        return_type="&'static str",
+    )
+
+
+def _hash_update(name: str) -> AlgorithmSpec:
+    return AlgorithmSpec(
+        name=name, display_name=name, category="hash",
+        description="",
+        inputs=[Parameter(name="s", rust_type="&mut HashState", description=""),
+                Parameter(name="d", rust_type="&[u8]", description="")],
+        return_type="()",
+    )
+
+
+def test_static_str_return_renders_with_space():
+    # REGRESSION: _normalize_type collapsed `&'static str` -> `&'staticstr` and that
+    # whitespace-collapsed string was rendered into the trait signature -> the crate
+    # would not compile. This broke every str_lookup library (http-parser). The trait
+    # signature must render from the member's ORIGINAL, properly-spaced type.
+    mod = ModuleSpec(name="m", display_name="m", description="",
+                     algorithms=[_str_lookup("http_errno_name"),
+                                 _str_lookup("http_method_str")])
+    traits = extract_traits([mod], _arch_with_crate("core", ["m"]))
+    assert traits, "expected a Utility trait for the 2 str_lookup members"
+    sig = traits[0].methods[0].signature
+    assert "&'static str" in sig, f"space dropped: {sig!r}"
+    assert "'staticstr" not in sig, f"invalid Rust emitted: {sig!r}"
+
+
+def test_mut_self_promotion_renders_with_spaced_type():
+    # The &self/&mut self promotion matched on `"&mut "`; against the space-collapsed
+    # `&mutHashState` it never matched. Rendering from the original type fixes both.
+    mod = ModuleSpec(name="m", display_name="m", description="",
+                     algorithms=[_hash_update("a"), _hash_update("b")])
+    traits = extract_traits([mod], _arch_with_crate("core", ["m"]))
+    assert traits, "expected a Hasher trait"
+    sig = traits[0].methods[0].signature
+    assert "&mut self" in sig, f"&mut self promotion broken: {sig!r}"

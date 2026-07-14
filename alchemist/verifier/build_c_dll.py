@@ -31,7 +31,22 @@ _NONLIB_DIRS = {
     # library itself. Their .c files (libcrc's precalc/crc32_table.c) fill a global
     # table and have nothing to differentially fuzz; treating them as modules is wrong.
     "precalc", "precompute", "gen", "tools", "tool", "scripts", "bin", "util", "utils",
+    "fuzzers", "samples", "sample", "bindings", "port", "ports", "python", "perl",
 }
+# Directory-name PREFIXES that mark non-library trees. The exact-set above misses
+# real-world variants (http-parser's `fuzzers/` vs `fuzz/`, `benchmarks/` vs `bench/`,
+# `examples-old/`), and those files (fuzz harnesses, benchmark drivers) do NOT compile
+# as part of the library — one of them sinks the whole reference-DLL build, which
+# silently yields 0 differential vectors (found on http-parser: `fuzzers/` slipped
+# through and killed the build). Prefix-matching is the robust, general fix.
+_NONLIB_PREFIXES = ("fuzz", "test", "bench", "example", "demo")
+
+
+def _is_nonlib_part(part: str) -> bool:
+    p = part.lower()
+    return p in _NONLIB_DIRS or p.startswith(_NONLIB_PREFIXES)
+
+
 _MAIN_RE = re.compile(r"\bint\s+main\s*\(")
 # An amalgamation/unity build: a .c that #includes other .c files (onelua.c,
 # sqlite3.c). Linking it with the real .c files duplicates every symbol.
@@ -94,7 +109,7 @@ def discover_c_build(root, *, max_files: int = 300) -> tuple[list[Path], list[Pa
     include_dirs: set[Path] = {root}
     for cf in sorted(root.rglob("*.c")):
         rel = cf.relative_to(root).parts[:-1]
-        if {p.lower() for p in rel} & _NONLIB_DIRS:
+        if any(_is_nonlib_part(p) for p in rel):
             continue
         try:
             txt = cf.read_text(errors="replace")
@@ -121,7 +136,7 @@ def discover_c_build(root, *, max_files: int = 300) -> tuple[list[Path], list[Pa
             break
     for hf in root.rglob("*.h"):
         rel = hf.relative_to(root).parts[:-1]
-        if {p.lower() for p in rel} & _NONLIB_DIRS:
+        if any(_is_nonlib_part(p) for p in rel):
             continue
         include_dirs.add(hf.parent)
     if not sources:
