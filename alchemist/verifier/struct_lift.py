@@ -96,6 +96,31 @@ def collect_enum_typedefs(c_source_dir) -> dict[str, str]:
     return out
 
 
+_ENUM_TAG_RE = re.compile(r"\benum\s+([A-Za-z_]\w*)\s*\{", re.DOTALL)
+
+
+def collect_enum_tags(c_source_dir) -> dict[str, str]:
+    """Map BARE tag-form C enums `enum NAME { ... }` (no typedef) to `int`. Real C headers
+    routinely use tag-form enums directly in signatures (http-parser: `enum http_errno`,
+    `enum http_method`, `enum state`, `enum http_host_state`, `enum http_parser_type`),
+    which `collect_enum_typedefs` (typedef-form only) misses — leaving the extractor's
+    `HttpErrno`/`HttpMethod`/… as UNDEFINED types that break the whole crate (E0425). A C
+    enum is int-sized, so a signature ref to rust_struct_name(NAME) resolves to i32."""
+    root = Path(c_source_dir)
+    files = list(root.rglob("*.h")) + list(root.rglob("*.c"))
+    out: dict[str, str] = {}
+    for cf in sorted(files):
+        if {p.lower() for p in cf.relative_to(root).parts[:-1]} & _TYPEDEF_NONLIB:
+            continue
+        try:
+            text = _strip_comments(cf.read_text(errors="replace"))
+        except Exception:  # noqa: BLE001
+            continue
+        for m in _ENUM_TAG_RE.finditer(text):
+            out.setdefault(m.group(1), "int")
+    return out
+
+
 class Field:
     def __init__(self, name: str, ctype: str, arr, is_ptr: bool):
         self.name = name
@@ -508,6 +533,8 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
             _type_to_scalar[rust_struct_name(_alias)] = _rs
     for _alias in collect_enum_typedefs(c_source_dir):
         _type_to_scalar.setdefault(rust_struct_name(_alias), "i32")
+    for _tag in collect_enum_tags(c_source_dir):
+        _type_to_scalar.setdefault(rust_struct_name(_tag), "i32")
     if _type_to_scalar:
         for module in specs:
             for alg in getattr(module, "algorithms", None) or []:
