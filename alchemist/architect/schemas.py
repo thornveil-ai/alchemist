@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class CrateSpec(BaseModel):
     """Specification for a single Rust crate in the workspace."""
     name: str = Field(description="Crate name (e.g., 'zlib-deflate', 'zlib-checksum')")
-    description: str
+    description: str = ""
     is_no_std: bool = Field(default=True, description="Whether this crate should be no_std")
     dependencies: list[str] = Field(default_factory=list, description="Other workspace crate names this depends on")
     external_deps: list[ExternalDep] = Field(default_factory=list)
@@ -27,7 +27,7 @@ class ExternalDep(BaseModel):
 class TraitSpec(BaseModel):
     """A Rust trait definition for module interfaces."""
     name: str
-    description: str
+    description: str = ""
     methods: list[TraitMethod]
     supertraits: list[str] = Field(default_factory=list)
     crate: str = Field(description="Which crate this trait lives in")
@@ -77,15 +77,20 @@ class TraitMethod(BaseModel):
     """A method in a trait definition."""
     name: str
     signature: str = Field(description="Full Rust signature (e.g., 'fn compress(&mut self, input: &[u8]) -> Result<Vec<u8>, Error>')")
-    description: str
+    description: str = ""
     has_default: bool = False
 
 
 class OwnershipDecision(BaseModel):
-    """Documents an ownership/lifetime design decision."""
-    c_pattern: str = Field(description="The C pattern being replaced (e.g., 'global mutable crc_table')")
-    rust_pattern: str = Field(description="The Rust replacement (e.g., 'const CRC_TABLE: [u32; 256] computed at compile time')")
-    rationale: str
+    """Documents an ownership/lifetime design decision.
+
+    Every field is DOCUMENTATION (never computed from), so all default to "" — a model
+    that omits a rationale on one of a dozen decisions must not fail-validate the ENTIRE
+    architecture and abort the run (this killed a whole http-parser run, and being
+    model-generated it is non-deterministic across any library)."""
+    c_pattern: str = Field(default="", description="The C pattern being replaced (e.g., 'global mutable crc_table')")
+    rust_pattern: str = Field(default="", description="The Rust replacement (e.g., 'const CRC_TABLE: [u32; 256] computed at compile time')")
+    rationale: str = ""
 
 
 class ErrorType(BaseModel):
@@ -98,14 +103,14 @@ class ErrorType(BaseModel):
 class ErrorVariant(BaseModel):
     """A variant of an error enum."""
     name: str
-    description: str
+    description: str = ""
     fields: list[str] = Field(default_factory=list, description="Rust field types if any")
 
 
 class CargoFeature(BaseModel):
     """A Cargo feature flag."""
     name: str
-    description: str
+    description: str = ""
     default: bool = False
     enables: list[str] = Field(default_factory=list, description="Other features this enables")
 
@@ -113,7 +118,7 @@ class CargoFeature(BaseModel):
 class CrateArchitecture(BaseModel):
     """Complete Rust workspace architecture."""
     workspace_name: str
-    description: str
+    description: str = ""
 
     crates: list[CrateSpec]
     dependency_graph: dict[str, list[str]] = Field(
