@@ -3226,6 +3226,83 @@ def fuzz_construct_observe_vectors(dll, group, *, count: int = 8):
     return out
 
 
+def _run_isolated(thunk, default=None):
+    """Run thunk() in a FORKED child so a C `assert()`/UB that aborts or segfaults during
+    fuzzing (real C is full of input-domain asserts — http-parser's `http_errno_name`
+    asserts `err < ARRAY_SIZE`) doesn't take down the WHOLE oracle. Without this, one such
+    function sinks every function's vectors (SIGABRT kills the single outer fork). Returns
+    thunk()'s result, or `default` ([] by default) if the child crashed. Falls back to a
+    direct call on non-fork platforms (Windows)."""
+    import os as _os, pickle as _pickle, tempfile as _tf
+    if default is None:
+        default = []
+    if _os.name != "posix" or not hasattr(_os, "fork"):
+        try:
+            return thunk()
+        except Exception:  # noqa: BLE001
+            return default
+    tmp = _tf.NamedTemporaryFile(delete=False, suffix=".v.pkl")
+    tmp.close()
+    pid = _os.fork()
+    if pid == 0:  # child
+        try:
+            r = thunk()
+            with open(tmp.name, "wb") as fh:
+                _pickle.dump(r, fh)
+            _os._exit(0)
+        except BaseException:  # noqa: BLE001
+            _os._exit(70)
+    _, status = _os.waitpid(pid, 0)
+    try:
+        if _os.WIFSIGNALED(status) or (_os.WIFEXITED(status) and _os.WEXITSTATUS(status) != 0):
+            return default
+        with open(tmp.name, "rb") as fh:
+            return _pickle.load(fh)
+    except Exception:  # noqa: BLE001
+        return default
+    finally:
+        try:
+            _os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _fuzz_one_function(dll, alg, sig, by_name, structs):
+    """Per-function shape dispatch: classify `sig` and mint its vectors. Pure of side
+    effects on `specs` (returns the vectors) so it can run inside a per-function fork."""
+    if classify_checksum_shape(sig) is not None:
+        return fuzz_checksum_vectors(dll, alg, sig)
+    if classify_hash_out_shape(sig) is not None:
+        return fuzz_hash_out_vectors(dll, alg, sig)
+    if classify_digest_shape(sig) is not None:
+        return list(fuzz_digest_vectors(dll, alg, sig)) + fuzz_digest_catalog_vectors(dll, alg, sig)
+    if classify_scalar_shape(sig) is not None:
+        return fuzz_scalar_vectors(dll, alg, sig)
+    if classify_inplace_shape(sig) is not None:
+        return fuzz_inplace_vectors(dll, alg, sig)
+    if classify_iarray_reduce(sig) is not None:
+        return fuzz_iarray_reduce_vectors(dll, alg, sig)
+    if classify_buf_gen(sig) is not None:
+        return fuzz_buf_gen_vectors(dll, alg, sig)
+    _rt_enc = classify_cstr_roundtrip(sig, by_name)
+    if _rt_enc is not None:
+        return fuzz_cstr_roundtrip_vectors(dll, alg, sig, _rt_enc)
+    if classify_str_lookup(sig) is not None:
+        return fuzz_str_lookup_vectors(dll, alg, sig)
+    if classify_cstr_out(sig) is not None:
+        return fuzz_cstr_out_vectors(dll, alg, sig)
+    if classify_cbuf_out(sig) is not None:
+        return fuzz_cbuf_out_vectors(dll, alg, sig)
+    if classify_cstr_scalar(sig) is not None:
+        return fuzz_cstr_scalar_vectors(dll, alg, sig)
+    if classify_buf_transform(sig) is not None:
+        return fuzz_buf_transform_vectors(dll, alg, sig)
+    _mi = classify_scalar_mutator_shape(sig, structs)
+    if _mi is not None:
+        return fuzz_scalar_mutator_vectors(dll, alg, sig, _mi)
+    return []
+
+
 def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
     """Auto-oracle: mint fuzz vectors by running the compiled C reference in-process.
 
@@ -3319,39 +3396,10 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
             sig = by_name.get(alg.name)
             if sig is None:
                 continue
-            if classify_checksum_shape(sig) is not None:
-                vecs = fuzz_checksum_vectors(dll, alg, sig)
-            elif classify_hash_out_shape(sig) is not None:
-                vecs = fuzz_hash_out_vectors(dll, alg, sig)
-            elif classify_digest_shape(sig) is not None:
-                vecs = fuzz_digest_vectors(dll, alg, sig)
-                # Second, independent proof: attach the NIST/FIPS catalog KATs, but only the
-                # ones the subject's compiled C actually reproduces (canonical, not a variant).
-                vecs = list(vecs) + fuzz_digest_catalog_vectors(dll, alg, sig)
-            elif classify_scalar_shape(sig) is not None:
-                vecs = fuzz_scalar_vectors(dll, alg, sig)
-            elif classify_inplace_shape(sig) is not None:
-                vecs = fuzz_inplace_vectors(dll, alg, sig)
-            elif classify_iarray_reduce(sig) is not None:
-                vecs = fuzz_iarray_reduce_vectors(dll, alg, sig)
-            elif classify_buf_gen(sig) is not None:
-                vecs = fuzz_buf_gen_vectors(dll, alg, sig)
-            elif (_rt_enc := classify_cstr_roundtrip(sig, by_name)) is not None:
-                vecs = fuzz_cstr_roundtrip_vectors(dll, alg, sig, _rt_enc)
-            elif classify_str_lookup(sig) is not None:
-                vecs = fuzz_str_lookup_vectors(dll, alg, sig)
-            elif classify_cstr_out(sig) is not None:
-                vecs = fuzz_cstr_out_vectors(dll, alg, sig)
-            elif classify_cbuf_out(sig) is not None:
-                vecs = fuzz_cbuf_out_vectors(dll, alg, sig)
-            elif classify_cstr_scalar(sig) is not None:
-                vecs = fuzz_cstr_scalar_vectors(dll, alg, sig)
-            elif classify_buf_transform(sig) is not None:
-                vecs = fuzz_buf_transform_vectors(dll, alg, sig)
-            elif (_mi := classify_scalar_mutator_shape(sig, _structs)) is not None:
-                vecs = fuzz_scalar_mutator_vectors(dll, alg, sig, _mi)
-            else:
-                vecs = []
+            # Per-function crash isolation: a C function that asserts / UB-crashes on a
+            # fuzzed input (http-parser's http_errno_name asserts err < ARRAY_SIZE) must
+            # only lose ITS OWN vectors, not sink every other function's.
+            vecs = _run_isolated(lambda a=alg, s=sig: _fuzz_one_function(dll, a, s, by_name, _structs))
             if vecs:
                 alg.test_vectors = vecs
                 augmented += 1
