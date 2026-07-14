@@ -211,13 +211,29 @@ def _fn_signature(alg: AlgorithmSpec) -> str:
         name = _sanitize_param_name(p.name, i + len(alg.inputs))
         params.append(f"{name}: {rust_type}")
     ret = _sanitize_rust_type(alg.return_type.strip() or "()")
-    # Return types with a bare `&T` reference need a lifetime. Since
-    # zlib's get_crc_table (and siblings) return pointers to static data,
-    # 'static is the only sound default and is what the C semantics match.
-    ret = re.sub(r"^&(?!\s*'|\s*mut)", "&'static ", ret)
+    # Lifetime elision. A return type that borrows (`&T`, `&mut T`, `Option<&T>`,
+    # `&[T]`, ...) needs an explicit lifetime or the skeleton won't compile (E0106 —
+    # this blocked EVERY parson getter, e.g. `json_object_get_value(object: &JsonObject,
+    # name: &str) -> Option<&JsonValue>`). Two cases, distinguished by whether any INPUT
+    # borrows:
+    #   * borrowed input(s) present  -> the return borrows FROM the inputs; introduce a
+    #     named lifetime `'a` and tie every un-lifetimed borrow (inputs + return) to it
+    #     (rustc's own suggestion; over-constrains but is always sound and compiles).
+    #   * no borrowed inputs (zlib's get_crc_table returns a pointer to static data) ->
+    #     `'static` is the only sound choice and matches the C semantics.
+    _unlt = re.compile(r"&(?!\s*')")  # a borrow not already followed by a lifetime
+    generics = ""
+    if _unlt.search(ret):
+        if any(_unlt.search(p) for p in params):
+            params = [_unlt.sub("&'a ", p) for p in params]
+            ret = _unlt.sub("&'a ", ret)
+            generics = "<'a>"
+        else:
+            ret = _unlt.sub("&'static ", ret)
+    name = _snake(alg.name)
     if ret == "()" or ret == "":
-        return f"pub fn {_snake(alg.name)}({', '.join(params)})"
-    return f"pub fn {_snake(alg.name)}({', '.join(params)}) -> {ret}"
+        return f"pub fn {name}{generics}({', '.join(params)})"
+    return f"pub fn {name}{generics}({', '.join(params)}) -> {ret}"
 
 
 def emit_function_stub(alg: AlgorithmSpec) -> str:
