@@ -992,6 +992,92 @@ def classify_cstr_out(sig) -> str | None:
     return None
 
 
+def classify_str_lookup(sig) -> str | None:
+    """C `const char* f(<scalar/enum>)` — an enum/int -> static NUL-terminated STRING
+    LOOKUP (http_method_str, http_status_str, http_errno_name/description; and the
+    ubiquitous `<enum>_name()` / `<enum>_to_string()` idiom in nearly every C library).
+    Distinct from cstr_out (char* IN). Oracle: fuzz the scalar over a range, compare the
+    returned string byte-exact. The extractor lifts the return to `&'static str`,
+    `Option<&str>`, or `String`."""
+    if _CHAR_PTR.match((sig.return_type or "").strip()) is None:
+        return None
+    if len(sig.params) != 1:
+        return None
+    p = re.sub(r"^const\s+", "", (sig.params[0][1] or "").strip())
+    if _SCALAR_ARG.match(p) or re.match(r"^enum\s+\w+$", p):
+        return "str_lookup"
+    return None
+
+
+def _rust_str_lit(s: str) -> str:
+    """A Rust `"..."` string literal for `s` (escape backslash/quote/control chars)."""
+    out = ['"']
+    for ch in s:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif 32 <= o < 127:
+            out.append(ch)
+        else:
+            out.append(f"\\u{{{o:x}}}")
+    out.append('"')
+    return "".join(out)
+
+
+def fuzz_str_lookup_vectors(dll, alg, sig, *, count: int = 80):
+    """Mint rust_body vectors for `const char* f(<scalar>)`: fuzz the scalar over
+    [0, count), read the returned NUL-terminated string from C, and assert the Rust fn
+    returns the same. Skips NULL C returns (unknown-enum boundary behavior varies)."""
+    import ctypes
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    if classify_str_lookup(sig) is None:
+        return []
+    ret = (alg.return_type or "").strip()
+    is_string = ("String" in ret) and ("&" not in ret)  # owned String
+    is_str = "str" in ret                                 # &str / &'static str / Option<&str>
+    is_opt = "Option" in ret
+    if not (is_str or is_string):
+        return []
+    try:
+        c_fn = getattr(dll, sig.name)
+    except AttributeError:
+        return []
+    c_fn.restype = ctypes.c_char_p
+    c_fn.argtypes = (ctypes.c_int,)
+    vecs = []
+    for val in range(0, count):
+        try:
+            s = c_fn(val)
+        except Exception:  # noqa: BLE001
+            continue
+        if s is None:
+            continue  # NULL return — boundary behavior varies; don't pin it
+        try:
+            text = s.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        lit = _rust_str_lit(text)
+        call = f"super::{sig.name}({val})"
+        if is_string:
+            body = f"assert_eq!({call}.as_str(), {lit});"
+        elif is_opt:
+            body = f"assert_eq!({call}, Some({lit}));"
+        else:
+            body = f"assert_eq!({call}, {lit});"
+        vecs.append(SpecTestVector(
+            description=f"lookup_{val}", source=f"C reference (enum->string): {sig.name}",
+            inputs={}, expected_output=body, tolerance="rust_body"))
+    return vecs
+
+
 def _rust_bytes_lit(b: bytes) -> str:
     """A Rust byte-string literal `b"..."` for arbitrary bytes (used when the extractor
     lifted a `char*` input to `&[u8]` rather than `&str`)."""
@@ -3070,6 +3156,8 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 vecs = fuzz_buf_gen_vectors(dll, alg, sig)
             elif (_rt_enc := classify_cstr_roundtrip(sig, by_name)) is not None:
                 vecs = fuzz_cstr_roundtrip_vectors(dll, alg, sig, _rt_enc)
+            elif classify_str_lookup(sig) is not None:
+                vecs = fuzz_str_lookup_vectors(dll, alg, sig)
             elif classify_cstr_out(sig) is not None:
                 vecs = fuzz_cstr_out_vectors(dll, alg, sig)
             elif classify_cbuf_out(sig) is not None:
