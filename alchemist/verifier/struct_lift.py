@@ -156,15 +156,12 @@ def _find_body(text: str, name: str) -> str | None:
     return None
 
 
-def parse_struct(text: str, name: str) -> list[Field] | None:
-    body = _find_body(text, name)
-    if body is None:
-        return None
-    # Drop preprocessor directive lines inside the struct body. A conditional
-    # field like `#ifdef JSMN_PARENT_LINKS\n int parent;\n#endif` otherwise
-    # glues the directive into the field's ctype ("#ifdef JSMN_PARENT_LINKS int").
-    # Removing the `#...` lines keeps the field itself (the common/default build),
-    # which is the safe choice for a state struct that must compile.
+def _fields_from_body(body: str) -> list[Field]:
+    """Split a struct/union BODY (the text between the braces) into Fields."""
+    # Drop preprocessor directive lines inside the body. A conditional field like
+    # `#ifdef JSMN_PARENT_LINKS\n int parent;\n#endif` otherwise glues the directive
+    # into the field's ctype ("#ifdef JSMN_PARENT_LINKS int"). Removing the `#...`
+    # lines keeps the field itself (the common/default build), the safe choice.
     body = re.sub(r"(?m)^\s*#.*$", " ", body)
     fields: list[Field] = []
     for decl in body.split(";"):
@@ -184,6 +181,55 @@ def parse_struct(text: str, name: str) -> list[Field] | None:
             continue
         fields.append(Field(parts[-1], " ".join(parts[:-1]), arr, is_ptr))
     return fields
+
+
+def parse_struct(text: str, name: str) -> list[Field] | None:
+    body = _find_body(text, name)
+    if body is None:
+        return None
+    return _fields_from_body(body)
+
+
+_UNION_TYPEDEF_RE = re.compile(
+    r"\btypedef\s+union\s+(?:\w+\s*)?\{([^{}]*)\}\s*([A-Za-z_]\w*)\s*;", re.DOTALL)
+_UNION_TAG_RE = re.compile(r"\bunion\s+(\w+)\s*\{([^{}]*)\}", re.DOTALL)
+_UNION_NONLIB = {"test", "tests", "example", "examples", "bench", "benches", "fuzz",
+                 "doc", "docs", "build", "vendor", "third_party", ".git", ".alchemist"}
+
+
+def collect_union_typedefs(c_source_dir) -> dict[str, list[Field]]:
+    """Map a C union type name -> its member Fields, so a tagged-union struct field
+    (parson's `JSON_Value_Value value;`) can be LIFTED to a flattened safe Rust
+    sub-struct (one field per union member) instead of being DROPPED.
+
+    A flattened struct is fully safe (no `union`, no `unsafe`) and verifiable: the
+    Rust access path `v.value.number` matches the C `v->value.number` exactly, so the
+    model writes ordinary field access and a tagged-union library's constructors /
+    scalar getters can verify byte-exact. Keyed by BOTH the typedef alias and the
+    tag. Member ctypes are resolved through the library's scalar/enum typedefs."""
+    tdefs = collect_scalar_typedefs(c_source_dir)
+    tdefs.update(collect_enum_typedefs(c_source_dir))
+    out: dict[str, list[Field]] = {}
+    root = Path(c_source_dir)
+    for cf in sorted(list(root.rglob("*.h")) + list(root.rglob("*.c"))):
+        if {p.lower() for p in cf.relative_to(root).parts[:-1]} & _UNION_NONLIB:
+            continue
+        try:
+            text = _strip_comments(cf.read_text(errors="replace"))
+        except Exception:  # noqa: BLE001
+            continue
+        for m in list(_UNION_TYPEDEF_RE.finditer(text)) + list(_UNION_TAG_RE.finditer(text)):
+            if _UNION_TYPEDEF_RE.pattern == m.re.pattern:
+                body, key = m.group(1), m.group(2)
+            else:
+                key, body = m.group(1), m.group(2)
+            flds = _fields_from_body(body)
+            for fld in flds:
+                if fld.ctype in tdefs:
+                    fld.ctype = tdefs[fld.ctype]
+            if flds:
+                out.setdefault(key, flds)
+    return out
 
 
 def all_struct_names(text: str) -> list[str]:
@@ -330,7 +376,8 @@ def _pointee_c_name(f: "Field") -> str:
     return re.sub(r"^(?:const\s+)?struct\s+", "", (f.ctype or "").strip())
 
 
-def emit_safe_struct(rust_name: str, fields, *, c_to_rust: dict | None = None) -> str | None:
+def emit_safe_struct(rust_name: str, fields, *, c_to_rust: dict | None = None,
+                     union_structs: dict | None = None) -> str | None:
     """Emit a SAFE (non-repr-C) struct + Default.
 
     KEYSTONE #3 (ownership at library scale): a pointer field to ANOTHER CARRIED struct
@@ -346,10 +393,23 @@ def emit_safe_struct(rust_name: str, fields, *, c_to_rust: dict | None = None) -
     observe it (rc4/allocators rely on this). Returns None if no representable field remains or
     a non-pointer scalar is unmappable."""
     c_to_rust = c_to_rust or {}
+    union_structs = union_structs or {}
     scalar_names = {f.name for f in fields if not f.is_ptr and f.arr is None}
     has_count = bool(scalar_names & _COUNT_FIELD_NAMES)
     body, defaults, dropped, lifted = [], [], [], []
     for f in fields:
+        # KEYSTONE (tagged-union DOM): an INLINE C union field (parson's
+        # `JSON_Value_Value value;`) is lifted to a flattened safe sub-struct — one
+        # field per union member — instead of being dropped. The Rust access path
+        # `v.value.number` then matches the C `v->value.number` exactly, so a
+        # tagged-union library's constructors / scalar getters can verify byte-exact.
+        if not f.is_ptr and f.arr is None and f.ctype in union_structs:
+            sub = union_structs[f.ctype]
+            fname = _safe_field_name(f.name)
+            body.append(f"    pub {fname}: {sub},")
+            defaults.append(f"{fname}: {sub}::default()")
+            lifted.append(f"{f.name} -> {sub} (C union flattened to safe struct)")
+            continue
         if f.is_ptr:
             # Self-references are fine: Box breaks the infinite-size cycle.
             rust_pointee = c_to_rust.get(_pointee_c_name(f))
@@ -465,6 +525,11 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     structs = structs_in_dir(c_source_dir)
     if not structs:
         return 0
+    # Tagged-union DOM keystone: map each C union type -> its Rust flattened-struct
+    # name so an inline union field (parson's `JSON_Value_Value value;`) is carried
+    # instead of dropped. Keyed by both alias and tag (collect_union_typedefs).
+    unions = collect_union_typedefs(c_source_dir)
+    union_rust = {ut: rust_struct_name(ut) for ut in unions}
     sigs = {s.name: s for s in collect_subject_signatures(c_source_dir)}
     struct_ptr = re.compile(r"^(?:struct\s+)?([A-Za-z_]\w*)\s*\*$")
 
@@ -560,6 +625,8 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
     c_to_rust = dict(canon_of_c)
     for cn in structs:
         c_to_rust.setdefault(cn, rust_struct_name(cn))
+    for ut, rn in union_rust.items():
+        c_to_rust.setdefault(ut, rn)
 
     def _referenced_struct_pointees(fields) -> list:
         """C struct names a struct's POINTER fields point at (that are themselves carried
@@ -596,10 +663,19 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
                 canon = canon_of_c.get(cr)
                 if canon and (canon[0].isalpha() or canon[0] == "_"):
                     want.setdefault(canon, (cr, structs[cr]))
-        # transitive closure over owned pointer fields
+        # transitive closure over owned pointer fields AND inline union fields.
         queue = list(want.values())
         while queue:
             _cn, _fields = queue.pop()
+            # An inline union field pulls in the union's flattened sub-struct (which
+            # must be emitted so the parent struct's `value: JsonValueValue` resolves),
+            # and the union's own member fields feed the pointer closure below.
+            for f in _fields:
+                if not f.is_ptr and f.arr is None and f.ctype in unions:
+                    urn = union_rust[f.ctype]
+                    if urn not in want and (urn[0].isalpha() or urn[0] == "_"):
+                        want[urn] = (f.ctype, unions[f.ctype])
+                        queue.append((f.ctype, unions[f.ctype]))
             for p in _referenced_struct_pointees(_fields):
                 rn = c_to_rust.get(p)
                 if rn and rn not in want and (rn[0].isalpha() or rn[0] == "_"):
@@ -608,7 +684,8 @@ def inject_state_shared_types(c_source_dir, specs) -> int:
         for rust_name, (cn, fields) in want.items():
             if rust_name in present:
                 continue
-            definition = emit_safe_struct(rust_name, fields, c_to_rust=c_to_rust)
+            definition = emit_safe_struct(rust_name, fields, c_to_rust=c_to_rust,
+                                          union_structs=union_rust)
             if definition is None:
                 continue
             module.shared_types = list(getattr(module, "shared_types", None) or []) + [
