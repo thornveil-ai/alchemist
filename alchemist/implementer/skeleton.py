@@ -488,6 +488,7 @@ def _module_rs_for(
     module: ModuleSpec,
     import_alias: dict[str, str],
     dep_crate_names: list[str] | None = None,
+    no_std: bool = False,
 ) -> str:
     """Produce src/<module>.rs content: shared types + fn stubs."""
     lines: list[str] = []
@@ -508,6 +509,19 @@ def _module_rs_for(
     # Crate-internal imports — allow module files to see items defined in lib.rs
     # (error enums, re-exported types from other modules)
     lines.append("use crate::*;")
+    # no_std: bring the alloc collection types into module scope so BARE `Box`/
+    # `Vec`/`String` resolve in fn signatures (e.g. parson's
+    # `json_value_init_null() -> Option<Box<JsonValue>>`), struct fields, AND the
+    # bodies the model naturally writes. The crate root's `extern crate alloc;`
+    # makes the `alloc::` path resolvable from any module; its own `use alloc::*`
+    # lines are private and do NOT propagate through `use crate::*`, which is why
+    # a no_std module returning `Box`/`Vec` failed with E0425. Guarded by no_std
+    # (in a std crate these are in the prelude and there is no `alloc` crate);
+    # unused ones are silenced by the module's `#![allow(unused_imports)]`.
+    if no_std:
+        lines.append("use alloc::boxed::Box;")
+        lines.append("use alloc::vec::Vec;")
+        lines.append("use alloc::string::String;")
     lines.append("")
     # Bring sibling module types into scope where configured
     for import_path, alias in import_alias.items():
@@ -612,6 +626,8 @@ def _lib_rs_for(
     all_error_types: list[ErrorType] | None = None,
     state_wrappers: list | None = None,
     builders: list | None = None,
+    crate_defined_types: set[str] | None = None,
+    sig_referenced_types: set[str] | None = None,
 ) -> str:
     lines: list[str] = []
     # Structural no-unsafe proof: every Alchemist-generated crate forbids
@@ -717,23 +733,45 @@ def _lib_rs_for(
     # placeholder for any error type a trait references but that isn't defined here
     # or imported, so the skeleton compiles and the fill loop can run.
     rendered = "\n".join(lines)
+    # Everything DEFINED here or re-exported into scope: error/trait names, every
+    # ident declared in the rendered lib.rs (error enums, state wrappers, builders,
+    # traits, prior placeholders), the crate's own module shared types, plus Rust
+    # primitives / std / core / alloc containers. Anything a signature references
+    # that is NOT in this set is undefined and would break the compile.
     defined = {e.name for e in errors} | {t.name for t in traits}
+    defined |= set(re.findall(r"\b(?:struct|enum|type|trait|union)\s+([A-Za-z_]\w*)", rendered))
+    defined |= (crate_defined_types or set())
+    _KNOWN = {
+        "Self", "Vec", "String", "Box", "Option", "Result", "Ok", "Err", "Some",
+        "None", "HashMap", "BTreeMap", "BTreeSet", "HashSet", "Cow", "Rc", "Arc",
+        "Cell", "RefCell", "Ordering", "PhantomData", "Range", "Wrapping",
+        "Debug", "Clone", "Copy", "Default", "PartialEq", "Eq", "Hash", "Display",
+        "T", "U", "V", "E", "K", "S", "N",
+    }
     referenced: set[str] = set()
-    _NOT_ERR = {"Self", "Vec", "String", "Box", "Option", "Result", "Ok", "Err",
-                "Some", "None", "HashMap", "BTreeMap", "Cow"}
     for t in traits:
         for m in t.methods:
             # The error type is the uppercase identifier ending a `Result<…, X>`.
             # Match `, X>` so nested generics (`Result<Vec<u8>, DecodeError>`) work.
             for em in re.finditer(r",\s*([A-Z][A-Za-z0-9_]*)\s*>", m.signature or ""):
-                if em.group(1) not in _NOT_ERR:
-                    referenced.add(em.group(1))
-    for et in sorted(referenced - defined):
-        # Skip types that are already imported / re-exported into scope above.
-        if re.search(rf"\buse\b[^\n;]*\b{re.escape(et)}\b", rendered) or \
-                re.search(rf"\bpub\s+use\b[^\n;]*::\*", rendered):
+                referenced.add(em.group(1))
+    # Types referenced by module FUNCTION signatures. Only trust the broad scan
+    # when this crate has NO dependency crates: a dep crate's glob re-export
+    # (`use foo_types::*;`) can supply a type we don't see, so emitting a
+    # placeholder for it would DUPLICATE-define and break the compile. With deps,
+    # fall back to the trait-only error-position heuristic (prior behaviour).
+    if not (dep_crate_names or []):
+        referenced |= (sig_referenced_types or set())
+    undefined = sorted((referenced - defined) - _KNOWN)
+    has_dep_glob = bool(dep_crate_names)
+    for et in undefined:
+        # A dep-crate glob may bring the type in — skip only in that case.
+        if has_dep_glob and (
+            re.search(rf"\buse\b[^\n;]*\b{re.escape(et)}\b", rendered)
+            or re.search(r"\buse\s+(?!crate\b|self\b|super\b)[A-Za-z_]\w*::\*", rendered)
+        ):
             continue
-        lines.append(f"/// Placeholder error (referenced by a trait, not otherwise defined).")
+        lines.append(f"/// Placeholder type (referenced by a signature, not otherwise defined).")
         lines.append(f"#[derive(Debug, Clone, PartialEq, Eq)]")
         lines.append(f"pub struct {et};")
         lines.append(f"impl core::fmt::Display for {et} {{")
@@ -778,6 +816,32 @@ def generate_crate_skeleton(
     modules = [m for m in module_specs if m.name in set(crate_spec.modules)]
     module_names = [m.name for m in modules]
 
+    # Types this crate's modules DEFINE (shared-type names + the idents actually
+    # declared in their rust_definition), and every Capitalized type ident this
+    # crate's module FUNCTION signatures REFERENCE. The extractor sometimes
+    # idiomatizes a `JSON_Status` return into `Result<(), SerializationError>` and
+    # invents the error type without defining it (parson: SerializationError,
+    # ValidationError) -> an undefined type breaks the WHOLE module compile ->
+    # 0 functions fill. _lib_rs_for emits a placeholder for the undefined ones so
+    # the skeleton compiles and those fns honestly refuse (fail-closed).
+    crate_defined_types: set[str] = set()
+    sig_referenced_types: set[str] = set()
+    for m in modules:
+        for t in (m.shared_types or []):
+            if getattr(t, "name", None):
+                crate_defined_types.add(t.name)
+            for dm in re.finditer(r"\b(?:struct|enum|type|union)\s+([A-Za-z_]\w*)",
+                                  getattr(t, "rust_definition", "") or ""):
+                crate_defined_types.add(dm.group(1))
+        for alg in (getattr(m, "algorithms", None) or []):
+            sig_strs = [_sanitize_rust_type(p.rust_type or "") for p in (alg.inputs or [])]
+            sig_strs += [_sanitize_rust_type(p.rust_type or "")
+                         for p in (getattr(alg, "outputs", None) or [])]
+            sig_strs.append(_sanitize_rust_type((alg.return_type or "").strip() or "()"))
+            for s in sig_strs:
+                for tm in re.finditer(r"[A-Z][A-Za-z0-9_]*", s):
+                    sig_referenced_types.add(tm.group(0))
+
     # src/lib.rs
     lib_path = crate_dir / "src" / "lib.rs"
     lib_path.write_text(
@@ -787,6 +851,8 @@ def generate_crate_skeleton(
             all_error_types=list(architecture.error_types),
             state_wrappers=list(getattr(architecture, "state_wrappers", []) or []),
             builders=list(getattr(architecture, "builders", []) or []),
+            crate_defined_types=crate_defined_types,
+            sig_referenced_types=sig_referenced_types,
         ),
         encoding="utf-8",
     )
@@ -797,6 +863,7 @@ def generate_crate_skeleton(
         mod_path = crate_dir / "src" / f"{m.name}.rs"
         new_content = _module_rs_for(
             m, {}, dep_crate_names=list(crate_spec.dependencies),
+            no_std=crate_spec.is_no_std,
         )
         # Phase 0 Bug #5: skeleton idempotency.
         # If the file exists with IDENTICAL content, skip the write. This
