@@ -126,6 +126,18 @@ single function and must produce ONLY the Rust source for that one function
   3. No markdown fences. No explanation. Return ONLY valid Rust.
   4. Match the exact function signature from the spec.
   5. Assume `extern crate alloc;` is in scope when the crate is `no_std`.
+  6. Index slices/arrays with `usize`. C indices are `int`/`size_t`; in Rust an
+     index expression of type u32/i32/u64/i64 is a type error. Cast at the
+     bracket: `arr[i as usize]`, or declare the counter `let i: usize`.
+  7. Avoid the borrow checker up front: to write one field of a struct while
+     reading another, FIRST copy every value you read into local variables
+     (`let s0 = ctx.state[0]; ...`), THEN do the writes using those locals.
+     Never hold an immutable borrow of the struct (`&ctx.field`) across a
+     mutation of the same struct. This prevents E0502.
+  8. C integer math wraps on overflow; Rust `+`/`*`/`<<` panic in debug. For
+     values that overflow BY DESIGN (hashes, checksums, mixing), use
+     `wrapping_add`/`wrapping_mul`/`wrapping_shl`/`rotate_left` so the result
+     matches C bit-for-bit.
 """
 
 _IMPL_PROMPT = """Implement this single Rust function. Do NOT stub, simulate, or
