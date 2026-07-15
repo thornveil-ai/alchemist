@@ -1180,14 +1180,32 @@ class TDDGenerator:
             for v in _plain
         ]
         if _rust_body:
-            _lines.append(
-                f"- ({len(_rust_body)} differential tests compiled against the "
-                "C reference verify this function byte-for-byte; write the "
-                "faithful algorithm and they will pass)"
-            )
+            # Inline the SHORT, single-line rust_body assertions (str_lookup string
+            # tables, scalar checks) so the model COPIES the known expected outputs
+            # instead of GUESSING them from memory. This was the load-bearing scaffolding
+            # bug: http_method_str's exact GET/POST/... table lives in these vectors, but
+            # they were summarized away, so the model had to reproduce a library's string
+            # table from memory against a hidden oracle — impossible for ANY model. Long
+            # multi-line rust_body test functions (tree-builders) stay SUMMARIZED to avoid
+            # the context overflow that originally motivated dropping them.
+            _short = [(v.expected_output or "").strip() for v in _rust_body
+                      if "\n" not in (v.expected_output or "")
+                      and len(v.expected_output or "") <= 200]
+            if _short:
+                _lines.append(
+                    "- These EXACT differential assertions MUST ALL pass — reproduce "
+                    "these outputs precisely; copy the literal values, do not guess:")
+                _lines.extend(f"    {s}" for s in _short)
+            _long = len(_rust_body) - len(_short)
+            if _long:
+                _lines.append(
+                    f"- (+{_long} further differential tests verify this function "
+                    "byte-for-byte; write the faithful algorithm and they will pass)")
         tvecs = "\n".join(_lines) or "(no extracted vectors — ensure the implementation matches the referenced standards)"
-        if len(tvecs) > 6000:
-            tvecs = tvecs[:6000] + "\n- … (further vectors omitted)"
+        if len(tvecs) > 9000:  # raised from 6000 so a full lookup table (e.g. ~60 HTTP
+            # status strings) isn't truncated mid-table — losing entries = the model
+            # guesses the rest, defeating the whole point of inlining them.
+            tvecs = tvecs[:9000] + "\n- … (further vectors omitted)"
         # Standards catalog vectors (authoritative)
         catalog = lookup_test_vectors(alg.name) or []
         catalog_vec_text = "\n".join(
