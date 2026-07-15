@@ -272,6 +272,13 @@ class AlchemistLLM:
         # Reasoning-parser backends put output in 'reasoning' when thinking,
         # and 'content' may be null. Grab whichever has data.
         content = msg.get("content") or msg.get("reasoning") or ""
+        # Reasoning models (Nemotron 3 Super, gpt-oss, ...) leak the chain of thought into
+        # `content`, usually WITHOUT an opening <think> (the chat template supplies it), so
+        # only a trailing </think> survives. Keep everything after the last </think> and
+        # strip any paired tags — model-agnostic, a no-op for non-reasoning backends.
+        if content and "</think>" in content:
+            content = content.rsplit("</think>", 1)[-1]
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         usage = data.get("usage", {})
 
         self._total_input_tokens += usage.get("prompt_tokens", 0)
@@ -399,6 +406,12 @@ class AlchemistLLM:
 
         # Strip thinking tags if present (reasoning models emit <think>...</think>)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        # Reasoning models (Nemotron 3 Super, gpt-oss, ...) frequently emit the chain of
+        # thought WITHOUT an opening <think> — the chat template supplies it — so only a
+        # trailing </think> survives above. The real answer/JSON is everything AFTER the
+        # last </think>. Model-agnostic: a no-op when there is no </think>.
+        if "</think>" in text:
+            text = text.rsplit("</think>", 1)[-1].strip()
 
         # Try direct parse
         try:
