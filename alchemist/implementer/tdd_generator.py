@@ -202,6 +202,50 @@ declarations, no markdown, no explanation.
 # TDD generator
 # ---------------------------------------------------------------------------
 
+def _repair_skeleton_undefined_types(output_dir: Path, stderr: str, *, rounds: int = 3):
+    """Deterministic skeleton compile-repair gate (P1.5 flakiness fix).
+
+    The MODEL designs the crate/trait/error-type architecture, and does so
+    NON-DETERMINISTICALLY: it routinely references TYPES it never defines ("cannot find
+    type X" — in an error-enum variant like `UrlError(UrlParseError)`, a trait signature,
+    a builder, anywhere). A DIFFERENT set of invented types appears on each run, so patching
+    the emitters one error-site at a time never converges, and a single undefined type
+    aborts the whole run at 0/0. This gate parses the compiler's "cannot find type X"
+    diagnostics, injects a `pub struct X;` placeholder into the erroring crate's lib.rs, and
+    re-checks — up to `rounds` times. Placeholders make the crate compile; any function that
+    actually depends on an invented type fails its differential and is honestly refused
+    (fail-closed). Returns (ok, final_stderr). Fixes the CLASS, wherever it appears."""
+    out = Path(output_dir)
+    _DEF = re.compile(r"\b(?:struct|enum|type|trait|union)\s+{}\b")
+    for _ in range(rounds):
+        by_lib: dict[Path, set[str]] = {}
+        for m in re.finditer(
+                r"cannot find type `([A-Za-z_]\w*)`[^\n]*\n\s*-->\s*([^\s:]+):", stderr):
+            tname, relpath = m.group(1), m.group(2).strip()
+            by_lib.setdefault(out / relpath, set()).add(tname)
+        if not by_lib:
+            return False, stderr  # errors we don't know how to repair deterministically
+        changed = False
+        for lib, names in by_lib.items():
+            if not lib.exists():
+                continue
+            txt = lib.read_text(encoding="utf-8")
+            add = [f"#[derive(Debug, Clone, PartialEq, Eq)]\npub struct {n};"
+                   for n in sorted(names)
+                   if not re.search(_DEF.pattern.format(re.escape(n)), txt)]
+            if add:
+                lib.write_text(
+                    txt + "\n\n// --- skeleton-repair: placeholders for architect-invented "
+                    "types (fail-closed) ---\n" + "\n".join(add) + "\n", encoding="utf-8")
+                changed = True
+        if not changed:
+            return False, stderr
+        ok, stderr = _run_cargo_check(out, timeout=300)
+        if ok:
+            return True, stderr
+    return False, stderr
+
+
 class TDDGenerator:
     def __init__(
         self,
@@ -270,9 +314,22 @@ class TDDGenerator:
         skel = generate_workspace_skeleton(specs, architecture, output_dir, cargo_check=True)
         result.skeleton = skel
         if not skel.ok:
-            console.print(f"[red]skeleton failed to compile:\n{skel.workspace_stderr[:2000]}[/red]")
-            result.workspace_compiles = False
-            return result
+            # Skeleton compile-repair gate: the architect is non-deterministic and often
+            # references invented types it never defines. Rather than abort the whole run
+            # (0/0), inject placeholders for those undefined types and re-check. This is the
+            # durable fix for the run-to-run flakiness (per-error emitter patches don't
+            # converge). If repair fails, fall through to the honest abort below.
+            _rep_ok, _rep_stderr = _repair_skeleton_undefined_types(
+                output_dir, skel.workspace_stderr)
+            if _rep_ok:
+                console.print("[green]skeleton-repair: injected placeholders for "
+                              "architect-invented types → skeleton now compiles[/green]")
+                skel.ok = True
+            else:
+                console.print(f"[red]skeleton failed to compile (repair insufficient):\n"
+                              f"{_rep_stderr[:2000]}[/red]")
+                result.workspace_compiles = False
+                return result
 
         # Phase B: tests (append test blocks)
         console.print("[bold cyan]TDD Phase B: test emission[/bold cyan]")
