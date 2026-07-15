@@ -850,7 +850,12 @@ class TDDGenerator:
                     alg, module_path, current, current_body or "unimplemented!()",
                     previous_failure=previous_failure, crate_dir=crate_dir,
                     test_name_prefix=test_name_prefix,
+                    escalate_thinking=(_stuck_n >= 2),
                 )
+                if _stuck_n >= 2:
+                    console.print(
+                        f"  [cyan]{alg.name}: stuck on {_stuck_sig} x{_stuck_n} "
+                        f"— 2 of {self.multi_sample_n} samples reason (iter {iteration})[/cyan]")
                 # A multi-sample win requires BOTH zero failures AND at
                 # least one passing test. Otherwise cargo's "0 passed; 0
                 # failed" success counts as a win even when no test
@@ -1500,6 +1505,7 @@ class TDDGenerator:
         previous_failure: str,
         crate_dir: Path,
         test_name_prefix: str | list[str],
+        escalate_thinking: bool = False,
     ):
         """Fan out multi_sample_n candidates, evaluate, pick best.
 
@@ -1518,6 +1524,7 @@ class TDDGenerator:
                 previous_failure=previous_failure,
                 temperature=self.multi_sample_temperature,
                 module_source=_module_src,
+                escalate_thinking=(escalate_thinking and _idx < 2),
             )
 
         def splicer(body: str) -> bool:

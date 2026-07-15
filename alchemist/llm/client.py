@@ -297,7 +297,7 @@ class AlchemistLLM:
         if force_thinking:
             # Adaptive escalation: reason through a stuck function.
             payload["chat_template_kwargs"] = {"enable_thinking": True}
-            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 20000)
+            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 28000)
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
         if err:
@@ -407,7 +407,7 @@ class AlchemistLLM:
         if force_thinking:
             # Adaptive escalation: reason through a stuck function.
             payload["chat_template_kwargs"] = {"enable_thinking": True}
-            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 20000)
+            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 28000)
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
         if err:
