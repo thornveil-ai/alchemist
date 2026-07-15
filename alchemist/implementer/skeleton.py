@@ -430,6 +430,24 @@ def emit_builder(b) -> str:
     return "\n".join(lines)
 
 
+def _trait_sig_with_sized(sig: str) -> str:
+    """A trait method that returns `Self` BY VALUE (`-> Self`, `-> Result<Self, E>`,
+    `-> Option<Self>`, …) only compiles with `where Self: Sized` — otherwise E0277 ("the
+    size for values of type `Self` cannot be known at compilation time"). Model-designed
+    traits routinely omit it (http-parser's `fn parse(..) -> Result<Self, ParseError>`
+    aborted a whole run). A BORROWED Self (`&Self`/`&mut Self`) does NOT need the bound.
+    Deterministic, so it removes one source of the architect's run-to-run flakiness."""
+    if "->" not in sig or re.search(r"\bSelf\s*:\s*Sized", sig):
+        return sig
+    ret = sig.split("->", 1)[1]
+    ret_by_value = re.sub(r"&\s*(?:mut\s+)?(?:'[A-Za-z_]\w*\s+)?Self\b", "", ret)
+    if not re.search(r"\bSelf\b", ret_by_value):
+        return sig
+    if re.search(r"\bwhere\b", sig):
+        return sig.rstrip() + ", Self: Sized"
+    return sig.rstrip() + " where Self: Sized"
+
+
 def emit_trait(tr: TraitSpec) -> str:
     lines = []
     if tr.description:
@@ -442,11 +460,11 @@ def emit_trait(tr: TraitSpec) -> str:
             for l in _wrap_for_doc(m.description):
                 lines.append(f"    /// {l}")
         if m.has_default:
-            lines.append(f"    {m.signature} {{")
+            lines.append(f"    {_trait_sig_with_sized(m.signature)} {{")
             lines.append(f'        unimplemented!("trait-default skeleton: {tr.name}::{m.name}")')
             lines.append("    }")
         else:
-            sig = m.signature.rstrip(";").rstrip()
+            sig = _trait_sig_with_sized(m.signature.rstrip(";").rstrip())
             lines.append(f"    {sig};")
     lines.append("}")
     return "\n".join(lines)

@@ -197,3 +197,22 @@ def test_mut_self_promotion_renders_with_spaced_type():
     assert traits, "expected a Hasher trait"
     sig = traits[0].methods[0].signature
     assert "&mut self" in sig, f"&mut self promotion broken: {sig!r}"
+
+
+def test_emit_trait_adds_sized_bound_for_self_returning_method():
+    # Model-designed trait returning Self by value (http-parser: fn parse(..) ->
+    # Result<Self, ParseError>) must get `where Self: Sized` or it fails E0277 and
+    # aborts the whole run. Deterministic emitter repair; borrowed Self is untouched.
+    from alchemist.implementer.skeleton import emit_trait
+    from alchemist.architect.schemas import TraitSpec, TraitMethod
+    t = TraitSpec(
+        name="Protocol", description="", crate="core",
+        methods=[
+            TraitMethod(name="parse", description="",
+                        signature="fn parse(buf: &[u8]) -> Result<Self, ParseError>"),
+            TraitMethod(name="peek", description="", signature="fn peek(&self) -> &Self"),
+        ],
+    )
+    out = emit_trait(t)
+    assert "fn parse(buf: &[u8]) -> Result<Self, ParseError> where Self: Sized;" in out
+    assert "fn peek(&self) -> &Self;" in out  # borrowed Self: no bound added
