@@ -850,7 +850,7 @@ class TDDGenerator:
                     alg, module_path, current, current_body or "unimplemented!()",
                     previous_failure=previous_failure, crate_dir=crate_dir,
                     test_name_prefix=test_name_prefix,
-                    escalate_thinking=(_stuck_n >= 2),
+                    escalate_thinking=(_stuck_n >= 2 or iteration >= 3),
                 )
                 if _stuck_n >= 2:
                     console.print(
@@ -916,7 +916,7 @@ class TDDGenerator:
                 previous_failure=previous_failure,
                 module_source=self._strip_test_module(
                     module_path.read_text(encoding="utf-8")),
-                escalate_thinking=(_stuck_n >= 2),
+                escalate_thinking=(_stuck_n >= 2 or iteration >= 3),
             )
             if _stuck_n >= 2:
                 console.print(
