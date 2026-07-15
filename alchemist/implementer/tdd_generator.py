@@ -904,6 +904,8 @@ class TDDGenerator:
 
             # Deterministic cleanup
             new_fn, _ = scrub_rust(new_fn)
+            if getattr(crate_spec, "is_no_std", False):
+                new_fn = _rewrite_std_for_no_std(new_fn)
 
             # Strip leaked module-level items (use/static/const) the LLM
             # may have emitted above the function definition.
@@ -2956,6 +2958,11 @@ _RUSTC_HINTS = {
         "E0369 (binary op on wrong type): you applied `^`/`+`/`&` to a type that "
         "doesn't support it (often a reference). Deref (`*x`) or match the integer "
         "widths on both sides."),
+    "E0433": (
+        "E0433 (cannot find `std`): this crate is `no_std`. Never use `std::`. "
+        "Use `core::` for mem/cmp/convert/ptr/slice/iter/ops/num, and `alloc::` "
+        "for Vec/String/Box/format!/collections (e.g. `core::convert::TryInto`, "
+        "`alloc::vec::Vec`). Bare `Vec`/`String`/`Box` are already in scope."),
     "E0425": (
         "E0425 (cannot find value): an identifier is out of scope — a helper "
         "const/fn the C relied on. Reference it via the carried module path, or "
@@ -2974,6 +2981,25 @@ def _rustc_error_hints(cerr: str) -> str:
         return ""
     body = "\n".join(f"- {_RUSTC_HINTS[c]}" for c in codes[:4])
     return "\n\n## How to fix these specific Rust errors\n" + body + "\n"
+
+
+# std::<x> paths that actually live in `alloc` (everything else -> `core`).
+_STD_TO_ALLOC = ("vec", "string", "boxed", "collections", "borrow", "rc", "sync")
+
+
+def _rewrite_std_for_no_std(code: str) -> str:
+    """A no_std crate has no `std`. The model naturally reaches for `std::...`
+    (E0433). This is a mechanical rewrite: alloc-owned paths -> `alloc::`, the
+    rest -> `core::`. Deterministic, so we spend no model iteration on it."""
+    import re as _re
+
+    def _repl(m):
+        head = m.group(1)
+        return ("alloc::" if head in _STD_TO_ALLOC else "core::") + head
+
+    # `std::format!`/`std::vec!` macros also live in alloc.
+    code = _re.sub(r"\bstd::(vec|format)\s*!", lambda m: "alloc::" + m.group(1) + "!", code)
+    return _re.sub(r"\bstd::([a-z_]+)", _repl, code)
 
 
 def _distill_vector_divergence(test_output: str) -> str:
