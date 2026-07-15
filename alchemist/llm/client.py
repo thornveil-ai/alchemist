@@ -244,6 +244,7 @@ class AlchemistLLM:
         system_prompt: str = "",
         max_tokens: int = 8192,
         temperature: float = 0.0,
+        force_thinking: bool = False,
         **kwargs,
     ) -> LLMResponse:
         """Make an LLM call to the local vLLM server.
@@ -293,6 +294,10 @@ class AlchemistLLM:
             "temperature": temperature,
             **_rextra,
         }
+        if force_thinking:
+            # Adaptive escalation: reason through a stuck function.
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
+            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 20000)
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
         if err:
@@ -340,6 +345,7 @@ class AlchemistLLM:
         cached_context: CachedContext | None = None,
         max_tokens: int = 8192,
         temperature: float = 0.0,
+        force_thinking: bool = False,
         **kwargs,
     ) -> LLMResponse:
         """Make an LLM call that returns structured JSON.
@@ -398,6 +404,10 @@ class AlchemistLLM:
             "temperature": temperature,
             **_rextra,
         }
+        if force_thinking:
+            # Adaptive escalation: reason through a stuck function.
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
+            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 20000)
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
         if err:

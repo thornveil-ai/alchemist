@@ -701,6 +701,8 @@ class TDDGenerator:
         test_name_prefix = _test_filters_for_fn(alg.name)
         fallback_test = f"smoke_{alg.name}"
         previous_failure = ""  # carries test output into next iteration prompt
+        _stuck_sig = None  # last failure signature (error code / 'DIFF')
+        _stuck_n = 0       # consecutive iters stuck on that signature
 
         # Fast path: deterministic template for init/reset functions.
         # These fail LLM generation consistently — bypass the loop.
@@ -909,7 +911,12 @@ class TDDGenerator:
                 previous_failure=previous_failure,
                 module_source=self._strip_test_module(
                     module_path.read_text(encoding="utf-8")),
+                escalate_thinking=(_stuck_n >= 2),
             )
+            if _stuck_n >= 2:
+                console.print(
+                    f"  [cyan]{alg.name}: stuck on {_stuck_sig} x{_stuck_n} "
+                    f"— escalating to reasoning (iter {iteration})[/cyan]")
             if not new_fn:
                 attempt.last_error = "LLM returned empty"
                 continue
@@ -1034,6 +1041,10 @@ class TDDGenerator:
                     f"import paths, and type mismatches."
                     + _rustc_error_hints(cerr)
                 )
+                _cf_codes = _RUSTC_HINT_RE.findall(cerr)
+                _sig = "C:" + (_cf_codes[0] if _cf_codes else "?")
+                _stuck_n = _stuck_n + 1 if _sig == _stuck_sig else 1
+                _stuck_sig = _sig
                 console.print(f"  [yellow]{alg.name}: compile failed, reverting (iter {iteration})[/yellow]")
                 # After iter 1's compile failure, synthesize a reference from
                 # the C source and make it available for iter 2+. The probe
@@ -1127,6 +1138,8 @@ class TDDGenerator:
                 f"Most likely causes: off-by-one, wrong initial state, "
                 f"wrong constant, incorrect bit ordering."
             )
+            _stuck_n = _stuck_n + 1 if _stuck_sig == "DIFF" else 1
+            _stuck_sig = "DIFF"
             console.print(f"  [yellow]{alg.name}: tests failed on iter {iteration}[/yellow]")
 
             # Escalate to holistic
@@ -1243,6 +1256,7 @@ class TDDGenerator:
         previous_failure: str = "",
         temperature: float = 0.15,
         module_source: str | None = None,
+        escalate_thinking: bool = False,
     ) -> str | None:
         # P0.13: greedy decode in deterministic-replay mode.
         if getattr(self, "_deterministic", False):
@@ -1452,6 +1466,7 @@ class TDDGenerator:
             cached_context=self._cached_ctx,
             max_tokens=6000,
             temperature=temperature,
+            force_thinking=escalate_thinking,
         )
         # Hard gate: if the LLM call failed (503, timeout, etc.), return None
         # so the caller SKIPS splicing. Without this, the error text was being
