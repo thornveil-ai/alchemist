@@ -201,6 +201,42 @@ class AlchemistLLM:
                 return None, last_err
         return None, last_err
 
+    def _reasoning_overrides(self, max_tokens: int, temperature: float):
+        """Env-driven sampling overrides so a reasoning model (which spends
+        output tokens on chain-of-thought before the answer) is not truncated
+        or run at a temperature its vendor discourages. Model-agnostic: unset
+        env == original behavior, so non-reasoning models are unaffected.
+          ALCHEMIST_MAX_TOKENS_FLOOR  raise max_tokens to at least this value
+          ALCHEMIST_TEMPERATURE       override sampling temperature
+          ALCHEMIST_TOP_P             set top_p (added to the payload if present)
+        """
+        extra: dict[str, Any] = {}
+        floor = os.getenv("ALCHEMIST_MAX_TOKENS_FLOOR")
+        if floor:
+            try:
+                max_tokens = max(max_tokens, int(floor))
+            except ValueError:
+                pass
+        temp = os.getenv("ALCHEMIST_TEMPERATURE")
+        if temp:
+            try:
+                temperature = float(temp)
+            except ValueError:
+                pass
+        top_p = os.getenv("ALCHEMIST_TOP_P")
+        if top_p:
+            try:
+                extra["top_p"] = float(top_p)
+            except ValueError:
+                pass
+        # Disable a reasoning model's chain-of-thought at the chat-template
+        # level (e.g. Nemotron: enable_thinking=False). Direct-answer mode is
+        # what an iterative code converter wants: fast, no </think> extraction,
+        # no token budget lost to reasoning. Unset env == untouched.
+        if os.getenv("ALCHEMIST_DISABLE_THINKING"):
+            extra["chat_template_kwargs"] = {"enable_thinking": False}
+        return max_tokens, temperature, extra
+
     def call(
         self,
         messages: list[dict],
@@ -249,11 +285,13 @@ class AlchemistLLM:
             messages_with_nonce.append(m_copy)
         full_messages.extend(messages_with_nonce)
 
+        max_tokens, temperature, _rextra = self._reasoning_overrides(max_tokens, temperature)
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": full_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            **_rextra,
         }
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
@@ -352,11 +390,13 @@ class AlchemistLLM:
                 nonce_injected = True
             full_messages.append(m_copy)
 
+        max_tokens, temperature, _rextra = self._reasoning_overrides(max_tokens, temperature)
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": full_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            **_rextra,
         }
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
