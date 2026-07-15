@@ -213,6 +213,7 @@ class TDDGenerator:
         multi_sample_after: int = 2,
         multi_sample_n: int = 6,
         multi_sample_temperature: float = 0.35,
+        per_fn_budget_s: float = 900.0,
     ):
         self.config = config or AlchemistConfig()
         self.llm = llm or AlchemistLLM(self.config)
@@ -221,6 +222,15 @@ class TDDGenerator:
         self.multi_sample_after = multi_sample_after
         self.multi_sample_n = multi_sample_n
         self.multi_sample_temperature = multi_sample_temperature
+        # Per-function WALL-CLOCK budget. The fill loop was iteration-bounded only (5
+        # iters × 6-way multi-sample × holistic ×3 = ~35–40 model calls), with NO time
+        # cap — so a single hard function (parse_url_char's goto state machine) could
+        # grind ~20 min, and a handful of them made a whole http-parser run take ~90 min.
+        # A wall-clock cap lets easy functions pass fast and bounds the hard ones to an
+        # honest refusal, keeping runs (and experiments/model-A-Bs) tractable. Env-tunable.
+        import os as _os0
+        self.per_fn_budget_s = float(
+            _os0.environ.get("ALCHEMIST_PER_FN_BUDGET_S", per_fn_budget_s))
         # P0.13 deterministic replay: with ALCHEMIST_DETERMINISTIC set, decode
         # greedily everywhere (temp 0) and collapse the multi-sample fan-out to a
         # single greedy sample, so the same subject + fixed fuzz seed reproduces
@@ -747,7 +757,17 @@ class TDDGenerator:
         # would defeat the arity guard — it would end up comparing the drifted signature
         # against itself. The pre-generated differential tests are built for THIS arity.
         _orig_arity = len(alg.inputs or [])
+        import time as _time
+        _fn_deadline = _time.monotonic() + self.per_fn_budget_s
         for iteration in range(1, self.max_iter_per_fn + 1):
+            # Wall-clock budget: a hard function that keeps failing must not grind the
+            # whole run. Once over budget, stop iterating and let it refuse (fail-closed).
+            if iteration > 1 and _time.monotonic() > _fn_deadline:
+                console.print(
+                    f"  [yellow]{alg.name}: per-function budget "
+                    f"({self.per_fn_budget_s:.0f}s) exceeded at iter {iteration} — "
+                    f"stopping fill; honest refusal[/yellow]")
+                break
             attempt.iterations = iteration
             current = module_path.read_text(encoding="utf-8")
             current_body = self._extract_fn_body(current, alg.name)
