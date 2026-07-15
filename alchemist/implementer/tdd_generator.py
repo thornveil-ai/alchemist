@@ -1018,6 +1018,7 @@ class TDDGenerator:
                     f"correct only those. Keep the overall algorithm the same. "
                     f"Pay special attention to: field names on struct params, "
                     f"import paths, and type mismatches."
+                    + _rustc_error_hints(cerr)
                 )
                 console.print(f"  [yellow]{alg.name}: compile failed, reverting (iter {iteration})[/yellow]")
                 # After iter 1's compile failure, synthesize a reference from
@@ -2918,6 +2919,61 @@ def _failure_pattern(test_output: str) -> str:
             "single late byte. Suspect wrong initial state / output encoding / "
             "finalization, not a mid-stream step.")
     return "\n".join(lines) + "\n\n"
+
+
+_RUSTC_HINT_RE = __import__("re").compile(r"error\[(E\d{4})\]")
+
+_RUSTC_HINTS = {
+    "E0502": (
+        "E0502 (borrow conflict): you hold an immutable borrow of a value while "
+        "also borrowing it mutably. C reads `ctx->state[i]` while freely writing "
+        "other fields; Rust forbids that aliasing. Fix STRUCTURALLY: copy the "
+        "values you read into local variables FIRST (e.g. `let a = ctx.state[0];` "
+        "... for all reads), then do the mutation using those locals. Do not hold "
+        "`&ctx.field` across a `&mut ctx` use. Prefer indexing/local copies over "
+        "long-lived references."),
+    "E0499": (
+        "E0499 (two mutable borrows): you took `&mut` of the same value twice at "
+        "once. Split the work so only one mutable borrow is live at a time, or "
+        "use `split_at_mut`/indices to disjointly borrow different slice regions."),
+    "E0382": (
+        "E0382 (use after move): you moved a value then used it again. Borrow "
+        "(`&x`) or `.clone()` instead of moving, or restructure so the value is "
+        "used once. Arrays/ints are Copy — this usually means a Vec/String moved."),
+    "E0308": (
+        "E0308 (type mismatch): the error shows `expected X, found Y`. Convert "
+        "explicitly — `as` for numeric casts, `.into()`/`u32::from(..)` for widening, "
+        "`&x[..]` for slices, `.to_vec()`/`.as_slice()` for Vec<->slice. Do NOT "
+        "change the function signature; fix the expression to match the expected type."),
+    "E0384": (
+        "E0384 (assign to immutable): add `mut` to the binding you reassign "
+        "(`let mut v = ...`)."),
+    "E0277": (
+        "E0277 (trait bound not satisfied): the type lacks a required trait. For "
+        "array/Vec indexing use `usize`; for `?` the error type must convert; a "
+        "value returned by-value from a trait method needs `Sized`."),
+    "E0369": (
+        "E0369 (binary op on wrong type): you applied `^`/`+`/`&` to a type that "
+        "doesn't support it (often a reference). Deref (`*x`) or match the integer "
+        "widths on both sides."),
+    "E0425": (
+        "E0425 (cannot find value): an identifier is out of scope — a helper "
+        "const/fn the C relied on. Reference it via the carried module path, or "
+        "inline the constant."),
+}
+
+
+def _rustc_error_hints(cerr: str) -> str:
+    """Map the rustc error codes present in `cerr` to their canonical structural
+    fix. Returns '' when no known code is present (never invents advice)."""
+    codes = []
+    for c in _RUSTC_HINT_RE.findall(cerr or ""):
+        if c in _RUSTC_HINTS and c not in codes:
+            codes.append(c)
+    if not codes:
+        return ""
+    body = "\n".join(f"- {_RUSTC_HINTS[c]}" for c in codes[:4])
+    return "\n\n## How to fix these specific Rust errors\n" + body + "\n"
 
 
 def _distill_vector_divergence(test_output: str) -> str:
