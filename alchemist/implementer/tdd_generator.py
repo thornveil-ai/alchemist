@@ -2867,6 +2867,59 @@ _ASSERT_LR_RE = re.compile(
     r"left:\s*(\[[^\]]*\])\s*(?:\n|\r\n)?\s*right:\s*(\[[^\]]*\])", re.MULTILINE)
 
 
+# Label-carrying variant: cargo prints the assert message (our fuzz label, e.g.
+# "fuzz_input_len_0") on the "failed:" line just above left/right. Capturing it
+# lets us report the FAILURE PATTERN across all vectors, not just the first one.
+_ASSERT_LR_LABEL_RE = re.compile(
+    r"failed:\s*([A-Za-z0-9_]+)[\s\S]{0,160}?left:\s*(\[[^\]]*\])\s*(?:\n|\r\n)?\s*right:\s*(\[[^\]]*\])",
+    re.MULTILINE)
+
+
+def _failure_pattern(test_output: str) -> str:
+    """Aggregate divergence across ALL failing vectors into a pattern hint.
+    One failing vector says 'wrong'; the PATTERN says WHERE to look. For a
+    byte-exact hash/codec the highest-signal fact is whether the smallest/empty
+    input already fails (=> init/constants/finalization bug, not input handling).
+    General across every differential shape; '' when it cannot add signal."""
+    def _ints(a):
+        try:
+            return [int(x.strip()) for x in a.strip("[]").split(",") if x.strip() != ""]
+        except ValueError:
+            return None
+    rows = []
+    for lab, l, r in _ASSERT_LR_LABEL_RE.findall(test_output or ""):
+        got, want = _ints(l), _ints(r)
+        if got is None or want is None:
+            continue
+        ml = re.search(r"(\d+)\s*$", lab)
+        ilen = int(ml.group(1)) if ml else None
+        n = min(len(got), len(want))
+        idx = next((i for i in range(n) if got[i] != want[i]),
+                   n if len(got) != len(want) else -1)
+        rows.append((ilen, idx))
+    if len(rows) < 2:
+        return ""
+    lines = ["## Failure pattern across %d failing vectors" % len(rows)]
+    ilens = sorted({r[0] for r in rows if r[0] is not None})
+    if ilens:
+        lines.append("- failing input byte-lengths: %s" % (ilens[:12],))
+        if ilens[0] == 0:
+            lines.append(
+                "- The EMPTY (zero-length) input ALREADY fails. This rules OUT "
+                "input processing, the main loop, and tail-byte handling - the bug "
+                "is in INITIALIZATION, the constants, key mixing, or FINALIZATION "
+                "(the path that runs even with no input). Check those first.")
+        else:
+            lines.append("- smallest failing input is %d byte(s)." % ilens[0])
+    idxs = [r[1] for r in rows if r[1] >= 0]
+    if idxs and all(i == 0 for i in idxs):
+        lines.append(
+            "- EVERY output diverges at byte 0 - the entire result is wrong, not a "
+            "single late byte. Suspect wrong initial state / output encoding / "
+            "finalization, not a mid-stream step.")
+    return "\n".join(lines) + "\n\n"
+
+
 def _distill_vector_divergence(test_output: str) -> str:
     """Turn cargo's noisy `left: [...] / right: [...]` assertion dump into a
     focused, actionable hint: the FIRST output index where the two byte vectors
@@ -2897,7 +2950,9 @@ def _distill_vector_divergence(test_output: str) -> str:
     lo = max(0, idx - 3)
     hi_g = min(len(got), idx + 5)
     hi_w = min(len(want), idx + 5)
+    _pattern = _failure_pattern(test_output)
     detail = (
+        _pattern +
         f"## First divergence at OUTPUT byte index {idx}\n"
         f"- your output length {len(got)}, expected length {len(want)}\n"
     )
