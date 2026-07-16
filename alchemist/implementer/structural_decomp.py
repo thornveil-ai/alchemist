@@ -405,6 +405,9 @@ def propose_and_verify_decomposition(
         deco.equivalence_report = report
         if ok:
             return deco
+        # Surface WHY the split was rejected (compile error vs byte divergence)
+        # so a refused decomposition is diagnosable, not silent.
+        print(f"  decomposition proposal #{attempt} rejected: {report[:200]}", flush=True)
     return None
 
 
