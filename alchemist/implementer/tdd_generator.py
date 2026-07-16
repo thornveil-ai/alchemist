@@ -2029,8 +2029,9 @@ class TDDGenerator:
                         "required": ["content"],
                     },
                     cached_context=getattr(self, "_cached_ctx", None),
-                    max_tokens=4000,
+                    max_tokens=8000,
                     temperature=0.0 if getattr(self, "_deterministic", False) else 0.2,
+                    force_thinking=True,
                 )
             except Exception:  # noqa: BLE001
                 return None
