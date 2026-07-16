@@ -34,6 +34,7 @@ has no model dependency at all and is fully unit-testable with just gcc.
 from __future__ import annotations
 
 import ctypes
+import subprocess
 import json
 import re
 from dataclasses import dataclass, field
@@ -86,7 +87,7 @@ class Decomposition:
 # Shapes this gate can fuzz today. Extend as new shapes are supported; an
 # unsupported shape means we cannot prove equivalence offline and must decline
 # (fail-closed) rather than trust an unverified split.
-_SUPPORTED_SHAPES = {"buf_transform"}
+_SUPPORTED_SHAPES = {"buf_transform", "ctx_transform"}
 
 _FUZZ_SEED = 0x5EED
 _DEFAULT_N = 400
@@ -135,6 +136,71 @@ def _call_buf_transform(fn, data: bytes) -> tuple[int, bytes]:
     return ret, outbuf.raw[:n]
 
 
+_CTX_TRANSFORM_RE = re.compile(
+    r"\bvoid\s+(\w+)\s*\(\s*(?:const\s+)?(\w+)\s*\*\s*\w+\s*,\s*"
+    r"const\s+\w+\s+(?:\*\s*\w+|\w+\s*\[\s*\d*\s*\])\s*\)", re.S)
+
+
+def classify_ctx_transform_proto(proto: str):
+    """`void NAME(CTX* ctx, const BYTE data[])` -> (fn_name, ctx_type) or None.
+    A struct-state block transform (hash compression cores)."""
+    if not proto:
+        return None
+    m = _CTX_TRANSFORM_RE.search(proto.replace("\n", " "))
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _sizeof_c_type(type_name: str, preamble: str, include_dirs, tmp: Path):
+    """Compile+run a tiny probe to get sizeof(type_name). Returns int or None."""
+    probe = tmp / "size_probe.c"
+    probe.write_text(
+        f"{preamble}\n#include <stdio.h>\n"
+        f"int main(void){{ printf(\"%zu\", sizeof({type_name})); return 0; }}\n",
+        encoding="utf-8")
+    exe = tmp / "size_probe.bin"
+    cmd = ["gcc", str(probe), "-o", str(exe)]
+    for d in (include_dirs or []):
+        cmd += ["-I", str(d)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    r2 = subprocess.run([str(exe)], capture_output=True, text=True)
+    try:
+        return int(r2.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _load_ctx_transform(dll_path: Path, fn_name: str):
+    dll = ctypes.CDLL(str(dll_path))
+    fn = getattr(dll, fn_name)
+    fn.restype = None
+    fn.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    return fn
+
+
+def _fuzz_ctx_transform(f_orig, f_deco, ctx_size: int, rng, n: int):
+    """Randomize ctx bytes + a data block, call both on identical copies, and
+    byte-compare the mutated ctx. Returns (equivalent, report)."""
+    DATA = 256  # generous; a real hash block (<=128B) is read from the front
+    for i in range(n):
+        ctx0 = bytes((next(rng) & 0xFF) for _ in range(ctx_size))
+        data = bytes((next(rng) & 0xFF) for _ in range(DATA))
+        a = (ctypes.c_ubyte * ctx_size).from_buffer_copy(ctx0)
+        b = (ctypes.c_ubyte * ctx_size).from_buffer_copy(ctx0)
+        dbuf = ctypes.create_string_buffer(data, DATA)
+        dptr = ctypes.cast(dbuf, ctypes.c_void_p)
+        f_orig(ctypes.cast(a, ctypes.c_void_p), dptr)
+        f_deco(ctypes.cast(b, ctypes.c_void_p), dptr)
+        if bytes(a) != bytes(b):
+            return False, (
+                f"DIVERGENCE on ctx input #{i}: mutated struct bytes differ\n"
+                f"  orig={bytes(a).hex()}\n  deco={bytes(b).hex()}")
+    return True, f"byte-exact over {n} fuzzed ctx states"
+
+
 def verify_c_decomposition_equivalent(
     *,
     original_c: str,
@@ -179,6 +245,23 @@ def verify_c_decomposition_equivalent(
     r2 = build_c_dll([deco_c], deco_dll, include_dirs=include_dirs)
     if not r2.success:
         return False, f"decomposition failed to compile:\n{r2.stderr[:800]}"
+
+    if shape == "ctx_transform":
+        ctx_type = None
+        _m = _CTX_TRANSFORM_RE.search(original_c.replace("\n", " "))
+        if _m:
+            ctx_type = _m.group(2)
+        if not ctx_type:
+            return False, "ctx_transform: could not identify the ctx struct type"
+        size = _sizeof_c_type(ctx_type, preamble, include_dirs, tmp)
+        if not size:
+            return False, f"ctx_transform: could not size {ctx_type!r}"
+        try:
+            f_orig = _load_ctx_transform(orig_dll, fn_name)
+            f_deco = _load_ctx_transform(deco_dll, fn_name)
+        except Exception as e:  # noqa: BLE001
+            return False, f"could not load compiled symbol {fn_name!r}: {e}"
+        return _fuzz_ctx_transform(f_orig, f_deco, size, _lcg(_FUZZ_SEED), n)
 
     try:
         f_orig = _load_buf_transform(orig_dll, fn_name)

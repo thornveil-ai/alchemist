@@ -2007,10 +2007,14 @@ class TDDGenerator:
         #     buf_transform today. Classify from the C prototype.
         from alchemist.implementer.structural_decomp import (
             _classify_shape,
+            classify_ctx_transform_proto,
             propose_and_verify_decomposition,
         )
         proto = fn_text.split("{", 1)[0].strip()
-        if _classify_shape(proto) != "buf_transform":
+        _shape = "buf_transform" if _classify_shape(proto) == "buf_transform" else None
+        if _shape is None and classify_ctx_transform_proto(proto) is not None:
+            _shape = "ctx_transform"
+        if _shape is None:
             return False
 
         # (3) Model callback for the (untrusted) split proposal.
@@ -2043,7 +2047,7 @@ class TDDGenerator:
         deco = propose_and_verify_decomposition(
             fn_source=fn_text,
             fn_name=alg.name,
-            shape="buf_transform",
+            shape=_shape,
             original_c=fn_text,
             call_llm=_call_llm,
             include_dirs=include_dirs,
