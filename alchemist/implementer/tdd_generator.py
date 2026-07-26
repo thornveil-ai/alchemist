@@ -2131,27 +2131,33 @@ class TDDGenerator:
         #     signature (its differential test is unchanged); helpers are
         #     private and verified transitively through the driver's byte-exact
         #     output.
-        rust_blob = self._translate_decomposition_to_rust(alg, deco, module_path)
-        if not rust_blob:
-            return False
-        current = module_path.read_text(encoding="utf-8")
-        replaced = self._replace_fn_in_source(current, alg.name, rust_blob)
-        if replaced is None:
-            return False
-        module_path.write_text(replaced, encoding="utf-8")
-        ok_compile, _ = _run_cargo_check(crate_dir, timeout=180)
-        if not ok_compile:
+        # Try a few translation candidates (larger budget, a diverse retry,
+        # then a reasoning pass); take the first that verifies 2x. A proven
+        # split is too valuable to discard on a single truncated translation.
+        for _dt in range(3):
+            rust_blob = self._translate_decomposition_to_rust(
+                alg, deco, module_path, attempt=_dt)
+            if not rust_blob:
+                continue
+            current = module_path.read_text(encoding="utf-8")
+            replaced = self._replace_fn_in_source(current, alg.name, rust_blob)
+            if replaced is None:
+                continue
+            module_path.write_text(replaced, encoding="utf-8")
+            ok_compile, _ = _run_cargo_check(crate_dir, timeout=180)
+            if not ok_compile:
+                module_path.write_text(current, encoding="utf-8")
+                continue
+            ok_twice, total = self._verify_cached_win_twice(
+                crate_dir, test_name_prefix)
+            if ok_twice and total > 0:
+                console.print(
+                    f"  [green]{alg.name}: DECOMPOSITION WIN — byte-exact via "
+                    f"{len(deco.helpers)}-helper split (2x, {total} tests)[/green]"
+                )
+                return True
             module_path.write_text(current, encoding="utf-8")
-            return False
-        ok_twice, total = self._verify_cached_win_twice(crate_dir, test_name_prefix)
-        if not (ok_twice and total > 0):
-            module_path.write_text(current, encoding="utf-8")
-            return False
-        console.print(
-            f"  [green]{alg.name}: DECOMPOSITION WIN — byte-exact via "
-            f"{len(deco.helpers)}-helper split (2x, {total} tests)[/green]"
-        )
-        return True
+        return False
 
     def _c_function_and_preamble(
         self, alg: AlgorithmSpec, src_root: Path,
@@ -2203,7 +2209,7 @@ class TDDGenerator:
         return None
 
     def _translate_decomposition_to_rust(
-        self, alg: AlgorithmSpec, deco, module_path: Path,
+        self, alg: AlgorithmSpec, deco, module_path: Path, attempt: int = 0,
     ) -> "str | None":
         """Prompt the model to translate a proven decomposed C unit (helpers +
         driver) into one Rust blob: private helper fns followed by the public
@@ -2231,6 +2237,11 @@ class TDDGenerator:
             f"## Driver C ({alg.name})\n```c\n{deco.driver_source}\n```\n"
         )
         try:
+            import os as _os
+            _decmax = int(_os.environ.get("ALCHEMIST_DECOMP_MAX_TOKENS", "16000"))
+            _force_think = attempt >= 2  # last candidate reasons through it
+            _temp = 0.0 if getattr(self, "_deterministic", False) else (
+                0.15 if attempt == 0 else 0.35)
             resp = self.llm.call_structured(
                 messages=[{"role": "user", "content": prompt}],
                 tool_name="impl",
@@ -2240,8 +2251,9 @@ class TDDGenerator:
                     "required": ["content"],
                 },
                 cached_context=getattr(self, "_cached_ctx", None),
-                max_tokens=6000,
-                temperature=0.0 if getattr(self, "_deterministic", False) else 0.15,
+                max_tokens=_decmax,
+                temperature=_temp,
+                force_thinking=_force_think,
             )
         except Exception:  # noqa: BLE001
             return None
