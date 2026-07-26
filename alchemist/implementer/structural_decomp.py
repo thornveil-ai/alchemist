@@ -75,9 +75,15 @@ class Decomposition:
     rationale: list[str] = field(default_factory=list)
     verified_equivalent: bool = False
     equivalence_report: str = ""
+    shared_types: str = ""  # struct/typedef defs the helpers/driver need, hoisted first
 
     def combined_c(self) -> str:
-        return "\n\n".join([h.source for h in self.helpers] + [self.driver_source])
+        parts = []
+        if self.shared_types.strip():
+            parts.append(self.shared_types.strip())
+        parts += [h.source for h in self.helpers]
+        parts.append(self.driver_source)
+        return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -415,8 +421,13 @@ it is easier to port. You are NOT translating anything yet — stay in C.
 - Extract 1-3 helper functions that capture the self-contained sub-computations
   (e.g. an inner lookup/match loop, a finalization/flush step).
 - Give each helper a FRESH name prefixed `{fn_name}__` (e.g. `{fn_name}__find`).
-- Prefer helpers whose signature is simple and pure: read a byte buffer, return
-  a small result. Helpers may recompute derived locals from their inputs.
+- Prefer helpers whose signature is simple and pure: take scalars/a buffer,
+  return a small result. Helpers may recompute derived locals from their inputs.
+- To hand SEVERAL values back to the driver (e.g. an updated remainder AND
+  quotient AND bit position), a helper may return a small `struct` — DEFINE that
+  struct in the `shared_types` field below so both versions compile. Threading
+  state through by-value structs is the intended way to split a function whose
+  phases share mutable locals.
 - Rewrite the ORIGINAL function ({fn_name}) with the SAME signature so its body
   calls the helpers. This is the "driver".
 - Do NOT change any global tables, #defines, or the observable output. The
@@ -424,7 +435,8 @@ it is easier to port. You are NOT translating anything yet — stay in C.
   input — it will be fuzz-tested against the original.
 
 ## Return JSON ONLY:
-{{"helpers": [{{"name": "...", "signature": "...", "source": "<full C fn>"}}],
+{{"shared_types": "<any struct/typedef definitions the helpers or driver need, or \"\">",
+  "helpers": [{{"name": "...", "signature": "...", "source": "<full C fn>"}}],
   "driver": "<full C source of {fn_name} calling the helpers>",
   "rationale": ["why this cut", "..."]}}
 """
@@ -465,6 +477,7 @@ def parse_decomposition_response(text: str, original_name: str) -> Decomposition
         original_name=original_name,
         helpers=helpers,
         driver_source=driver,
+        shared_types=(obj.get("shared_types") or "").strip(),
         rationale=[str(r) for r in (obj.get("rationale") or [])],
     )
 
