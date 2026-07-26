@@ -58,6 +58,7 @@ def preprocess(
     extensions: set[str] | None = None,
     timeout: int = 60,
     extra_flags: list[str] | None = None,
+    keep_only_project: bool = False,
 ) -> PreprocessResult:
     """Run gcc -E on every C file under source_dir.
 
@@ -93,8 +94,13 @@ def preprocess(
                 cmd, capture_output=True, text=True, timeout=timeout,
             )
             if proc.returncode == 0:
-                # Strip line markers (# <line> "<file>") to keep tree-sitter happy
-                clean = _strip_line_markers(proc.stdout)
+                if keep_only_project:
+                    # Keep only project content (drop system headers) via markers.
+                    clean = _filter_to_project(
+                        proc.stdout, list(include_dirs) + [source_dir])
+                else:
+                    # Strip line markers to keep tree-sitter happy.
+                    clean = _strip_line_markers(proc.stdout)
                 result.expanded[str(c_file)] = clean
             else:
                 result.errors[str(c_file)] = proc.stderr[:1000]
@@ -137,6 +143,32 @@ def _strip_line_markers(text: str) -> str:
         line for line in lines
         if not (line.startswith("# ") and '"' in line)
     )
+
+
+def _filter_to_project(text: str, project_dirs: list[Path]) -> str:
+    """Keep only expanded content that originated in a project file (under one
+    of `project_dirs`), dropping system-header content, via the `# N "FILE"`
+    line markers. Prepends bare stdint/stddef includes so standard int types
+    still resolve after the system headers are removed."""
+    import re as _re
+    roots = [str(Path(d).resolve()) for d in project_dirs]
+    marker = _re.compile(r'^#\s+\d+\s+"([^"]*)"')
+    keep: list[str] = []
+    cur_ok = False
+    for line in text.splitlines():
+        m = marker.match(line)
+        if m:
+            f = m.group(1)
+            if f.startswith("<"):
+                cur_ok = False
+            else:
+                rf = str(Path(f).resolve())
+                cur_ok = any(rf.startswith(r) for r in roots)
+            continue
+        if cur_ok:
+            keep.append(line)
+    body = "\n".join(keep)
+    return "#include <stdint.h>\n#include <stddef.h>\n" + body
 
 
 def preprocess_to_dir(
