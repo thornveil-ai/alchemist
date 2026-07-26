@@ -442,6 +442,47 @@ IDIOMS: tuple[Idiom, ...] = (
         rationale="An incomplete code table is rejected by the table builder.",
         example="Fixed distance table needs 32 length-5 codes (not 30) to be complete.",
     ),
+    Idiom(
+        id="compiler-builtin-bitcount",
+        name="GCC/Clang bit-count builtins (__builtin_clz/ctz/popcount)",
+        tags=("arithmetic", "bit-ops", "gotcha"),
+        c_signals=(
+            r"__builtin_clzll?\b", r"__builtin_clz\b",
+            r"__builtin_ctzll?\b", r"__builtin_ctz\b",
+            r"__builtin_popcount",
+        ),
+        rust_model=(
+            "Map each compiler bit-count builtin to the matching Rust integer "
+            "method on the SAME bit width, and DELETE any manual "
+            "width-normalization arithmetic around it:\n"
+            "  __builtin_clz(x)    [32-bit uint]  -> (x as u32).leading_zeros()\n"
+            "  __builtin_clzl(x)   [64-bit ulong] -> (x as u64).leading_zeros()\n"
+            "  __builtin_clzll(x)                 -> (x as u64).leading_zeros()\n"
+            "  __builtin_ctz*(x)                  -> ..trailing_zeros() (same width)\n"
+            "  __builtin_popcount*(x)             -> ..count_ones() (as i32/u32)\n"
+            "CRITICAL width idiom: C frequently calls the 64-bit __builtin_clzl "
+            "on a 32-bit value and then SUBTRACTS (8*sizeof(long) - 32) (= 32 on "
+            "LP64) to recover the 32-bit clz. In Rust write "
+            "`(v as u32).leading_zeros()` and DELETE the subtraction — never keep "
+            "both. Reproduce the exact integer the C computes, nothing more."
+        ),
+        rationale=(
+            "GCC/Clang bit-count builtins have no literal Rust spelling and C "
+            "wraps them in width-normalization arithmetic; keeping that "
+            "arithmetic on top of a same-width Rust method (or dropping the wrong "
+            "one) is a classic silent type/logic error."
+        ),
+        example=(
+            "libfixmath fix16_div: __builtin_clzl(remainder) - (8*sizeof(long)-32)"
+            " -> (remainder as u32).leading_zeros()."
+        ),
+        caution=(
+            "In C, __builtin_clz(0)/ctz(0) are UNDEFINED and the surrounding code "
+            "guarantees a nonzero argument (e.g. while (remainder && ...)); Rust's "
+            "leading_zeros()/trailing_zeros() are defined at 0 (return the width). "
+            "Keep the C guard so behavior matches on the reachable domain."
+        ),
+    ),
 )
 
 

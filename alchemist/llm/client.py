@@ -297,7 +297,12 @@ class AlchemistLLM:
         if force_thinking:
             # Adaptive escalation: reason through a stuck function.
             payload["chat_template_kwargs"] = {"enable_thinking": True}
-            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 28000)
+            # Reasoning budget must be big enough that the model finishes its
+            # chain-of-thought AND emits the function; too small truncates to an
+            # empty completion on hard functions (fix16_div). Env-tunable; keep
+            # it under the server's --max-model-len minus the prompt.
+            _think_floor = int(os.getenv("ALCHEMIST_THINKING_MAX_TOKENS", "28000"))
+            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), _think_floor)
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
         if err:
@@ -407,7 +412,12 @@ class AlchemistLLM:
         if force_thinking:
             # Adaptive escalation: reason through a stuck function.
             payload["chat_template_kwargs"] = {"enable_thinking": True}
-            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), 28000)
+            # Reasoning budget must be big enough that the model finishes its
+            # chain-of-thought AND emits the function; too small truncates to an
+            # empty completion on hard functions (fix16_div). Env-tunable; keep
+            # it under the server's --max-model-len minus the prompt.
+            _think_floor = int(os.getenv("ALCHEMIST_THINKING_MAX_TOKENS", "28000"))
+            payload["max_tokens"] = max(int(payload.get("max_tokens", 0)), _think_floor)
 
         resp, err = self._post_with_retry(payload, start, attempts=5)
         if err:
