@@ -1158,6 +1158,12 @@ class TDDGenerator:
             _stuck_n = _stuck_n + 1 if _stuck_sig == "DIFF" else 1
             _stuck_sig = "DIFF"
             console.print(f"  [yellow]{alg.name}: tests failed on iter {iteration}[/yellow]")
+            # DPO gold: this body compiled but diverged from the oracle. Log it
+            # as a near-miss negative (paired with the eventual win downstream).
+            try:
+                self._log_near_miss(alg.name, iteration, new_fn, _divergence)
+            except Exception:  # noqa: BLE001
+                pass
 
             # Escalate to holistic
             if iteration >= self.holistic_after and iteration < self.max_iter_per_fn:
@@ -1919,6 +1925,26 @@ class TDDGenerator:
                 f"```rust\n{full}\n```\n"
             )
         return ""
+
+    def _log_near_miss(self, fn_name: str, iteration: int, rust: str, divergence: str) -> None:
+        """Append a compiled-but-differential-failed Rust body to the subject's
+        near_misses.jsonl (DPO negatives, harvested downstream)."""
+        root = getattr(self, "_source_root", None)
+        if not root or not rust or "unimplemented!" in rust:
+            return
+        import json as _json
+        from pathlib import Path as _P
+        out = _P(root) / ".alchemist" / "near_misses.jsonl"
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with out.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps({
+                    "function": fn_name, "iteration": iteration,
+                    "rust": rust.strip(), "divergence": (divergence or "").strip(),
+                    "kind": "compiled_diff_fail",
+                }) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
 
     def _extract_fn_body(self, text: str, name: str) -> str | None:
         m = self._find_fn(text, name)
