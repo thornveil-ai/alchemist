@@ -89,11 +89,17 @@ def run_subject(subj: Path, timeout_s: int, collect_only: bool = False) -> dict:
     out_dir = f"/tmp/batch_out/{name}"
     t0 = time.time()
     if not collect_only:
+        # Explicit env so the translate subprocess reliably gets the drafter
+        # config. Default thinking OFF (Gemma-class models burn the token budget
+        # "thinking" and return empty content otherwise).
+        _env = os.environ.copy()
+        _env.setdefault("ALCHEMIST_DISABLE_THINKING", "1")
         try:
             subprocess.run(
                 [str(ROOT / ".venv/bin/python"), "-m", "alchemist.cli", "translate",
                  str(subj), "--output", out_dir],
-                cwd=str(ROOT), capture_output=True, text=True, timeout=timeout_s)
+                cwd=str(ROOT), capture_output=True, text=True, timeout=timeout_s,
+                env=_env)
         except subprocess.TimeoutExpired:
             return {"subject": name, "status": "timeout", "elapsed_s": round(time.time() - t0, 1)}
         except Exception as e:  # noqa: BLE001
