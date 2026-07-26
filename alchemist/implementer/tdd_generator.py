@@ -2066,12 +2066,15 @@ class TDDGenerator:
         from alchemist.implementer.structural_decomp import (
             _classify_shape,
             classify_ctx_transform_proto,
+            classify_scalar_proto,
             propose_and_verify_decomposition,
         )
         proto = fn_text.split("{", 1)[0].strip()
         _shape = "buf_transform" if _classify_shape(proto) == "buf_transform" else None
         if _shape is None and classify_ctx_transform_proto(proto) is not None:
             _shape = "ctx_transform"
+        if _shape is None and classify_scalar_proto(proto) is not None:
+            _shape = "scalar"
         if _shape is None:
             return False
 

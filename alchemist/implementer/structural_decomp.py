@@ -87,7 +87,7 @@ class Decomposition:
 # Shapes this gate can fuzz today. Extend as new shapes are supported; an
 # unsupported shape means we cannot prove equivalence offline and must decline
 # (fail-closed) rather than trust an unverified split.
-_SUPPORTED_SHAPES = {"buf_transform", "ctx_transform"}
+_SUPPORTED_SHAPES = {"buf_transform", "ctx_transform", "scalar"}
 
 _FUZZ_SEED = 0x5EED
 _DEFAULT_N = 400
@@ -134,6 +134,102 @@ def _call_buf_transform(fn, data: bytes) -> tuple[int, bytes]:
     )
     n = ret if 0 <= ret <= cap else 0
     return ret, outbuf.raw[:n]
+
+
+# --- scalar shape: `RET f(INT a, INT b, ...)` where every param + the return
+#     are integer scalars (fix16_div, isqrt, ...). ---
+_SCALAR_C_TYPES = {
+    "fix16_t": (ctypes.c_int32, 32, True), "int32_t": (ctypes.c_int32, 32, True),
+    "int": (ctypes.c_int32, 32, True), "int_fast32_t": (ctypes.c_int32, 32, True),
+    "unsigned": (ctypes.c_uint32, 32, False), "unsigned int": (ctypes.c_uint32, 32, False),
+    "uint32_t": (ctypes.c_uint32, 32, False),
+    "int64_t": (ctypes.c_int64, 64, True), "uint64_t": (ctypes.c_uint64, 64, False),
+    "int16_t": (ctypes.c_int16, 16, True), "uint16_t": (ctypes.c_uint16, 16, False),
+    "int8_t": (ctypes.c_int8, 8, True), "uint8_t": (ctypes.c_uint8, 8, False),
+    "short": (ctypes.c_int16, 16, True), "long": (ctypes.c_int64, 64, True),
+}
+
+
+def _norm_c_scalar(t: str) -> str:
+    return t.replace("const", "").replace("register", "").strip()
+
+
+def classify_scalar_proto(proto: str):
+    """`RET NAME(T a, T b, ...)` with every param and RET an integer scalar (no
+    pointers) -> (arg_specs, ret_ctype) else None. arg_specs is a list of
+    (ctype, width, signed)."""
+    m = re.match(r"\s*([A-Za-z_][\w ]*?)\s+\**\s*(\w+)\s*\((.*)\)\s*$",
+                 proto.strip(), re.S)
+    if not m:
+        return None
+    ret = _norm_c_scalar(m.group(1))
+    params = m.group(3).strip()
+    if params in ("", "void") or "*" in proto.split("(", 1)[1]:
+        return None  # need >=1 scalar arg and no pointers
+    arg_specs = []
+    for part in params.split(","):
+        part = part.strip()
+        pm = re.match(r"^(.*?)\s+\**\s*(\w+)$", part)
+        t = _norm_c_scalar(pm.group(1)) if pm else _norm_c_scalar(part)
+        spec = _SCALAR_C_TYPES.get(t)
+        if spec is None:
+            return None
+        arg_specs.append(spec)
+    ret_spec = _SCALAR_C_TYPES.get(ret)
+    if ret_spec is None:
+        return None
+    return arg_specs, ret_spec[0]
+
+
+def _load_scalar(dll_path: Path, fn_name: str, arg_ctypes, ret_ctype):
+    dll = ctypes.CDLL(str(dll_path))
+    fn = getattr(dll, fn_name)
+    fn.argtypes = tuple(arg_ctypes)
+    fn.restype = ret_ctype
+    return fn
+
+
+def _rand_scalar(rng, width: int, signed: bool, nonzero: bool) -> int:
+    raw = 0
+    for k in range(0, width, 16):
+        raw |= (next(rng) & 0xFFFF) << k
+    raw &= (1 << width) - 1
+    if signed and (raw >> (width - 1)):
+        raw -= (1 << width)
+    if nonzero and raw == 0:
+        raw = 1
+    return raw
+
+
+def _fuzz_scalar_equiv(f_orig, f_deco, arg_specs, rng, n: int, nonzero: bool):
+    """Compare original vs decomposed over random scalar tuples + a few
+    boundary tuples. Byte-exact returns on all -> split is behavior-preserving."""
+    # boundary rows first (per-arg 0/1/-1/max/min combined pointwise)
+    bounds = []
+    for (_ct, w, sg) in arg_specs:
+        mx = (1 << (w - 1)) - 1 if sg else (1 << w) - 1
+        mn = -(1 << (w - 1)) if sg else 0
+        vals = [1, 2, mx, mx - 1, mn if not nonzero or mn != 0 else 1]
+        if not nonzero:
+            vals.append(0)
+        bounds.append(vals)
+    for i in range(min(len(b) for b in bounds)):
+        row = tuple(bounds[j][i] for j in range(len(arg_specs)))
+        try:
+            if int(f_orig(*row)) != int(f_deco(*row)):
+                return False, f"DIVERGENCE on boundary {row}"
+        except Exception as e:  # noqa: BLE001
+            return False, f"scalar call failed on {row}: {e}"
+    for _ in range(n):
+        row = tuple(_rand_scalar(rng, w, sg, nonzero) for (_ct, w, sg) in arg_specs)
+        try:
+            ro = int(f_orig(*row))
+            rd = int(f_deco(*row))
+        except Exception as e:  # noqa: BLE001
+            return False, f"scalar call failed on {row}: {e}"
+        if ro != rd:
+            return False, f"DIVERGENCE on {row}: orig={ro} vs deco={rd}"
+    return True, f"byte-exact over {n} fuzzed scalar inputs"
 
 
 _CTX_TRANSFORM_RE = re.compile(
@@ -262,6 +358,21 @@ def verify_c_decomposition_equivalent(
         except Exception as e:  # noqa: BLE001
             return False, f"could not load compiled symbol {fn_name!r}: {e}"
         return _fuzz_ctx_transform(f_orig, f_deco, size, _lcg(_FUZZ_SEED), n)
+
+    if shape == "scalar":
+        sc = classify_scalar_proto(original_c.split("{", 1)[0])
+        if not sc:
+            return False, "scalar: could not parse signature"
+        arg_specs, ret_ct = sc
+        try:
+            f_orig = _load_scalar(orig_dll, fn_name, [a[0] for a in arg_specs], ret_ct)
+            f_deco = _load_scalar(deco_dll, fn_name, [a[0] for a in arg_specs], ret_ct)
+        except Exception as e:  # noqa: BLE001
+            return False, f"could not load compiled symbol {fn_name!r}: {e}"
+        # Divisor-safe: if the body divides, keep args nonzero so a guard-preserving
+        # split is not SIGFPE'd during the offline fuzz.
+        nonzero = ("/" in original_c) or ("%" in original_c)
+        return _fuzz_scalar_equiv(f_orig, f_deco, arg_specs, _lcg(_FUZZ_SEED), n, nonzero)
 
     try:
         f_orig = _load_buf_transform(orig_dll, fn_name)
