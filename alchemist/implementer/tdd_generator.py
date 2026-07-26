@@ -171,6 +171,7 @@ Referenced standards: {standards}
 ## Standards catalog vectors (authoritative, MUST satisfy)
 {catalog_vectors}
 {reference_impls}
+{sibling_exemplars}
 {idiom_patterns}
 
 ## Shared type definitions (already in scope via `use zlib_types::*;`)
@@ -296,6 +297,11 @@ class TDDGenerator:
         if self._deterministic:
             self.multi_sample_temperature = 0.0
             self.multi_sample_n = 1
+        # Intra-subject sibling retrieval: verified same-shape functions from the
+        # current run, injected as worked exemplars for structurally-identical
+        # siblings that the model would otherwise loop on. list of dicts:
+        # {name, shape_key, sig, body}.
+        self._verified_siblings: list[dict] = []
 
     # --- Main entry ---
 
@@ -413,6 +419,12 @@ class TDDGenerator:
                     attempt.llm_calls = _c1 - _c0
                     attempt.output_tokens = _o1 - _o0
                     result.attempts.append(attempt)
+                    if attempt.tests_passed:
+                        try:
+                            self._record_verified_sibling(
+                                alg, module, crate_spec, output_dir)
+                        except Exception:  # noqa: BLE001
+                            pass
                     # Compile-isolation (crate-level verified-core + honest-refusal-tail):
                     # a refused function's last (broken/non-compiling) body must NOT stay in
                     # the crate — it fails compilation and blocks EVERY subsequently-filled
@@ -1352,6 +1364,7 @@ class TDDGenerator:
             test_vectors=tvecs,
             catalog_vectors=catalog_vec_text,
             reference_impls=reference_block,
+            sibling_exemplars=self._sibling_exemplar_block(alg),
             idiom_patterns=self._idiom_prompt_block(alg),
             struct_context=struct_context,
             error_context=self._error_context_for(alg),
@@ -1861,6 +1874,51 @@ class TDDGenerator:
         r"fn\s+{name}\s*(?:<[^>]*>)?\s*\([^)]*\)[^{{;]*)"
         r"\{"
     )
+
+    def _sig_shape_key(self, alg) -> str:
+        """Signature shape with the function name removed, so same-shape variants
+        (tinyjambu128/192/256, crc16/crc32, ...) collapse to one key."""
+        sig = self._signature_for(alg)
+        return sig.replace(f"fn {alg.name}(", "fn (", 1)
+
+    def _record_verified_sibling(self, alg, module, crate_spec, workspace_dir) -> None:
+        """After a function verifies, store its exact Rust body keyed by shape so a
+        later structurally-identical sibling can be shown a proven exemplar."""
+        module_path = workspace_dir / crate_spec.name / "src" / f"{module.name}.rs"
+        if not module_path.exists():
+            return
+        body = self._extract_fn_body(module_path.read_text(encoding="utf-8"), alg.name)
+        if not body or "unimplemented!" in body:
+            return
+        self._verified_siblings.append({
+            "name": alg.name,
+            "shape_key": self._sig_shape_key(alg),
+            "sig": self._signature_for(alg),
+            "body": body,
+        })
+
+    def _sibling_exemplar_block(self, alg) -> str:
+        """If a same-shape sibling already verified this run, show its exact Rust as a
+        worked template. Cheap, high-signal, and never fires without a real prior win."""
+        key = self._sig_shape_key(alg)
+        for sib in self._verified_siblings:
+            if sib["name"] == alg.name or sib["shape_key"] != key:
+                continue
+            full = f"{sib['sig']} {{{sib['body']}}}"
+            if len(full) > 6000:  # avoid prompt blow-up on huge siblings
+                return ""
+            return (
+                "\n## Verified sibling with the IDENTICAL signature "
+                "(byte-exact, from this run)\n"
+                f"`{sib['name']}` has the same signature as the function you are "
+                "writing and already PASSED the differential oracle. Its exact "
+                "verified Rust is below. This function differs ONLY in its "
+                "constants/sizes (e.g. key length, word count, round count) — "
+                "reproduce the SAME structure and types, and change only what "
+                "genuinely differs. Do not change the parameter/return types.\n\n"
+                f"```rust\n{full}\n```\n"
+            )
+        return ""
 
     def _extract_fn_body(self, text: str, name: str) -> str | None:
         m = self._find_fn(text, name)
