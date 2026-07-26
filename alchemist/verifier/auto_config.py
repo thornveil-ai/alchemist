@@ -649,6 +649,23 @@ def _scalar_binding(sig):
     return CFunctionBinding(c_name=sig.name, restype=restype, argtypes=argtypes, adapter=adapter)
 
 
+def _is_nonzero_constraint(txt: str) -> bool:
+    """True if a spec constraint string forbids zero (various phrasings)."""
+    t = (txt or "").lower()
+    return bool(re.search(
+        r"(non-?zero|not\s+(?:be\s+)?(?:equal\s+to\s+)?zero|"
+        r"must\s+not\s+be\s+0\b|!=\s*0|\bneq\s*0)", t))
+
+
+def _is_divide_shape(alg) -> bool:
+    """True if the function's own notes/purpose describe a divide/modulo op, so
+    operands after the dividend must avoid 0 to keep the C oracle from SIGFPE."""
+    txt = ((getattr(alg, "algorithm_notes", "") or "") + " "
+           + (getattr(alg, "purpose", "") or "")).lower()
+    return bool(re.search(
+        r"\b(modulo|remainder|divides?|divided|division|divisor)\b", txt))
+
+
 def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
     """Mint fill-loop vectors for an all-scalar function from the compiled C oracle.
     Values are kept in [0, 2**31) so they compile as positive literals for any int
@@ -687,17 +704,27 @@ def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
 
     # per-param value pools: boundaries + spread across the FULL width so the fill
     # loop catches edge bugs (overflow, high bits) rather than letting them reach verify.
+    # Divisor operands drop 0 so the compiled C oracle never SIGFPEs on `x % 0` /
+    # `x / 0` (which would kill the oracle child and refuse an easy function).
+    _div_shape = _is_divide_shape(alg)
     pools = []
-    for p_spec in inputs_specs:
+    for _j, p_spec in enumerate(inputs_specs):
         lo, hi, _w = _range(p_spec.rust_type)
+        nonzero = _is_nonzero_constraint(getattr(p_spec, "constraints", "")) or (
+            _div_shape and _j >= 1)
         pool = [0, 1, 2, 3, hi, hi - 1, hi // 2, hi // 3]
         if lo < 0:
             pool += [lo, lo + 1, -1, -2]
         pool = [v for v in dict.fromkeys(pool) if lo <= v <= hi]
+        if nonzero:
+            pool = [v for v in pool if v != 0]
         st = 0xD1B54A32D192ED03 ^ (hash(p_spec.name) & 0xFFFF)
         while len(pool) < count:
             st = (st * 6364136223846793005 + 1442695040888963407) & ((1 << 64) - 1)
-            pool.append(lo + ((st >> 3) % (hi - lo + 1)))
+            v = lo + ((st >> 3) % (hi - lo + 1))
+            if nonzero and v == 0:
+                continue
+            pool.append(v)
         pools.append(pool[:count])
 
     vectors, seen = [], set()
