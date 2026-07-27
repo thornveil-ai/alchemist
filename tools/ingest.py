@@ -17,6 +17,7 @@ from pathlib import Path
 BASE = Path("/data/rigrun/projects/alchemist/subjects/ingest")
 
 # name -> (raw_base_url, [files], license)
+WJ = "https://raw.githubusercontent.com/WaterJuice/WjCryptLib/master/lib/"
 MANIFEST = {
     # B-Con/crypto-algorithms — PUBLIC DOMAIN, each .c+.h self-contained.
     "bcon_sha256":   ("https://raw.githubusercontent.com/B-Con/crypto-algorithms/master/", ["sha256.c", "sha256.h"], "public-domain"),
@@ -29,6 +30,22 @@ MANIFEST = {
     "bcon_des":      ("https://raw.githubusercontent.com/B-Con/crypto-algorithms/master/", ["des.c", "des.h"], "public-domain"),
     "bcon_blowfish": ("https://raw.githubusercontent.com/B-Con/crypto-algorithms/master/", ["blowfish.c", "blowfish.h"], "public-domain"),
     "bcon_aes":      ("https://raw.githubusercontent.com/B-Con/crypto-algorithms/master/", ["aes.c", "aes.h"], "public-domain"),
+    # WjCryptLib (WaterJuice) — PUBLIC DOMAIN, self-contained .c+.h per primitive.
+    "wj_md5":    (WJ, ["WjCryptLib_Md5.c", "WjCryptLib_Md5.h"], "public-domain"),
+    "wj_sha1":   (WJ, ["WjCryptLib_Sha1.c", "WjCryptLib_Sha1.h"], "public-domain"),
+    "wj_sha256": (WJ, ["WjCryptLib_Sha256.c", "WjCryptLib_Sha256.h"], "public-domain"),
+    "wj_sha512": (WJ, ["WjCryptLib_Sha512.c", "WjCryptLib_Sha512.h"], "public-domain"),
+    "wj_rc4":    (WJ, ["WjCryptLib_Rc4.c", "WjCryptLib_Rc4.h"], "public-domain"),
+    # tiny-AES-c (kokke) — PUBLIC DOMAIN (Unlicense), self-contained.
+    "tiny_aes":  ("https://raw.githubusercontent.com/kokke/tiny-AES-c/master/", ["aes.c", "aes.h"], "unlicense"),
+    # PCG basic PRNG (imneme) — Apache-2.0 / MIT, self-contained.
+    "pcg_basic": ("https://raw.githubusercontent.com/imneme/pcg-c-basic/master/", ["pcg_basic.c", "pcg_basic.h"], "apache-2.0"),
+    # amosnier/sha-2 — PUBLIC DOMAIN (Unlicense), single .c+.h.
+    "amosnier_sha256": ("https://raw.githubusercontent.com/amosnier/sha-2/master/", ["sha-256.c", "sha-256.h"], "unlicense"),
+    # kokke/tiny-ECDH / tiny-bignum-c (kokke) — PUBLIC DOMAIN.
+    "tiny_bignum": ("https://raw.githubusercontent.com/kokke/tiny-bignum-c/master/", ["bn.c", "bn.h"], "unlicense"),
+    # chriso/redis-style / rxi small libs, monocypher (loup-vaillant) — CC0/BSD, single-file crypto.
+    "monocypher": ("https://raw.githubusercontent.com/LoupVaillant/Monocypher/master/src/", ["monocypher.c", "monocypher.h"], "cc0/bsd"),
 }
 
 

@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/kokke/tiny-bignum-c/master/
+license: unlicense

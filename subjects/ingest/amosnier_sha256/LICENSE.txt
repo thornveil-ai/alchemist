@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/amosnier/sha-2/master/
+license: unlicense

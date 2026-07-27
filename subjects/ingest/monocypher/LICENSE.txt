@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/LoupVaillant/Monocypher/master/src/
+license: cc0/bsd

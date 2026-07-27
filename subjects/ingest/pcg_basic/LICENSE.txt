@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/imneme/pcg-c-basic/master/
+license: apache-2.0
