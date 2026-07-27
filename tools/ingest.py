@@ -43,6 +43,10 @@ def preprocess_lib(subject_dir, c_files):
                 keep.append(line)
         combined.append("\n".join(keep))
     src = _PP_PREAMBLE + "\n\n".join(combined)
+    # drop compiler qualifiers gcc -E leaves behind that confuse tree-sitter
+    # (it mis-extracts `__attribute__` as a bogus function name).
+    src = re.sub(r"__attribute__\s*\(\([^()]*(?:\([^()]*\)[^()]*)*\)\)", "", src)
+    src = re.sub(r"\b(?:__inline__|__inline|__forceinline|__restrict__|__restrict)\b", "", src)
     src = re.sub(r"\n{3,}", "\n\n", src)
     tmp = d / "_pp_check.c"
     tmp.write_text(src)
