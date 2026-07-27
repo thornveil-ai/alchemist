@@ -136,3 +136,9 @@ prng4
 numtheory2
 fixedpoint4
 modmath3
+reduce
+bitops2
+encoding2
+checksums2
+strchar
+datetime
