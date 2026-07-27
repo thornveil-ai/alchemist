@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/h2o/picohttpparser/master/
+license: mit/bsd

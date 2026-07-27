@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/codeplea/tinyexpr/master/
+license: zlib

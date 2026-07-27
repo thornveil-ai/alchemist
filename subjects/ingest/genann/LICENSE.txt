@@ -1,0 +1,2 @@
+upstream: https://raw.githubusercontent.com/codeplea/genann/master/
+license: zlib

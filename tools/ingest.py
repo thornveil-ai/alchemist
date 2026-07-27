@@ -84,6 +84,12 @@ MANIFEST = {
     "tiny_bignum": ("https://raw.githubusercontent.com/kokke/tiny-bignum-c/master/", ["bn.c", "bn.h"], "unlicense"),
     # chriso/redis-style / rxi small libs, monocypher (loup-vaillant) — CC0/BSD, single-file crypto.
     "monocypher": ("https://raw.githubusercontent.com/LoupVaillant/Monocypher/master/src/", ["monocypher.c", "monocypher.h"], "cc0/bsd"),
+    # --- in-envelope volume: hash / scalar-math / parser shapes (high verify rate) ---
+    "murmur3":       ("https://raw.githubusercontent.com/PeterScott/murmur3/master/", ["murmur3.c", "murmur3.h"], "public-domain"),
+    "tinyexpr":      ("https://raw.githubusercontent.com/codeplea/tinyexpr/master/", ["tinyexpr.c", "tinyexpr.h"], "zlib"),
+    "genann":        ("https://raw.githubusercontent.com/codeplea/genann/master/", ["genann.c", "genann.h"], "zlib"),
+    "tiny_regex":    ("https://raw.githubusercontent.com/kokke/tiny-regex-c/master/", ["re.c", "re.h"], "unlicense"),
+    "picohttpparser":("https://raw.githubusercontent.com/h2o/picohttpparser/master/", ["picohttpparser.c", "picohttpparser.h"], "mit/bsd"),
 }
 
 
