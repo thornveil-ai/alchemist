@@ -150,6 +150,34 @@ Return the complete CrateArchitecture.\
 """
 
 
+def _flat_single_crate_architecture(specs, project_name, source_description=""):
+    """Deterministic one-crate architecture for a flat leaf-function library.
+    No LLM call: a single crate holding every module, no traits/ownership. The
+    byte-exact differential still verifies each function, so a minimal
+    architecture cannot launder a wrong translation. Used for large flat modules
+    (the one-shot LLM design overflows/invalidates) and as the failure fallback."""
+    import re as _re
+    from alchemist.architect.schemas import CrateSpec, CrateArchitecture
+    base = _re.sub(r"[^a-z0-9]+", "-", (project_name or "translated").lower()).strip("-") or "translated"
+    crate_name = base + "-core"
+    module_names = [s.name for s in specs]
+    public_api = [a.name for s in specs for a in (getattr(s, "algorithms", None) or [])]
+    crate = CrateSpec(
+        name=crate_name,
+        description=f"Single-crate port of {project_name} ({len(public_api)} functions).",
+        is_no_std=True,
+        dependencies=[],
+        modules=module_names,
+        public_api=public_api,
+    )
+    return CrateArchitecture(
+        workspace_name=base,
+        description=source_description or f"Flat single-crate architecture for {project_name}.",
+        crates=[crate],
+        dependency_graph={crate_name: []},
+    )
+
+
 class CrateDesigner:
     """Design Rust crate architecture from module specs."""
 
@@ -190,6 +218,22 @@ class CrateDesigner:
 
         total_algos = sum(len(s.algorithms) for s in specs)
 
+        # A flat leaf-function library (one module, many functions) does not need
+        # a designed multi-crate workspace; the one-shot LLM design overflows the
+        # context / returns an invalid structure at scale. Use a deterministic
+        # single crate. Env-tunable; the oracle still gates every function.
+        import os as _os
+        try:
+            _flat_thresh = int(_os.environ.get("ALCHEMIST_ARCH_FLAT_THRESHOLD", "40"))
+        except ValueError:
+            _flat_thresh = 40
+        if len(specs) <= 1 and total_algos > _flat_thresh:
+            console.print(f"[yellow]Large flat module ({total_algos} fns) -> deterministic "
+                          f"single-crate architecture (skipping LLM design).[/yellow]")
+            arch = _flat_single_crate_architecture(specs, project_name, source_description)
+            self._print_architecture(arch)
+            return arch
+
         prompt = DESIGN_PROMPT.format(
             project_name=project_name,
             source_description=source_description,
@@ -220,8 +264,11 @@ class CrateDesigner:
             except Exception as e:
                 console.print(f"[red]Failed to parse architecture: {e}[/red]")
 
-        console.print("[red]Architecture design failed.[/red]")
-        raise SystemExit(1)
+        console.print("[yellow]LLM architecture design failed -> deterministic "
+                      "single-crate fallback (oracle still gates every function).[/yellow]")
+        arch = _flat_single_crate_architecture(specs, project_name, source_description)
+        self._print_architecture(arch)
+        return arch
 
     def _print_architecture(self, arch: CrateArchitecture):
         """Pretty-print the designed architecture."""
