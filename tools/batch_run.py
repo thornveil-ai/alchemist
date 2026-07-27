@@ -84,6 +84,24 @@ def _mark_done(name: str):
         f.write(name + "\n")
 
 
+def _classify_refusal(reason: str) -> tuple[str, str]:
+    """Map a raw refusal reason -> (class, cleaned_reason). Splitting drafter_empty
+    out of model_hard keeps the frontier work-list honest: 'LLM returned empty' is
+    'the drafter gave up' (escalate to a stronger model), not 'attempted and wrong'.
+    reason_unclear catches cargo build-progress lines that leaked into the reason
+    field via an upstream capture bug, so they stop inflating model_hard."""
+    rl = reason.lower().strip()
+    if rl.startswith(("checking ", "compiling ", "finished ", "building ",
+                      "updating ", "downloading ")):
+        return "reason_unclear", "cargo output (reason-capture bug)"
+    if ("no verifiable test vectors" in rl or "no correctness test" in rl
+            or "cannot verify" in rl or "no test vectors" in rl):
+        return "oracle_gap", reason
+    if "llm returned empty" in rl or ("empty" in rl and "llm" in rl):
+        return "drafter_empty", reason
+    return "model_hard", reason
+
+
 def run_subject(subj: Path, timeout_s: int, collect_only: bool = False) -> dict:
     name = subj.name
     out_dir = f"/tmp/batch_out/{name}"
@@ -126,18 +144,10 @@ def run_subject(subj: Path, timeout_s: int, collect_only: bool = False) -> dict:
                     "won_via": fn.get("won_via"), "source": "alchemist-verified-win",
                     "verified": "byte-exact-differential"})
         else:
-            reason = (fn.get("reason") or "unknown")
+            cls, reason = _classify_refusal(fn.get("reason") or "unknown")
             rkey = reason.split("—")[0].strip()[:40]
             reasons[rkey] = reasons.get(rkey, 0) + 1
             c_fn = _extract_c_fn(c_blob, nm) if c_blob else None
-            # Classify: oracle_gap (untestable — needs a new oracle SHAPE, not a
-            # better model) vs model_hard (testable but the model couldn't do it —
-            # the real frontier-teacher work-list).
-            rl = reason.lower()
-            cls = ("oracle_gap" if ("no verifiable test vectors" in rl
-                                     or "no correctness test" in rl
-                                     or "cannot verify" in rl)
-                   else "model_hard")
             escalations.append({
                 "subject": name, "function": nm, "c": c_fn or "", "reason": reason,
                 "class": cls,
@@ -218,28 +228,31 @@ def main():
             tot_reasons[k] = tot_reasons.get(k, 0) + n
         for k, n in (s.get("won_via") or {}).items():
             tot_tiers[k] = tot_tiers.get(k, 0) + n
-    # count model_hard vs oracle_gap from the escalation queue
-    model_hard = oracle_gap = 0
+    # tally escalation classes from the queue
+    import collections as _collections
+    _cls = _collections.Counter()
     if ESCAL.exists():
         for ln in ESCAL.read_text().splitlines():
             if not ln.strip():
                 continue
             try:
-                cls = json.loads(ln).get("class")
+                _cls[json.loads(ln).get("class") or "?"] += 1
             except Exception:  # noqa: BLE001
                 continue
-            if cls == "model_hard":
-                model_hard += 1
-            elif cls == "oracle_gap":
-                oracle_gap += 1
+    model_hard = _cls.get("model_hard", 0)
+    oracle_gap = _cls.get("oracle_gap", 0)
+    drafter_empty = _cls.get("drafter_empty", 0)
+    reason_unclear = _cls.get("reason_unclear", 0)
     report["totals"] = {
         "subjects_ok": len(ok),
         "functions": sum(s.get("total", 0) for s in ok),
         "verified": sum(s.get("verified", 0) for s in ok),
         "pairs_captured": sum(s.get("pairs_captured", 0) for s in ok),
         "escalations": sum(s.get("escalations", 0) for s in ok),
-        "escalations_model_hard": model_hard,   # the frontier-teacher work-list
+        "escalations_model_hard": model_hard,   # frontier-teacher work-list (attempted, wrong)
+        "escalations_drafter_empty": drafter_empty,  # drafter gave up → stronger model
         "escalations_oracle_gap": oracle_gap,   # needs a new oracle SHAPE, not a model
+        "escalations_reason_unclear": reason_unclear,  # capture-bug noise, not a real refusal
         "out_tokens": sum(s.get("out_tokens", 0) for s in ok),
         "refusal_reason_histogram": dict(sorted(tot_reasons.items(), key=lambda x: -x[1])),
         "won_via_histogram": tot_tiers,
@@ -250,7 +263,9 @@ def main():
     print(f"  {t['verified']}/{t['functions']} verified across {t['subjects_ok']} subjects")
     print(f"  pairs captured: {t['pairs_captured']} (-> {PAIRS})")
     print(f"  escalations: {t['escalations']}  = {t['escalations_model_hard']} MODEL-HARD "
-          f"(frontier work-list) + {t['escalations_oracle_gap']} ORACLE-GAP (need new shapes)")
+          f"+ {t.get('escalations_drafter_empty', 0)} DRAFTER-EMPTY (→stronger model) "
+          f"+ {t['escalations_oracle_gap']} ORACLE-GAP (→new shapes) "
+          f"+ {t.get('escalations_reason_unclear', 0)} unclear")
     print(f"  top refusal reasons: {list(t['refusal_reason_histogram'].items())[:6]}")
 
 
