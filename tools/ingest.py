@@ -12,6 +12,44 @@ Add entries to MANIFEST; re-run; then:
 """
 import subprocess
 import urllib.request
+import re
+
+_PP_MARK = re.compile(r'^#\s+\d+\s+"([^"]*)"')
+_PP_PREAMBLE = "#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\n\n"
+
+
+def preprocess_lib(subject_dir, c_files):
+    """gcc -E a raw lib into one clean TU: keep only lines from the subject's OWN
+    .c/.h (drop system headers), re-add the minimal system includes we stripped.
+    Resolves C++ `namespace{}` wrappers + dead #ifdef branches that make
+    tree-sitter swallow whole files. Returns clean C, or None if it won't compile."""
+    from pathlib import Path as _P
+    d = _P(subject_dir)
+    own_names = {_P(f).name for f in c_files} | {h.name for h in d.glob("*.h")}
+    combined = []
+    for cf in c_files:
+        pr = subprocess.run(["gcc", "-E", "-I", str(d), str(d / cf)],
+                            capture_output=True, text=True)
+        if pr.returncode != 0:
+            return None
+        keep, emit = [], False
+        for line in pr.stdout.splitlines():
+            m = _PP_MARK.match(line)
+            if m:
+                src = m.group(1)
+                emit = (not src.startswith("<")) and (_P(src).name in own_names)
+                continue
+            if emit:
+                keep.append(line)
+        combined.append("\n".join(keep))
+    src = _PP_PREAMBLE + "\n\n".join(combined)
+    src = re.sub(r"\n{3,}", "\n\n", src)
+    tmp = d / "_pp_check.c"
+    tmp.write_text(src)
+    r = subprocess.run(["gcc", "-c", "-w", str(tmp), "-o", "/tmp/_pp_ingest.o"],
+                       capture_output=True, text=True)
+    tmp.unlink(missing_ok=True)
+    return src if r.returncode == 0 else None
 from pathlib import Path
 
 BASE = Path("/data/rigrun/projects/alchemist/subjects/ingest")
@@ -69,17 +107,30 @@ def main():
         ok = all(fetch(base_url + f, d / f) for f in files)
         if not ok:
             failed.append((name, "fetch")); continue
-        cfiles = [str(d / f) for f in files if f.endswith(".c")]
+        cbasenames = [f for f in files if f.endswith(".c")]
+        cfiles = [str(d / f) for f in cbasenames]
         r = subprocess.run(["gcc", "-c", "-w"] + cfiles + ["-I", str(d)],
                            capture_output=True, text=True, cwd=str(d))
         # write a LICENSE marker for provenance
         (d / "LICENSE.txt").write_text(f"upstream: {base_url}\nlicense: {lic}\n")
-        if r.returncode == 0:
-            ready.append(name)
-            print(f"  {name}: READY ({lic})")
-        else:
+        if r.returncode != 0:
             failed.append((name, "compile"))
             print(f"  {name}: compile FAIL: {r.stderr[:150]}")
+            continue
+        # Preprocess into one clean TU so the analyzer parses every function
+        # (raw C++/#ifdef guards otherwise hide whole files from tree-sitter).
+        pp = preprocess_lib(str(d), cbasenames)
+        if pp is not None:
+            raw = d / "raw"; raw.mkdir(exist_ok=True)
+            for f in files:
+                src = d / f
+                if src.exists():
+                    src.rename(raw / f)
+            (d / f"{name}.c").write_text(pp)
+            print(f"  {name}: READY+preprocessed ({lic})")
+        else:
+            print(f"  {name}: READY raw — preprocess skipped ({lic})")
+        ready.append(name)
     print(f"\ningested {len(ready)} ready / {len(failed)} failed")
     print("READY:", " ".join("subjects/ingest/" + n for n in ready))
 
