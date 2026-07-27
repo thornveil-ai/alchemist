@@ -1959,18 +1959,20 @@ class TDDGenerator:
         (broken/non-compiling) body cannot poison the crate and block EVERY verified
         sibling's verification. This is the crate-level "verified core + honest refusal
         tail": a function the model couldn't translate becomes an honest stub, and the
-        functions it CAN translate still compile and verify. The signature is preserved
-        exactly (only the body becomes the stub). Returns True if a reset was applied."""
+        functions it CAN translate still compile and verify. The stub is rebuilt from the
+        CANONICAL spec signature (a drifted return type would break the test module and
+        sink siblings). Returns True if a reset was applied."""
         module_path = workspace_dir / crate_spec.name / "src" / f"{module.name}.rs"
         if not module_path.exists():
             return False
         src = module_path.read_text(encoding="utf-8")
-        sig_m = re.search(
-            r"((?:pub\s+)?fn\s+" + re.escape(alg.name) + r"\s*(?:<[^>]*>)?\s*\([^{]*?)\{",
-            src, re.DOTALL)
-        if not sig_m:
-            return False
-        stub_fn = sig_m.group(1).rstrip() + (
+        # Rebuild the stub from the CANONICAL spec signature — NOT the current source
+        # signature, which for a refused fn may have DRIFTED (e.g. return type changed
+        # to Option<usize>). A drifted signature keeps the pre-generated differential
+        # tests from COMPILING, sinking EVERY sibling's verification. The tests were
+        # emitted against the spec signature, so restore exactly that.
+        canon_sig = self._signature_for(alg)
+        stub_fn = canon_sig.rstrip() + (
             f' {{\n    unimplemented!("refused: {alg.name} — no verified translation")\n}}')
         replaced = self._replace_fn_in_source(src, alg.name, stub_fn)
         if replaced is None or replaced == src:
