@@ -131,7 +131,7 @@ def main():
         # (raw C++/#ifdef guards otherwise hide whole files from tree-sitter).
         pp = preprocess_lib(str(d), cbasenames)
         if pp is not None:
-            raw = d / "raw"; raw.mkdir(exist_ok=True)
+            raw = d / ".alchemist" / "raw"; raw.mkdir(parents=True, exist_ok=True)  # under .alchemist (oracle _NONLIB_DIRS) so discover_c_build skips it
             for f in files:
                 src = d / f
                 if src.exists():
