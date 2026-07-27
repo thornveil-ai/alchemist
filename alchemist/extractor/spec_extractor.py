@@ -260,11 +260,25 @@ class SpecExtractor:
             return (bool(_file_io_call.search(src))
                     or bool(re.search(r"\bFILE\s*\*", src))
                     or bool(re.search(r"_file(?:_|$)", f["name"])))
+        # Corpus-volume mode: keep `static` helpers as standalone translatable
+        # units (each is a clean verifiable scalar/buf pair) instead of inlining.
+        import os as _os
+        _keep_static = _os.environ.get("ALCHEMIST_INCLUDE_STATIC_HELPERS") == "1"
+
+        def _drop_static(f: dict) -> bool:
+            if not _keep_static:
+                return _is_inlinable_static(f)
+            # keep-static mode: still drop static VOID routines (no fuzzable I/O)
+            return bool(re.search(
+                r"(?:^|\n)[ \t]*static\s+void\b[^\n;{]*\b" + re.escape(f["name"]) + r"\s*\(",
+                f.get("source", "")))
+
         significant = [
             f for f in func_data
-            if ((5 <= f["lines"] <= 500) or (0 < f["lines"] < 5 and not _is_static_fn(f)))
+            if ((5 <= f["lines"] <= 500)
+                or (0 < f["lines"] < 5 and (_keep_static or not _is_static_fn(f))))
             and not _is_uncalled_void_noarg(f)
-            and not _is_inlinable_static(f)
+            and not _drop_static(f)
             and not _is_file_io(f)
         ]
         if not significant:
