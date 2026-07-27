@@ -91,6 +91,9 @@ def _classify_refusal(reason: str) -> tuple[str, str]:
     reason_unclear catches cargo build-progress lines that leaked into the reason
     field via an upstream capture bug, so they stop inflating model_hard."""
     rl = reason.lower().strip()
+    # idempotent: recognize our own already-cleaned marker
+    if "reason-capture bug" in rl:
+        return "reason_unclear", "cargo output (reason-capture bug)"
     if rl.startswith(("checking ", "compiling ", "finished ", "building ",
                       "updating ", "downloading ")):
         return "reason_unclear", "cargo output (reason-capture bug)"

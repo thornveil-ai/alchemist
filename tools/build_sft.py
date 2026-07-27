@@ -53,6 +53,38 @@ def _rationale(spec: dict | None) -> str:
     return "  ".join(bits)
 
 
+# (subject|function) keyword -> domain category, checked in priority order so
+# specific families win (e.g. 'sha256' -> hash before any generic match).
+_CAT_RULES = [
+    ("cipher",     ["aes", "des", "rc4", "arcfour", "blowfish", "chacha", "salsa",
+                     "xtea", "tea", "cipher", "encrypt", "decrypt", "jambu", "sparkle",
+                     "xoodoo", "monocypher", "poly1305", "x25519", "ed25519"]),
+    ("hash",       ["sha", "md5", "md4", "md2", "blake", "murmur", "siphash", "xxh",
+                     "fnv", "digest", "_hash", "oat_", "pjw", "djb", "rs_hash",
+                     "js_hash", "wang", "fmix"]),
+    ("checksum",   ["crc", "adler", "fletcher", "checksum", "cksum", "parity", "bch"]),
+    ("prng",       ["rand", "rng", "prng", "xorshift", "splitmix", "pcg", "lcg",
+                     "mersenne", "xoshiro"]),
+    ("fixedpoint", ["fix16", "q16", "q8", "qfixed", "fixed", "fract", "libfixmath"]),
+    ("encoding",   ["base64", "base32", "base58", "varint", "encode", "decode", "rot13", "rot-13"]),
+    ("bitops",     ["popcount", "clz", "ctz", "gray", "bswap", "rotl", "rotr",
+                     "reverse_bit", "_bits", "bit_"]),
+    ("string",     ["str", "ascii", "utf", "atoi", "palindrome", "word", "char",
+                     "upper", "lower", "regex"]),
+    ("intmath",    ["isqrt", "gcd", "factorial", "fib", "prime", "collatz", "digit",
+                     "sqrt", "expr", "genann"]),
+    ("parser",     ["parse", "lex", "token", "json", "http"]),
+]
+
+
+def _infer_category(subject, function, c_src=""):
+    hay = f"{subject} {function}".lower()
+    for cat, kws in _CAT_RULES:
+        if any(k in hay for k in kws):
+            return cat
+    return "unknown"
+
+
 def main():
     if not PAIRS.exists():
         print("no pairs.jsonl yet"); return
@@ -70,7 +102,9 @@ def main():
             continue
         seen.add(key)
         spec = _find_spec(p.get("subject", ""), p.get("function", ""))
-        cat = (spec or {}).get("category", "unknown")
+        cat = (spec or {}).get("category") or "unknown"
+        if cat == "unknown":
+            cat = _infer_category(p.get("subject", ""), p.get("function", ""), c)
         via = p.get("won_via") or "unknown"
         cat_hist[cat] = cat_hist.get(cat, 0) + 1
         via_hist[via] = via_hist.get(via, 0) + 1
