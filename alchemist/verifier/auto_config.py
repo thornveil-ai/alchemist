@@ -3253,6 +3253,61 @@ def fuzz_construct_observe_vectors(dll, group, *, count: int = 8):
     return out
 
 
+def _isolated_exec_cpu_limit() -> int:
+    """Per-function CPU-time cap (s) for a forked oracle child. Env-tunable."""
+    import os as _os
+    try:
+        return max(1, int(float(_os.environ.get("ALCHEMIST_ISOLATED_EXEC_S", "60"))))
+    except ValueError:
+        return 60
+
+
+def _subject_fuzz_wall_s() -> float:
+    """Per-subject wall-clock backstop (s) for the outer vector-synthesis fork."""
+    import os as _os
+    try:
+        return max(30.0, float(_os.environ.get("ALCHEMIST_SUBJECT_FUZZ_S", "600")))
+    except ValueError:
+        return 600.0
+
+
+def _arm_child_cpu_limit(cpu_s=None) -> None:
+    """In a forked oracle child: kernel-enforced CPU-time hard cap so an
+    input-scaled-runtime C function under adversarial fuzzing cannot spin forever.
+    RLIMIT_CPU delivers SIGXCPU (then SIGKILL) even during a pure-C infinite loop
+    (SIGALRM would not fire until control returns to Python). Parent sees
+    WIFSIGNALED -> fail-closed (function gets no vectors, is refused not passed)."""
+    try:
+        import resource as _res
+        cpu = cpu_s if cpu_s is not None else _isolated_exec_cpu_limit()
+        _res.setrlimit(_res.RLIMIT_CPU, (cpu, cpu + 1))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _bounded_waitpid(pid: int, wall_s: float):
+    """waitpid with a wall-clock backstop. RLIMIT_CPU catches CPU spins; a child
+    wedged in a blocking syscall burns no CPU, so poll WNOHANG and SIGKILL past
+    the deadline. Returns the wait status (as os.waitpid)."""
+    import os as _os, time as _t, signal as _sig
+    deadline = _t.monotonic() + wall_s
+    while True:
+        wpid, status = _os.waitpid(pid, _os.WNOHANG)
+        if wpid != 0:
+            return status
+        if _t.monotonic() >= deadline:
+            try:
+                _os.kill(pid, _sig.SIGKILL)
+            except OSError:
+                pass
+            try:
+                _, status = _os.waitpid(pid, 0)
+            except OSError:
+                status = 9
+            return status
+        _t.sleep(0.05)
+
+
 def _run_isolated(thunk, default=None):
     """Run thunk() in a FORKED child so a C `assert()`/UB that aborts or segfaults during
     fuzzing (real C is full of input-domain asserts — http-parser's `http_errno_name`
@@ -3273,13 +3328,14 @@ def _run_isolated(thunk, default=None):
     pid = _os.fork()
     if pid == 0:  # child
         try:
+            _arm_child_cpu_limit()
             r = thunk()
             with open(tmp.name, "wb") as fh:
                 _pickle.dump(r, fh)
             _os._exit(0)
         except BaseException:  # noqa: BLE001
             _os._exit(70)
-    _, status = _os.waitpid(pid, 0)
+    status = _bounded_waitpid(pid, _isolated_exec_cpu_limit() * 2 + 10)
     try:
         if _os.WIFSIGNALED(status) or (_os.WIFEXITED(status) and _os.WEXITSTATUS(status) != 0):
             return default
@@ -3352,6 +3408,7 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
     _pid = _os.fork()
     if _pid == 0:  # ---- child: isolated so a UB segfault can't kill the parent ----
         try:
+            _arm_child_cpu_limit(int(_subject_fuzz_wall_s()))
             n = _synthesize_c_vectors_impl(c_source_dir, specs, compiler=compiler)
             out = {}
             for mi, m in enumerate(specs):
@@ -3365,7 +3422,7 @@ def synthesize_c_vectors(c_source_dir, specs, *, compiler: str = "gcc") -> int:
         except BaseException:  # noqa: BLE001
             _os._exit(70)
     # ---- parent ----
-    _, status = _os.waitpid(_pid, 0)
+    status = _bounded_waitpid(_pid, _subject_fuzz_wall_s() + 30)
     crashed = _os.WIFSIGNALED(status) or (
         _os.WIFEXITED(status) and _os.WEXITSTATUS(status) != 0)
     try:
