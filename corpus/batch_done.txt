@@ -127,3 +127,12 @@ fixedpoint3
 intmath3
 reduce
 reduce
+strchar
+datetime
+colorpack
+crcstep
+mix32c
+prng4
+numtheory2
+fixedpoint4
+modmath3

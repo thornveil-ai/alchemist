@@ -1804,22 +1804,172 @@
       "out_tokens": 1168,
       "llm_calls": 10,
       "elapsed_s": 50.8
+    },
+    {
+      "subject": "strchar",
+      "status": "ok",
+      "total": 10,
+      "verified": 0,
+      "refused": 10,
+      "pairs_captured": 0,
+      "escalations": 10,
+      "reasons": {
+        "LLM returned empty": 10
+      },
+      "won_via": {},
+      "out_tokens": 136175,
+      "llm_calls": 202,
+      "elapsed_s": 867.4
+    },
+    {
+      "subject": "datetime",
+      "status": "ok",
+      "total": 9,
+      "verified": 0,
+      "refused": 9,
+      "pairs_captured": 0,
+      "escalations": 9,
+      "reasons": {
+        "LLM returned empty": 8,
+        "no verifiable test vectors": 1
+      },
+      "won_via": {},
+      "out_tokens": 23900,
+      "llm_calls": 160,
+      "elapsed_s": 235.1
+    },
+    {
+      "subject": "colorpack",
+      "status": "ok",
+      "total": 9,
+      "verified": 9,
+      "refused": 0,
+      "pairs_captured": 9,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 9
+      },
+      "out_tokens": 1089,
+      "llm_calls": 9,
+      "elapsed_s": 61.4
+    },
+    {
+      "subject": "crcstep",
+      "status": "ok",
+      "total": 6,
+      "verified": 6,
+      "refused": 0,
+      "pairs_captured": 6,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "multi_sample": 1,
+        "single": 5
+      },
+      "out_tokens": 1474,
+      "llm_calls": 13,
+      "elapsed_s": 56.3
+    },
+    {
+      "subject": "mix32c",
+      "status": "ok",
+      "total": 9,
+      "verified": 9,
+      "refused": 0,
+      "pairs_captured": 9,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "multi_sample": 4,
+        "single": 5
+      },
+      "out_tokens": 6414,
+      "llm_calls": 45,
+      "elapsed_s": 99.7
+    },
+    {
+      "subject": "prng4",
+      "status": "ok",
+      "total": 9,
+      "verified": 9,
+      "refused": 0,
+      "pairs_captured": 9,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 8,
+        "multi_sample": 1
+      },
+      "out_tokens": 8040,
+      "llm_calls": 16,
+      "elapsed_s": 103.7
+    },
+    {
+      "subject": "numtheory2",
+      "status": "ok",
+      "total": 10,
+      "verified": 10,
+      "refused": 0,
+      "pairs_captured": 10,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 10
+      },
+      "out_tokens": 1302,
+      "llm_calls": 10,
+      "elapsed_s": 52.2
+    },
+    {
+      "subject": "fixedpoint4",
+      "status": "ok",
+      "total": 11,
+      "verified": 11,
+      "refused": 0,
+      "pairs_captured": 11,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 11
+      },
+      "out_tokens": 2559,
+      "llm_calls": 18,
+      "elapsed_s": 67.4
+    },
+    {
+      "subject": "modmath3",
+      "status": "ok",
+      "total": 7,
+      "verified": 5,
+      "refused": 2,
+      "pairs_captured": 5,
+      "escalations": 2,
+      "reasons": {
+        "no verifiable test vectors": 2
+      },
+      "won_via": {
+        "single": 5
+      },
+      "out_tokens": 733,
+      "llm_calls": 5,
+      "elapsed_s": 1090.3
     }
   ],
   "totals": {
-    "subjects_ok": 103,
-    "functions": 671,
-    "verified": 221,
-    "pairs_captured": 221,
-    "escalations": 450,
+    "subjects_ok": 112,
+    "functions": 751,
+    "verified": 280,
+    "pairs_captured": 280,
+    "escalations": 471,
     "escalations_model_hard": 0,
-    "escalations_drafter_empty": 109,
-    "escalations_oracle_gap": 198,
+    "escalations_drafter_empty": 107,
+    "escalations_oracle_gap": 201,
     "escalations_reason_unclear": 18,
-    "out_tokens": 1039835,
+    "out_tokens": 1221521,
     "refusal_reason_histogram": {
-      "no verifiable test vectors": 250,
-      "LLM returned empty": 175,
+      "no verifiable test vectors": 253,
+      "LLM returned empty": 193,
       "Checking parson-core v0.1.0 (/tmp/parson": 14,
       "no correctness test available for this f": 7,
       "Checking http_parser v0.1.0 (/tmp/hpNEMO": 2,
@@ -1827,9 +1977,9 @@
       "Compiling siphash v0.1.0 (/tmp/libbench_": 1
     },
     "won_via_histogram": {
-      "single": 184,
+      "single": 237,
       "cached": 19,
-      "multi_sample": 18
+      "multi_sample": 24
     }
   }
 }
