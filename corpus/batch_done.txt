@@ -116,3 +116,14 @@ bitops2
 encoding2
 reduce
 checksums2
+mix32b
+mix64b
+prng3
+numtheory
+modmath2
+hashes3
+satmath2
+fixedpoint3
+intmath3
+reduce
+reduce
