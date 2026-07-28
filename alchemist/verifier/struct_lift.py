@@ -194,11 +194,20 @@ def _fields_from_body(body: str) -> list[Field]:
         if not decl:
             continue
         arr = None
-        am = _ARR_RE.search(decl)
-        if am:
-            dim = am.group(1)
-            arr = int(dim) if dim.isdigit() else dim
-            decl = (decl[:am.start()] + decl[am.end():]).strip()
+        dims = _ARR_RE.findall(decl)
+        if dims:
+            # Multi-dim arrays (`WORD s[4][256]`) flatten to one contiguous Rust array
+            # (`[u32; 1024]`) — layout-identical under repr(C) and the right SIZE, which
+            # a naive first-dim-only parse got wrong (mangling the name to `s[256]`).
+            _nums = [int(d) for d in dims if d.isdigit()]
+            if len(_nums) == len(dims):
+                _prod = 1
+                for _n in _nums:
+                    _prod *= _n
+                arr = _prod
+            else:
+                arr = dims[0] if not dims[0].isdigit() else int(dims[0])
+            decl = _ARR_RE.sub("", decl).strip()
         is_ptr = "*" in decl
         decl = decl.replace("*", " ")
         parts = decl.split()

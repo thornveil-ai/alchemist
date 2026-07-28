@@ -1877,6 +1877,54 @@ def _ctypes_struct_cls(name, fields):
     return type(name + "_C", (ctypes.Structure,), {"_fields_": cf})
 
 
+def _block_size_fallback(*names) -> int:
+    """Cipher block size (bytes) by well-known algorithm name, since the in/out params
+    are unsized `BYTE in[]`. AES=16, DES/3DES/Blowfish/TEA/CAST=8, else 16."""
+    hay = " ".join(str(n) for n in names).lower()
+    for key, n in (("aes", 16), ("rijndael", 16), ("twofish", 16), ("serpent", 16),
+                   ("3des", 8), ("des", 8), ("blowfish", 8), ("xtea", 8), ("tea", 8),
+                   ("cast", 8), ("idea", 8)):
+        if key in hay:
+            return n
+    return 16
+
+
+def classify_block_cipher(by_name, structs):
+    """BLOCK CIPHER with a STRUCT key-schedule carrier: `setup(const key[], S*, len)` +
+    `encrypt(const in[], out[], const S*)` sharing a multi-field struct S (Blowfish).
+    Distinct from cipher_seq (RC4-style keystream init+gen). Optionally captures a
+    matching `decrypt`. Returns a group dict or None."""
+    from alchemist.verifier import struct_lift as _sl
+    setups: dict[str, tuple] = {}
+    encs: dict[str, list] = {}
+    for name, sig in by_name.items():
+        ps = [(p[1] or "").strip() for p in (sig.params or [])]
+        if (sig.return_type or "").strip() != "void" or len(ps) != 3:
+            continue
+        # setup(const byte key[], S*, int/size_t len)
+        if _is_const_byte_buf(ps[0]) and _INT_C_TYPES.match(ps[2]):
+            m = _STRUCT_PTR_RE.match(re.sub(r"^const\s+", "", ps[1]))
+            if (m and m.group(1) in structs
+                    and _sl.single_scalar_field(structs[m.group(1)]) is None
+                    and not any(f.is_ptr for f in structs[m.group(1)])):
+                setups.setdefault(m.group(1), (name, sig))
+        # encrypt(const byte in[], byte out[], const S*)
+        elif _is_const_byte_buf(ps[0]) and _is_mut_byte_buf(ps[1]):
+            m = _STRUCT_PTR_RE.match(re.sub(r"^const\s+", "", ps[2]))
+            if m and m.group(1) in structs:
+                encs.setdefault(m.group(1), []).append((name, sig))
+    for sname, setup in setups.items():
+        elist = encs.get(sname) or []
+        enc = next((e for e in elist if "decrypt" not in e[0].lower()), None)
+        if enc is None:
+            continue
+        dec = next((e for e in elist if "decrypt" in e[0].lower()), None)
+        return {"struct": sname, "rust": _sl.rust_struct_name(sname),
+                "fields": structs[sname], "setup": setup, "encrypt": enc,
+                "decrypt": dec, "block_size": _block_size_fallback(enc[0], sname)}
+    return None
+
+
 def classify_cipher_sequence(by_name, structs):
     """Find init(S*, const byte*, int) + gen(S*, byte*, int) sharing a multi-field,
     pointer-free struct S (RC4/arcfour-shaped stream ciphers). Returns a group dict or None."""
@@ -2861,6 +2909,26 @@ def build_diff_config(
             ))
             used_signatures.append(by_name[_cs["init"][0]])
             used_signatures.append(by_name[_gen_name])
+    _bc = classify_block_cipher(by_name, _structs)
+    if _bc is not None:
+        _bffi = struct_lift.emit_ffi_struct(_bc["rust"], _bc["fields"])
+        if _bffi is not None:
+            _struct_defs.append(_bffi)
+            _typedef_overrides[_bc["struct"]] = _bc["rust"]
+            _enc = _bc["encrypt"][0]
+            _bs = _bc["block_size"]
+            harnesses.append(AlgorithmHarness(
+                algorithm=_enc,
+                category="block_cipher",
+                rust_call=f"rust_{_enc}(key.clone(), block.clone())",
+                c_call=f"c_{_enc}(key, block)",
+                cases=2000,
+                input_strategy=(f"(prop::collection::vec(any::<u8>(), 1..56), "
+                                f"prop::collection::vec(any::<u8>(), {_bs}..={_bs}))"),
+                seq_struct=_bc["rust"], seq_init=_bc["setup"][0], seq_gen=_enc,
+            ))
+            used_signatures.append(by_name[_bc["setup"][0]])
+            used_signatures.append(by_name[_enc])
     _hs = classify_hash_sequence(by_name, _structs)
     if _hs is not None:
         _fin = _hs["final"][0]

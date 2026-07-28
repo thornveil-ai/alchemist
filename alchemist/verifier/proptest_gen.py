@@ -35,7 +35,7 @@ VALID_CATEGORIES = {
     "checksum", "hash", "cipher", "compression", "decompression",
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
-    "cipher_seq", "alloc_seq", "hash_seq", "hash_digest_seq", "cbuf_out", "cstr_out", "buf_transform",
+    "cipher_seq", "block_cipher", "alloc_seq", "hash_seq", "hash_digest_seq", "cbuf_out", "cstr_out", "buf_transform",
     "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip"}
 
 
@@ -238,6 +238,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_scalar_mutator_block(h)
     if h.category == "cipher_seq":
         return _proptest_cipher_seq_block(h)
+    if h.category == "block_cipher":
+        return _proptest_block_cipher(h)
     if h.category == "alloc_seq":
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
@@ -514,6 +516,23 @@ def _proptest_cipher_seq_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference((key, outlen) in {strat}) {{
                 prop_assert_eq!(rust_{h.algorithm}(key.clone(), outlen), c_{h.algorithm}(key, outlen));
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_block_cipher(h: AlgorithmHarness) -> str:
+    """Block-cipher differential: key_setup(key) then encrypt(one block), compare bytes."""
+    strat = h.input_strategy or (
+        "(prop::collection::vec(any::<u8>(), 1..56), "
+        "prop::collection::vec(any::<u8>(), 8..=8))")
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference((key, block) in {strat}) {{
+                prop_assert_eq!(rust_{h.algorithm}(key.clone(), block.clone()), c_{h.algorithm}(key, block));
             }}
         }}
     """).rstrip()

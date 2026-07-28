@@ -848,6 +848,37 @@ def plan_adapters(
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
                                f"{fin_fn.name} (hash digest seq)",
                 ))
+            elif h.category == "block_cipher":
+                # Block cipher w/ struct key-schedule carrier: setup(key, S*, len) then
+                # encrypt(in_block, out_block, &S). Compare the ciphertext block.
+                setup_fn = _pick_unambiguous(h.seq_init, api)
+                enc_fn = _pick_unambiguous(h.algorithm, api)
+                if setup_fn is None or enc_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt block-cipher '{h.algorithm}': setup/encrypt fn not found")
+                ci = setup_fn.crate_ident
+                st = h.seq_struct or "State"
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(key: Vec<u8>, block: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut ks = {ci}::{st}::default();\n"
+                    f"    {ci}::{setup_fn.name}(&key, &mut ks, key.len());\n"
+                    f"    let mut out = vec![0u8; block.len()];\n"
+                    f"    {enc_fn.crate_ident}::{enc_fn.name}(&block, &mut out, &ks);\n"
+                    f"    out\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(key: Vec<u8>, block: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut ks: {ffi_ident}::{st} = unsafe {{ core::mem::zeroed() }};\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(key.as_ptr() as *const _, &mut ks as *mut _, key.len() as _); }}\n"
+                    f"    let mut out = vec![0u8; block.len()];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(block.as_ptr() as *const _, out.as_mut_ptr() as *mut _, &ks as *const _); }}\n"
+                    f"    out\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={setup_fn.crate, enc_fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{setup_fn.name}+{enc_fn.name} (block cipher)",
+                ))
             elif h.category == "hash_seq":
                 init_fn = _pick_unambiguous(h.seq_init, api)
                 upd_fn = _pick_unambiguous(h.seq_gen, api)
