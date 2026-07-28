@@ -229,6 +229,20 @@ def normalize_spec(
             new_ret = re.sub(r"\bResult\s*<\s*u64\b", "Result<usize", new_ret)
             notes.append(f"{spec.name}: return {prev} → {new_ret}")
 
+    # De-Optionize a scalar-int RETURN: the byte-exact differential compares the
+    # raw C scalar return (e.g. `int` -1 from ilog2), so `Option<i32>` can never
+    # typecheck against the oracle's plain-int assertions and fails the WHOLE
+    # crate's shared test-module compile — poisoning every sibling function. The
+    # extractor's idiomatic Option-lift is wrong on the differential path; use the
+    # faithful C scalar. Pointer/Box/Vec Options (real ownership) are left alone.
+    _opt_scalar = re.fullmatch(
+        r"Option\s*<\s*(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)\s*>",
+        new_ret.strip())
+    if _opt_scalar:
+        prev = new_ret
+        new_ret = _opt_scalar.group(1)
+        notes.append(f"{spec.name}: return {prev} → {new_ret} (de-opt scalar for differential)")
+
     updates: dict = {"inputs": new_inputs}
     if new_ret != orig_ret:
         updates["return_type"] = new_ret
