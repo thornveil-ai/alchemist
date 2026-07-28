@@ -440,6 +440,28 @@ def _emit_cipher_seq_test(fn_name: str, vec, idx: int) -> str:
     return "".join(lines)
 
 
+def _emit_stream_xor_test(fn_name: str, vec, idx: int) -> str:
+    """Keyed stream cipher (ChaCha20/Salsa20): call the free fn
+    `f(key, nonce, counter, in, out, len)` with the fuzzed inputs and assert the
+    ciphertext equals the C oracle. tolerance = stream_xor|{counter_ty}."""
+    parts = (vec.tolerance or "").split("|")
+    ct = parts[1] if len(parts) > 1 else "u32"
+    key = vec.inputs.get("__key__", "&[]")
+    nonce = vec.inputs.get("__nonce__", "&[]")
+    counter = vec.inputs.get("__counter__", "0")
+    data = vec.inputs.get("__data__", "&[]")
+    lines = [f"    #[test]\n    fn test_{fn_name}_stream_{idx}() {{\n"]
+    lines.append(f"        let key: &[u8] = {key};\n")
+    lines.append(f"        let nonce: &[u8] = {nonce};\n")
+    lines.append(f"        let counter: {ct} = {counter};\n")
+    lines.append(f"        let data: &[u8] = {data};\n")
+    lines.append("        let mut out = alloc::vec![0u8; data.len()];\n")
+    lines.append(f"        super::{fn_name}(key, nonce, counter, data, &mut out, data.len());\n")
+    lines.append(f"        assert_eq!(&out[..], {vec.expected_output}, \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_construct_observe_test(fn_name: str, vec, idx: int) -> str:
     """Tagged-union DOM (parson): build a value with a scalar constructor, then observe
     it with a scalar getter, and assert the observed scalar equals the C oracle. The pair
@@ -753,6 +775,8 @@ def _emit_spec_test(
         return _emit_state_observer_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("cipher_seq"):
         return _emit_cipher_seq_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("stream_xor"):
+        return _emit_stream_xor_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("construct_observe"):
         return _emit_construct_observe_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("scalar_mutator"):

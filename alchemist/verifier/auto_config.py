@@ -2944,6 +2944,55 @@ def classify_stream_xor(by_name):
     return None
 
 
+def fuzz_stream_xor_vectors(dll, group, *, count: int = 12):
+    """Drive the compiled C stream cipher (ChaCha20/Salsa20) over random
+    key/nonce/counter/plaintext and capture the ciphertext as per-function fill-loop
+    vectors. Lengths mix partial + multi-block so the tail path is exercised."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED, _bytes_to_rust_literal
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    fn = group["fn"]
+    K = group["key_len"]
+    N = group["nonce_len"]
+    ct = group["counter_ty"]
+    try:
+        c_fn = getattr(dll, fn)
+    except AttributeError:
+        return {}
+    ctr_ctype = ctypes.c_uint64 if ct == "u64" else ctypes.c_uint32
+    c_fn.restype = None
+    c_fn.argtypes = (ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_ubyte),
+                     ctr_ctype, ctypes.POINTER(ctypes.c_ubyte),
+                     ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t)
+    ctr_hi = (1 << (64 if ct == "u64" else 32)) - 1
+    rng = _rng(_FUZZ_SEED)
+    vecs = []
+    fixed_lens = [0, 1, 63, 64, 65, 200]
+    for vi in range(count):
+        key = bytes(rng.randrange(0, 256) for _ in range(K))
+        nonce = bytes(rng.randrange(0, 256) for _ in range(N))
+        counter = rng.randrange(0, ctr_hi + 1)
+        dlen = fixed_lens[vi] if vi < len(fixed_lens) else rng.randrange(0, 300)
+        data = bytes(rng.randrange(0, 256) for _ in range(dlen))
+        kbuf = (ctypes.c_ubyte * K)(*key)
+        nbuf = (ctypes.c_ubyte * N)(*nonce)
+        dbuf = (ctypes.c_ubyte * dlen)(*data) if dlen else (ctypes.c_ubyte * 0)()
+        obuf = (ctypes.c_ubyte * dlen)() if dlen else (ctypes.c_ubyte * 0)()
+        c_fn(kbuf, nbuf, ctr_ctype(counter), dbuf, obuf, dlen)
+        out = bytes(obuf[i] for i in range(dlen))
+        vecs.append(SpecTestVector(
+            description=f"stream_k{K}_n{N}_ctr{counter}_len{dlen}",
+            source=f"C reference (stream cipher): {fn}",
+            inputs={"__key__": _bytes_to_rust_literal(key),
+                    "__nonce__": _bytes_to_rust_literal(nonce),
+                    "__counter__": str(counter),
+                    "__data__": _bytes_to_rust_literal(data)},
+            expected_output=_bytes_to_rust_literal(out),
+            tolerance=f"stream_xor|{ct}",
+        ))
+    return {fn: vecs}
+
+
 def classify_bcon_codec(by_name):
     """B-Con-style byte codec pair (base64): an encoder taking a trailing int flag
     and a decoder, both `size_t f(const byte in[], byte out[], size_t len, ...)`.
@@ -3939,6 +3988,17 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 for alg in getattr(module, "algorithms", None) or []:
                     if alg.name in _byfn and _byfn[alg.name] and not getattr(alg, "test_vectors", None):
                         alg.test_vectors = _byfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _sx = classify_stream_xor(by_name)
+        if _sx is not None:
+            _sxbyfn = fuzz_stream_xor_vectors(dll, _sx)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _sxbyfn and _sxbyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _sxbyfn[alg.name]
                         augmented += 1
     except Exception:  # noqa: BLE001
         pass
