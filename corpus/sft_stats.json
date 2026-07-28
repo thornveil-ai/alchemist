@@ -1,12 +1,12 @@
 {
-  "records": 307,
+  "records": 331,
   "by_category": {
-    "intmath": 93,
-    "hash": 62,
+    "intmath": 107,
+    "hash": 63,
     "prng": 33,
     "fixedpoint": 32,
-    "bitops": 21,
-    "checksum": 20,
+    "bitops": 28,
+    "checksum": 22,
     "utility": 13,
     "graphics": 10,
     "string": 9,
@@ -15,8 +15,8 @@
     "decompression": 1
   },
   "by_won_via": {
-    "single": 264,
-    "cached": 16,
+    "single": 267,
+    "cached": 37,
     "multi_sample": 24,
     "frontier-claude": 3
   },

@@ -2627,33 +2627,218 @@
       "out_tokens": 57014,
       "llm_calls": 110,
       "elapsed_s": 351.2
+    },
+    {
+      "subject": "datetime",
+      "status": "ok",
+      "total": 9,
+      "verified": 0,
+      "refused": 9,
+      "pairs_captured": 0,
+      "escalations": 9,
+      "reasons": {
+        "LLM returned empty": 9
+      },
+      "won_via": {},
+      "out_tokens": 36468,
+      "llm_calls": 181,
+      "elapsed_s": 311.6
+    },
+    {
+      "subject": "encoding2",
+      "status": "ok",
+      "total": 5,
+      "verified": 5,
+      "refused": 0,
+      "pairs_captured": 5,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 5
+      },
+      "out_tokens": 464,
+      "llm_calls": 5,
+      "elapsed_s": 45.8
+    },
+    {
+      "subject": "reduce",
+      "status": "ok",
+      "total": 9,
+      "verified": 0,
+      "refused": 9,
+      "pairs_captured": 0,
+      "escalations": 9,
+      "reasons": {
+        "LLM returned empty": 9
+      },
+      "won_via": {},
+      "out_tokens": 12466,
+      "llm_calls": 104,
+      "elapsed_s": 183.8
+    },
+    {
+      "subject": "strchar",
+      "status": "ok",
+      "total": 10,
+      "verified": 0,
+      "refused": 10,
+      "pairs_captured": 0,
+      "escalations": 10,
+      "reasons": {
+        "cargo output (reason-capture bug)": 1,
+        "LLM returned empty": 9
+      },
+      "won_via": {},
+      "out_tokens": 118108,
+      "llm_calls": 175,
+      "elapsed_s": 888.7
+    },
+    {
+      "subject": "datetime",
+      "status": "ok",
+      "total": 9,
+      "verified": 6,
+      "refused": 3,
+      "pairs_captured": 6,
+      "escalations": 3,
+      "reasons": {
+        "cargo output (reason-capture bug)": 1,
+        "LLM returned empty": 2
+      },
+      "won_via": {
+        "cached": 6
+      },
+      "out_tokens": 60605,
+      "llm_calls": 48,
+      "elapsed_s": 410.9
+    },
+    {
+      "subject": "reduce",
+      "status": "ok",
+      "total": 9,
+      "verified": 9,
+      "refused": 0,
+      "pairs_captured": 9,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 9
+      },
+      "out_tokens": 1084,
+      "llm_calls": 9,
+      "elapsed_s": 27.0
+    },
+    {
+      "subject": "strchar",
+      "status": "ok",
+      "total": 10,
+      "verified": 0,
+      "refused": 10,
+      "pairs_captured": 0,
+      "escalations": 10,
+      "reasons": {
+        "LLM returned empty": 10
+      },
+      "won_via": {},
+      "out_tokens": 127330,
+      "llm_calls": 178,
+      "elapsed_s": 827.4
+    },
+    {
+      "subject": "morehash",
+      "status": "ok",
+      "total": 8,
+      "verified": 3,
+      "refused": 5,
+      "pairs_captured": 3,
+      "escalations": 5,
+      "reasons": {
+        "LLM returned empty": 5
+      },
+      "won_via": {
+        "cached": 2,
+        "single": 1
+      },
+      "out_tokens": 139,
+      "llm_calls": 1,
+      "elapsed_s": 14.9
+    },
+    {
+      "subject": "crc",
+      "status": "ok",
+      "total": 10,
+      "verified": 3,
+      "refused": 7,
+      "pairs_captured": 3,
+      "escalations": 7,
+      "reasons": {
+        "LLM returned empty": 7
+      },
+      "won_via": {
+        "cached": 2,
+        "single": 1
+      },
+      "out_tokens": 142,
+      "llm_calls": 1,
+      "elapsed_s": 51.4
+    },
+    {
+      "subject": "checksums2",
+      "status": "ok",
+      "total": 0,
+      "verified": 0,
+      "refused": 0,
+      "pairs_captured": 0,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {},
+      "out_tokens": 0,
+      "llm_calls": 0,
+      "elapsed_s": 37.5
+    },
+    {
+      "subject": "bitops2",
+      "status": "ok",
+      "total": 13,
+      "verified": 13,
+      "refused": 0,
+      "pairs_captured": 13,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "cached": 11,
+        "single": 2
+      },
+      "out_tokens": 457,
+      "llm_calls": 2,
+      "elapsed_s": 59.5
     }
   ],
   "totals": {
-    "subjects_ok": 154,
-    "functions": 974,
-    "verified": 342,
-    "pairs_captured": 342,
-    "escalations": 632,
+    "subjects_ok": 165,
+    "functions": 1066,
+    "verified": 381,
+    "pairs_captured": 381,
+    "escalations": 685,
     "escalations_model_hard": 0,
-    "escalations_drafter_empty": 163,
+    "escalations_drafter_empty": 214,
     "escalations_oracle_gap": 203,
-    "escalations_reason_unclear": 20,
-    "out_tokens": 1759716,
+    "escalations_reason_unclear": 22,
+    "out_tokens": 2116979,
     "refusal_reason_histogram": {
+      "LLM returned empty": 337,
       "no verifiable test vectors": 317,
-      "LLM returned empty": 286,
       "Checking parson-core v0.1.0 (/tmp/parson": 14,
       "no correctness test available for this f": 8,
+      "cargo output (reason-capture bug)": 4,
       "Checking http_parser v0.1.0 (/tmp/hpNEMO": 2,
-      "cargo output (reason-capture bug)": 2,
       "Checking fix16 v0.1.0 (/tmp/verano_fix16": 1,
       "Compiling siphash v0.1.0 (/tmp/libbench_": 1,
       "refused": 1
     },
     "won_via_histogram": {
-      "single": 298,
-      "cached": 19,
+      "single": 316,
+      "cached": 40,
       "multi_sample": 25
     }
   }

@@ -179,3 +179,14 @@ datetime
 encoding2
 reduce
 strchar
+datetime
+encoding2
+reduce
+strchar
+datetime
+reduce
+strchar
+morehash
+crc
+checksums2
+bitops2

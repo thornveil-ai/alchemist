@@ -76,7 +76,7 @@ _CAT_RULES = [
     ("bitops",     ["popcount", "clz", "ctz", "gray", "bswap", "rotl", "rotr",
                      "reverse_bit", "_bits", "bit_", "pow2", "sign_extend",
                      "lowest_set", "trailing_zeros", "isolate", "clear_low",
-                     "reflect", "combine2", "round_up"]),
+                     "reflect", "combine2", "round_up", "nlz", "hex_val", "hex"]),
     ("string",     ["str", "ascii", "utf", "atoi", "palindrome", "word", "char",
                      "upper", "lower", "regex"]),
     ("intmath",    ["isqrt", "gcd", "factorial", "fib", "prime", "collatz", "digit",
@@ -87,7 +87,7 @@ _CAT_RULES = [
                      "square", "geomsum", "sumto", "reverse_dec", "reverse_base",
                      "count_div", "sum_of", "sum_prop", "sum_div", "sat_", "clamp",
                      "abs", "imax", "imin", "umax", "umin", "min3", "max3",
-                     "midpoint", "sign", "wrap_inc", "is_pow2", "midpoint"]),
+                     "midpoint", "sign", "wrap_inc", "is_pow2", "midpoint", "leap", "month", "secs", "weekday", "quarter", "hms", "day", "bcd", "zigzag", "dot", "argmax", "_u8", "run_equal", "range_"]),
     ("parser",     ["parse", "lex", "token", "json", "http"]),
 ]
 
