@@ -1,8 +1,8 @@
 {
-  "records": 338,
+  "records": 339,
   "by_category": {
     "intmath": 107,
-    "hash": 63,
+    "hash": 64,
     "prng": 33,
     "fixedpoint": 32,
     "bitops": 29,
@@ -18,7 +18,7 @@
     "single": 267,
     "cached": 44,
     "multi_sample": 24,
-    "frontier-claude": 3
+    "frontier-claude": 4
   },
   "with_rationale": 25
 }
