@@ -401,28 +401,69 @@
       "out_tokens": 0,
       "llm_calls": 0,
       "elapsed_s": 4.7
+    },
+    {
+      "subject": "datetime",
+      "status": "ok",
+      "total": 9,
+      "verified": 6,
+      "refused": 3,
+      "pairs_captured": 6,
+      "escalations": 3,
+      "reasons": {
+        "cargo output (reason-capture bug)": 1,
+        "LLM returned empty": 2
+      },
+      "won_via": {
+        "cached": 6
+      },
+      "out_tokens": 60454,
+      "llm_calls": 49,
+      "elapsed_s": 372.4
+    },
+    {
+      "subject": "datetime",
+      "status": "ok",
+      "total": 9,
+      "verified": 6,
+      "refused": 3,
+      "pairs_captured": 6,
+      "escalations": 3,
+      "reasons": {
+        "thread 'datetime::tests::test_day_of_yea": 1,
+        "LLM returned empty": 2
+      },
+      "won_via": {
+        "cached": 6
+      },
+      "out_tokens": 55889,
+      "llm_calls": 49,
+      "elapsed_s": 364.1
     }
   ],
   "totals": {
-    "subjects_ok": 25,
-    "functions": 88,
-    "verified": 13,
-    "pairs_captured": 13,
-    "escalations": 75,
-    "escalations_model_hard": 0,
-    "escalations_drafter_empty": 10,
+    "subjects_ok": 27,
+    "functions": 106,
+    "verified": 25,
+    "pairs_captured": 25,
+    "escalations": 81,
+    "escalations_model_hard": 1,
+    "escalations_drafter_empty": 14,
     "escalations_oracle_gap": 65,
-    "escalations_reason_unclear": 0,
-    "out_tokens": 143036,
+    "escalations_compile_fail": 0,
+    "escalations_reason_unclear": 1,
+    "out_tokens": 259379,
     "refusal_reason_histogram": {
       "no verifiable test vectors": 64,
-      "LLM returned empty": 10,
-      "no correctness test available for this f": 1
+      "LLM returned empty": 14,
+      "no correctness test available for this f": 1,
+      "cargo output (reason-capture bug)": 1,
+      "thread 'datetime::tests::test_day_of_yea": 1
     },
     "won_via_histogram": {
       "single": 5,
       "multi_sample": 1,
-      "cached": 7
+      "cached": 19
     }
   }
 }
