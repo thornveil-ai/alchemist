@@ -2107,9 +2107,18 @@ _HASH_BYTE_BUF = re.compile(
     r"[^,]*?(\[\s*\d*\s*\]|\*)\s*$")
 
 
+_CONST_VOID_PTR_RE = re.compile(r"^(?:const\s+void|void\s+const)\s*\*\s*$")
+
+
 def _is_const_byte_buf(t: str) -> bool:
-    m = _HASH_BYTE_BUF.match((t or "").strip())
-    return bool(m and m.group("const"))
+    ts = (t or "").strip()
+    m = _HASH_BYTE_BUF.match(ts)
+    if m and m.group("const"):
+        return True
+    # `const void*` / `void const*` — a raw READ-ONLY byte buffer, the WjCryptLib
+    # hash-update idiom (`Update(ctx, void const* buf, u32 len)`). Plain mutable
+    # `void*` is intentionally NOT accepted here.
+    return bool(_CONST_VOID_PTR_RE.match(ts))
 
 
 def _is_mut_byte_buf(t: str) -> bool:
@@ -2147,6 +2156,21 @@ def _digest_len_from_specs(specs, fn_name) -> "int | None":
     return None
 
 
+def _digest_struct_name(t, structs, ctx_struct):
+    """If `t` is a pointer to a STRUCT (other than the context struct) present in
+    `structs`, return that struct's name; else None. Accepts the struct-wrapped digest
+    out-param `final(ctx, SHA256_HASH* out)` (WjCryptLib), the struct variant of
+    `final(ctx, BYTE out[])`. The name-fallback digest length is the real guard: a
+    struct we cannot map to a known digest size gets rejected downstream."""
+    m = _STRUCT_PTR_RE.match(re.sub(r"^const\s+", "", (t or "").strip()))
+    if not m:
+        return None
+    sn = m.group(1)
+    if sn == ctx_struct or sn not in structs:
+        return None
+    return sn
+
+
 def classify_hash_digest_sequence(by_name, structs, specs=None):
     """CONTEXT-HASH sequence: `init(S*)` + `update(S*, const byte*, int)` +
     `final(S*, byte* out)` sharing a MULTI-FIELD, pointer-free struct S, where
@@ -2171,28 +2195,34 @@ def classify_hash_digest_sequence(by_name, structs, specs=None):
         if any(f.is_ptr for f in fields):
             continue
         init = update = final = transform = None
+        digest_struct = None
         for name, sig in fns_:
             ps = [(p[1] or "").strip() for p in sig.params]
             retv = (sig.return_type or "").strip() == "void"
+            _dsn = _digest_struct_name(ps[1], structs, sname) if len(ps) == 2 else None
             if len(ps) == 1 and retv:
                 init = (name, sig)
             elif len(ps) == 3 and _is_const_byte_buf(ps[1]) and _INT_C_TYPES.match(ps[2]) and retv:
                 update = (name, sig)
             elif len(ps) == 2 and _is_mut_byte_buf(ps[1]) and retv:
                 final = (name, sig)
+            elif len(ps) == 2 and _dsn is not None and retv:
+                final = (name, sig)  # final(ctx, SHA256_HASH* out) — struct-wrapped digest
+                digest_struct = _dsn
             elif len(ps) == 2 and _is_const_byte_buf(ps[1]) and retv:
                 transform = (name, sig)  # transform(ctx, const block[]) — block compressor
         if not (init and update and final):
             continue
         digest_len = _digest_len_from_specs(specs, final[0])
         if digest_len is None:
-            digest_len = _digest_len_fallback(final[0], sname)
+            digest_len = _digest_len_fallback(final[0], (sname + " " + (digest_struct or "")))
         if digest_len is None:
             continue
         rust = _rust_name_from_spec(specs, init[0], _sl.rust_struct_name(sname))
         return {"struct": sname, "rust": rust, "fields": fields,
                 "init": init, "update": update, "final": final,
-                "transform": transform, "digest_len": digest_len}
+                "transform": transform, "digest_len": digest_len,
+                "digest_struct": digest_struct}
     return None
 
 
@@ -2848,6 +2878,12 @@ def build_diff_config(
         if _dffi is not None:
             _struct_defs.append(_dffi)
             _typedef_overrides[_dgs["struct"]] = _dgs["rust"]
+            # Struct-wrapped digest out (WjCryptLib SHA256_HASH{uint8_t bytes[N]}):
+            # map the wrapper struct to `[u8; N]` at the FFI boundary so the Finalise
+            # extern becomes `*mut [u8; N]` (layout-identical, sidesteps the macro-sized
+            # struct parse) and matches the adapter's `out.as_mut_ptr() as *mut _`.
+            if _dgs.get("digest_struct"):
+                _typedef_overrides[_dgs["digest_struct"]] = f"[u8; {_dgs['digest_len']}]"
             harnesses.append(AlgorithmHarness(
                 algorithm=_dfin,
                 category="hash_digest_seq",
