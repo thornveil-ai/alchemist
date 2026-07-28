@@ -1,5 +1,5 @@
 {
-  "records": 342,
+  "records": 343,
   "by_category": {
     "intmath": 107,
     "hash": 67,
@@ -11,14 +11,14 @@
     "utility": 13,
     "graphics": 10,
     "encoding": 8,
-    "cipher": 6,
+    "cipher": 7,
     "decompression": 1
   },
   "by_won_via": {
     "single": 267,
     "cached": 44,
     "multi_sample": 24,
-    "frontier-claude": 7
+    "frontier-claude": 8
   },
   "with_rationale": 25
 }
