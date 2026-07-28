@@ -848,6 +848,32 @@ def plan_adapters(
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
                                f"{fin_fn.name} (hash digest seq)",
                 ))
+            elif h.category == "stream_xor":
+                # ChaCha20/Salsa20 keyed stream cipher: encrypt = XOR plaintext with the
+                # keystream. rust/c wrappers take (key, nonce, counter, data) -> ciphertext.
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt stream cipher '{h.algorithm}': fn not found")
+                ci = fn.crate_ident
+                ct = getattr(h, "sc_counter_ty", "u32") or "u32"
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(key: Vec<u8>, nonce: Vec<u8>, counter: {ct}, data: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut out = vec![0u8; data.len()];\n"
+                    f"    {ci}::{fn.name}(&key, &nonce, counter, &data, &mut out, data.len());\n"
+                    f"    out\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(key: Vec<u8>, nonce: Vec<u8>, counter: {ct}, data: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut out = vec![0u8; data.len()];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(key.as_ptr() as *const _, nonce.as_ptr() as *const _, counter, data.as_ptr() as *const _, out.as_mut_ptr() as *mut _, data.len()); }}\n"
+                    f"    out\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{fn.name} (stream cipher xor)",
+                ))
             elif h.category == "codec_io":
                 # bcon base64: encode(in[], out[], len, flag=0) + decode(in[], out[], len),
                 # both returning the byte count written. Roundtrip: encode then decode,

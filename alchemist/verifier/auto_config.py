@@ -2899,6 +2899,51 @@ def fuzz_parse_sequence_vectors(dll, group, specs=None, *, max_tokens: int = 128
     return out
 
 
+_STREAM_BYTE_ARR = re.compile(
+    r"^(?P<const>const\s+)?(?:BYTE|uint8_t|unsigned\s+char|u8|u_char)\b[^\[]*"
+    r"\[\s*(?P<n>\d*)\s*\]\s*$")
+_STREAM_CTR_TYPES = {
+    "uint32_t": "u32", "WORD": "u32", "unsigned": "u32", "unsigned int": "u32",
+    "u32": "u32", "uint32": "u32",
+    "uint64_t": "u64", "unsigned long": "u64", "unsigned long long": "u64",
+    "u64": "u64", "uint64": "u64",
+}
+
+
+def classify_stream_xor(by_name):
+    """Keyed stream cipher (ChaCha20/Salsa20):
+      void f(const byte key[K], const byte nonce[N], <uint> counter,
+             const byte in[], byte out[], size_t len).
+    Returns {"fn","key_len","nonce_len","counter_ty"} or None. Verified by the
+    stream_xor differential (fuzz key/nonce/counter/plaintext, compare ciphertext)."""
+    for name, sig in by_name.items():
+        if (sig.return_type or "").strip() != "void":
+            continue
+        ps = [(pp[1] or "").strip() for pp in (sig.params or [])]
+        if len(ps) != 6:
+            continue
+        m0 = _STREAM_BYTE_ARR.match(ps[0])
+        m1 = _STREAM_BYTE_ARR.match(ps[1])
+        if not (m0 and m0.group("const") and m0.group("n")):
+            continue
+        if not (m1 and m1.group("const") and m1.group("n")):
+            continue
+        ct = _STREAM_CTR_TYPES.get(ps[2].strip())
+        if ct is None:
+            continue
+        m3 = _STREAM_BYTE_ARR.match(ps[3])
+        m4 = _STREAM_BYTE_ARR.match(ps[4])
+        if not (m3 and m3.group("const") and not m3.group("n")):
+            continue
+        if not (m4 and not m4.group("const") and not m4.group("n")):
+            continue
+        if not _SIZE_T.match(ps[5]):
+            continue
+        return {"fn": name, "key_len": int(m0.group("n")),
+                "nonce_len": int(m1.group("n")), "counter_ty": ct}
+    return None
+
+
 def classify_bcon_codec(by_name):
     """B-Con-style byte codec pair (base64): an encoder taking a trailing int flag
     and a decoder, both `size_t f(const byte in[], byte out[], size_t len, ...)`.
@@ -3037,6 +3082,17 @@ def build_diff_config(
         if _ok:
             used_signatures.append(by_name[_bc["setup"][0]])
             used_signatures.append(by_name[_enc])
+    _sx = classify_stream_xor(by_name)
+    if _sx is not None:
+        _sxfn = _sx["fn"]
+        harnesses.append(AlgorithmHarness(
+            algorithm=_sxfn, category="stream_xor",
+            rust_call=f"rust_{_sxfn}(key.clone(), nonce.clone(), counter, data.clone())",
+            c_call=f"c_{_sxfn}(key, nonce, counter, data)", cases=2000,
+            sc_key_len=_sx["key_len"], sc_nonce_len=_sx["nonce_len"],
+            sc_counter_ty=_sx["counter_ty"],
+        ))
+        used_signatures.append(by_name[_sxfn])
     _codec = classify_bcon_codec(by_name)
     if _codec is not None:
         _enc_n = _codec["encode"]

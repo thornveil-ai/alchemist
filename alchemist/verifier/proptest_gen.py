@@ -36,7 +36,7 @@ VALID_CATEGORIES = {
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
     "cipher_seq", "block_cipher", "alloc_seq", "hash_seq", "hash_digest_seq", "cbuf_out", "cstr_out", "buf_transform",
-    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip", "codec_io"}
+    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip", "codec_io", "stream_xor"}
 
 
 @dataclass
@@ -90,6 +90,10 @@ class AlgorithmHarness:
     bc_sched_r: int = 0
     # codec_io (bcon base64): name of the paired decode fn (encode is `algorithm`).
     codec_decode: str | None = None
+    # stream_xor (ChaCha20/Salsa20): key/nonce byte lengths + counter Rust type.
+    sc_key_len: int = 0
+    sc_nonce_len: int = 0
+    sc_counter_ty: str = "u32"
     init_kinds: list | None = None
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.
@@ -250,6 +254,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_block_cipher(h)
     if h.category == "codec_io":
         return _proptest_codec_io_block(h)
+    if h.category == "stream_xor":
+        return _proptest_stream_xor_block(h)
     if h.category == "alloc_seq":
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
@@ -526,6 +532,33 @@ def _proptest_cipher_seq_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference((key, outlen) in {strat}) {{
                 prop_assert_eq!(rust_{h.algorithm}(key.clone(), outlen), c_{h.algorithm}(key, outlen));
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_stream_xor_block(h: AlgorithmHarness) -> str:
+    """Differential for a keyed stream cipher (ChaCha20/Salsa20): fuzz a fixed-size
+    key + nonce, a random block counter, and 0..384 bytes of plaintext, then compare
+    the XOR-encrypted ciphertext C-vs-Rust. Random counters exercise the per-block
+    counter increment (incl. wraparound)."""
+    K = h.sc_key_len
+    N = h.sc_nonce_len
+    CT = h.sc_counter_ty
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(
+                (key, nonce, counter, data) in (
+                    prop::collection::vec(any::<u8>(), {K}..={K}),
+                    prop::collection::vec(any::<u8>(), {N}..={N}),
+                    any::<{CT}>(),
+                    prop::collection::vec(any::<u8>(), 0..384),
+                )
+            ) {{
+                prop_assert_eq!({h.rust_call}, {h.c_call});
             }}
         }}
     """).rstrip()

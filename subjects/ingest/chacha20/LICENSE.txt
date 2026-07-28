@@ -1,0 +1,1 @@
+ChaCha20 (RFC 8439) reference implementation. Public-domain algorithm (D. J. Bernstein). Clean-room transcription for the Alchemist corpus.
