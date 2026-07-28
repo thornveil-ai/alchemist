@@ -1636,9 +1636,9 @@ def normalize_scalar_return_types(c_source_dir, specs) -> int:
     _RUST_SCALARS = {"i8", "i16", "i32", "i64", "isize",
                      "u8", "u16", "u32", "u64", "usize", "f32", "f64"}
     _scalar_family = re.compile(
-        r"^(?:bool|i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64"
-        r"|Option\s*<\s*(?:bool|[iu](?:8|16|32|64|size)|f32|f64)\s*>"
-        r"|Result\s*<\s*(?:bool|[iu](?:8|16|32|64|size)|f32|f64)\s*,.*>)$")
+        r"^(?:bool|char|i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64"
+        r"|Option\s*<\s*(?:bool|char|[iu](?:8|16|32|64|size)|f32|f64)\s*>"
+        r"|Result\s*<\s*(?:bool|char|[iu](?:8|16|32|64|size)|f32|f64)\s*,.*>)$")
     try:
         sigs = {si.name: si for si in collect_subject_signatures(Path(c_source_dir))}
         typedefs = _sl.collect_scalar_typedefs(Path(c_source_dir))
