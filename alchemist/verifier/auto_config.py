@@ -1889,6 +1889,11 @@ def _block_size_fallback(*names) -> int:
     return 16
 
 
+_WORD_ARR = re.compile(
+    r"^(?P<const>const\s+)?(?:WORD|uint32_t|unsigned\s+int|u32|uint32)\b[^,]*?"
+    r"\[\s*\d*\s*\]\s*$")
+
+
 def classify_block_cipher(by_name, structs):
     """BLOCK CIPHER with a STRUCT key-schedule carrier: `setup(const key[], S*, len)` +
     `encrypt(const in[], out[], const S*)` sharing a multi-field struct S (Blowfish).
@@ -1921,7 +1926,27 @@ def classify_block_cipher(by_name, structs):
         dec = next((e for e in elist if "decrypt" in e[0].lower()), None)
         return {"struct": sname, "rust": _sl.rust_struct_name(sname),
                 "fields": structs[sname], "setup": setup, "encrypt": enc,
-                "decrypt": dec, "block_size": _block_size_fallback(enc[0], sname)}
+                "decrypt": dec, "block_size": _block_size_fallback(enc[0], sname),
+                "carrier": "struct"}
+    # ARRAY carrier (AES): setup(key[], WORD w[], int keysize) +
+    # encrypt(in[], out[], const WORD w[], int keysize). Round keys are a WORD array,
+    # keysize (bits) is a param derived from key length at the differential.
+    setup_a = enc_a = None
+    for name, sig in by_name.items():
+        ps = [(p[1] or "").strip() for p in (sig.params or [])]
+        if (sig.return_type or "").strip() != "void":
+            continue
+        if (len(ps) == 3 and _is_const_byte_buf(ps[0]) and _WORD_ARR.match(ps[1])
+                and not _WORD_ARR.match(ps[1]).group("const") and _INT_C_TYPES.match(ps[2])):
+            setup_a = (name, sig)
+        elif (len(ps) == 4 and _is_const_byte_buf(ps[0]) and _is_mut_byte_buf(ps[1])
+                and _WORD_ARR.match(ps[2]) and _INT_C_TYPES.match(ps[3])
+                and "decrypt" not in name.lower()):
+            enc_a = (name, sig)
+    if setup_a and enc_a:
+        return {"struct": None, "rust": None, "fields": None,
+                "setup": setup_a, "encrypt": enc_a, "decrypt": None,
+                "block_size": _block_size_fallback(enc_a[0]), "carrier": "array"}
     return None
 
 
@@ -2911,22 +2936,38 @@ def build_diff_config(
             used_signatures.append(by_name[_gen_name])
     _bc = classify_block_cipher(by_name, _structs)
     if _bc is not None:
-        _bffi = struct_lift.emit_ffi_struct(_bc["rust"], _bc["fields"])
-        if _bffi is not None:
-            _struct_defs.append(_bffi)
-            _typedef_overrides[_bc["struct"]] = _bc["rust"]
-            _enc = _bc["encrypt"][0]
-            _bs = _bc["block_size"]
+        _enc = _bc["encrypt"][0]
+        _bs = _bc["block_size"]
+        _ok = True
+        if _bc.get("carrier") == "array":
+            # AES-style WORD round-key array. keysize derived from key length;
+            # keys are exactly 16/24/32 bytes. w[] sized to the AES-256 max (60).
             harnesses.append(AlgorithmHarness(
-                algorithm=_enc,
-                category="block_cipher",
+                algorithm=_enc, category="block_cipher",
                 rust_call=f"rust_{_enc}(key.clone(), block.clone())",
-                c_call=f"c_{_enc}(key, block)",
-                cases=2000,
-                input_strategy=(f"(prop::collection::vec(any::<u8>(), 1..56), "
+                c_call=f"c_{_enc}(key, block)", cases=2000,
+                input_strategy=("(prop::sample::select(vec![16usize, 24usize, 32usize])"
+                                ".prop_flat_map(|n| prop::collection::vec(any::<u8>(), n..=n)), "
                                 f"prop::collection::vec(any::<u8>(), {_bs}..={_bs}))"),
-                seq_struct=_bc["rust"], seq_init=_bc["setup"][0], seq_gen=_enc,
+                seq_init=_bc["setup"][0], seq_gen=_enc,
+                bc_carrier="array", bc_words=60,
             ))
+        else:
+            _bffi = struct_lift.emit_ffi_struct(_bc["rust"], _bc["fields"])
+            if _bffi is not None:
+                _struct_defs.append(_bffi)
+                _typedef_overrides[_bc["struct"]] = _bc["rust"]
+                harnesses.append(AlgorithmHarness(
+                    algorithm=_enc, category="block_cipher",
+                    rust_call=f"rust_{_enc}(key.clone(), block.clone())",
+                    c_call=f"c_{_enc}(key, block)", cases=2000,
+                    input_strategy=(f"(prop::collection::vec(any::<u8>(), 1..56), "
+                                    f"prop::collection::vec(any::<u8>(), {_bs}..={_bs}))"),
+                    seq_struct=_bc["rust"], seq_init=_bc["setup"][0], seq_gen=_enc,
+                ))
+            else:
+                _ok = False
+        if _ok:
             used_signatures.append(by_name[_bc["setup"][0]])
             used_signatures.append(by_name[_enc])
     _hs = classify_hash_sequence(by_name, _structs)

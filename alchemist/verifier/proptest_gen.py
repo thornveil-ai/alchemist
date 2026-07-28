@@ -82,6 +82,9 @@ class AlgorithmHarness:
     seq_gen: str | None = None
     # Cipher init has a trailing drop-N param (WjCryptLib RC4). adapter_gen passes 0.
     seq_init_drop: bool = False
+    # Block-cipher key-schedule carrier: "struct" (Blowfish) or "array" (AES WORD w[]).
+    bc_carrier: str = "struct"
+    bc_words: int = 0  # array-carrier: number of WORD round-key slots to allocate
     init_kinds: list | None = None
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.

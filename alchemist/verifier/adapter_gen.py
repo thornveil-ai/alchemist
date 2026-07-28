@@ -848,6 +848,39 @@ def plan_adapters(
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
                                f"{fin_fn.name} (hash digest seq)",
                 ))
+            elif h.category == "block_cipher" and getattr(h, "bc_carrier", "struct") == "array":
+                # AES-style: round keys in a WORD w[] array + keysize (bits). Alloc a
+                # Vec<u32> (AES-256 max), setup then encrypt one block; keysize=key.len()*8.
+                setup_fn = _pick_unambiguous(h.seq_init, api)
+                enc_fn = _pick_unambiguous(h.algorithm, api)
+                if setup_fn is None or enc_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt block-cipher '{h.algorithm}': setup/encrypt fn not found")
+                ci = setup_fn.crate_ident
+                nw = getattr(h, "bc_words", 60) or 60
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(key: Vec<u8>, block: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let keysize = (key.len() * 8) as i32;\n"
+                    f"    let mut w = vec![0u32; {nw}];\n"
+                    f"    {ci}::{setup_fn.name}(&key, &mut w, keysize);\n"
+                    f"    let mut out = vec![0u8; block.len()];\n"
+                    f"    {enc_fn.crate_ident}::{enc_fn.name}(&block, &mut out, &w, keysize);\n"
+                    f"    out\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(key: Vec<u8>, block: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let keysize = (key.len() * 8) as i32;\n"
+                    f"    let mut w = vec![0u32; {nw}];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(key.as_ptr() as *const _, w.as_mut_ptr() as *mut _, keysize); }}\n"
+                    f"    let mut out = vec![0u8; block.len()];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(block.as_ptr() as *const _, out.as_mut_ptr() as *mut _, w.as_ptr() as *const _, keysize); }}\n"
+                    f"    out\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={setup_fn.crate, enc_fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{setup_fn.name}+{enc_fn.name} (block cipher, array)",
+                ))
             elif h.category == "block_cipher":
                 # Block cipher w/ struct key-schedule carrier: setup(key, S*, len) then
                 # encrypt(in_block, out_block, &S). Compare the ciphertext block.
