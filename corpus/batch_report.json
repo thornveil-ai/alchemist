@@ -2435,22 +2435,118 @@
       "out_tokens": 0,
       "llm_calls": 0,
       "elapsed_s": 33.8
+    },
+    {
+      "subject": "intalg",
+      "status": "ok",
+      "total": 10,
+      "verified": 10,
+      "refused": 0,
+      "pairs_captured": 10,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 10
+      },
+      "out_tokens": 1130,
+      "llm_calls": 10,
+      "elapsed_s": 976.4
+    },
+    {
+      "subject": "numtheory",
+      "status": "ok",
+      "total": 10,
+      "verified": 10,
+      "refused": 0,
+      "pairs_captured": 10,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 10
+      },
+      "out_tokens": 1811,
+      "llm_calls": 10,
+      "elapsed_s": 1137.3
+    },
+    {
+      "subject": "numtheory2",
+      "status": "ok",
+      "total": 8,
+      "verified": 8,
+      "refused": 0,
+      "pairs_captured": 8,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 8
+      },
+      "out_tokens": 1037,
+      "llm_calls": 8,
+      "elapsed_s": 64.4
+    },
+    {
+      "subject": "modmath",
+      "status": "ok",
+      "total": 10,
+      "verified": 0,
+      "refused": 10,
+      "pairs_captured": 0,
+      "escalations": 10,
+      "reasons": {
+        "LLM returned empty": 10
+      },
+      "won_via": {},
+      "out_tokens": 61786,
+      "llm_calls": 193,
+      "elapsed_s": 593.5
+    },
+    {
+      "subject": "modmath2",
+      "status": "ok",
+      "total": 8,
+      "verified": 8,
+      "refused": 0,
+      "pairs_captured": 8,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 8
+      },
+      "out_tokens": 1097,
+      "llm_calls": 8,
+      "elapsed_s": 969.8
+    },
+    {
+      "subject": "modmath3",
+      "status": "ok",
+      "total": 8,
+      "verified": 8,
+      "refused": 0,
+      "pairs_captured": 8,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {
+        "single": 8
+      },
+      "out_tokens": 1240,
+      "llm_calls": 8,
+      "elapsed_s": 970.6
     }
   ],
   "totals": {
-    "subjects_ok": 142,
-    "functions": 878,
-    "verified": 298,
-    "pairs_captured": 298,
-    "escalations": 580,
-    "escalations_model_hard": 1,
-    "escalations_drafter_empty": 150,
-    "escalations_oracle_gap": 266,
+    "subjects_ok": 148,
+    "functions": 932,
+    "verified": 342,
+    "pairs_captured": 342,
+    "escalations": 590,
+    "escalations_model_hard": 0,
+    "escalations_drafter_empty": 123,
+    "escalations_oracle_gap": 203,
     "escalations_reason_unclear": 18,
-    "out_tokens": 1523850,
+    "out_tokens": 1591951,
     "refusal_reason_histogram": {
       "no verifiable test vectors": 317,
-      "LLM returned empty": 236,
+      "LLM returned empty": 246,
       "Checking parson-core v0.1.0 (/tmp/parson": 14,
       "no correctness test available for this f": 8,
       "Checking http_parser v0.1.0 (/tmp/hpNEMO": 2,
@@ -2459,7 +2555,7 @@
       "refused": 1
     },
     "won_via_histogram": {
-      "single": 254,
+      "single": 298,
       "cached": 19,
       "multi_sample": 25
     }

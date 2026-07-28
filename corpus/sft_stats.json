@@ -1,12 +1,12 @@
 {
-  "records": 295,
+  "records": 329,
   "by_category": {
-    "unknown": 109,
+    "unknown": 131,
     "hash": 39,
     "fixedpoint": 32,
     "prng": 29,
+    "intmath": 28,
     "checksum": 20,
-    "intmath": 16,
     "utility": 14,
     "bitops": 13,
     "string": 9,
@@ -15,7 +15,7 @@
     "decompression": 1
   },
   "by_won_via": {
-    "single": 252,
+    "single": 286,
     "cached": 15,
     "multi_sample": 25,
     "frontier-claude": 3

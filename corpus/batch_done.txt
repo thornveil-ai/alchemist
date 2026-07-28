@@ -167,3 +167,9 @@ wj_rc4
 wj_sha1
 wj_sha256
 wj_sha512
+intalg
+numtheory
+numtheory2
+modmath
+modmath2
+modmath3
