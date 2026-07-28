@@ -100,6 +100,12 @@ def _classify_refusal(reason: str) -> tuple[str, str]:
     if ("no verifiable test vectors" in rl or "no correctness test" in rl
             or "cannot verify" in rl or "no test vectors" in rl):
         return "oracle_gap", reason
+    if "compile error" in rl or "error[e" in rl:
+        # rustc error[Ennnn] / our "compile error (test harness ...)" marker: the
+        # SKELETON/HARNESS produced non-compiling code (e.g. a sibling fn's return
+        # type poisoned the shared test module). A harness bug to fix, NOT a model
+        # or oracle gap — and the body itself may be byte-exact-correct.
+        return "compile_fail", reason
     if "llm returned empty" in rl or ("empty" in rl and "llm" in rl):
         return "drafter_empty", reason
     return "model_hard", reason
@@ -245,6 +251,7 @@ def main():
     model_hard = _cls.get("model_hard", 0)
     oracle_gap = _cls.get("oracle_gap", 0)
     drafter_empty = _cls.get("drafter_empty", 0)
+    compile_fail = _cls.get("compile_fail", 0)
     reason_unclear = _cls.get("reason_unclear", 0)
     report["totals"] = {
         "subjects_ok": len(ok),
@@ -255,6 +262,7 @@ def main():
         "escalations_model_hard": model_hard,   # frontier-teacher work-list (attempted, wrong)
         "escalations_drafter_empty": drafter_empty,  # drafter gave up → stronger model
         "escalations_oracle_gap": oracle_gap,   # needs a new oracle SHAPE, not a model
+        "escalations_compile_fail": compile_fail,  # skeleton/harness produced non-compiling code (harness bug)
         "escalations_reason_unclear": reason_unclear,  # capture-bug noise, not a real refusal
         "out_tokens": sum(s.get("out_tokens", 0) for s in ok),
         "refusal_reason_histogram": dict(sorted(tot_reasons.items(), key=lambda x: -x[1])),
@@ -268,6 +276,7 @@ def main():
     print(f"  escalations: {t['escalations']}  = {t['escalations_model_hard']} MODEL-HARD "
           f"+ {t.get('escalations_drafter_empty', 0)} DRAFTER-EMPTY (→stronger model) "
           f"+ {t['escalations_oracle_gap']} ORACLE-GAP (→new shapes) "
+          f"+ {t.get('escalations_compile_fail', 0)} COMPILE-FAIL (→harness bug) "
           f"+ {t.get('escalations_reason_unclear', 0)} unclear")
     print(f"  top refusal reasons: {list(t['refusal_reason_histogram'].items())[:6]}")
 

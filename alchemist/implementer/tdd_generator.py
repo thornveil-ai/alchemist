@@ -1139,31 +1139,55 @@ class TDDGenerator:
 
             attempt.last_error = _top_lines(terr, 5)
             _combined_out = (tout or "") + chr(10) + (terr or "")
-            _divergence = _distill_vector_divergence(_combined_out)
+            # Distinguish a TEST-HARNESS COMPILE failure from a real differential
+            # failure. A rustc error[Ennnn] means `cargo test` did not BUILD — e.g.
+            # a sibling fn's skeleton return/param type poisons the shared
+            # #[cfg(test)] module — even though THIS body may be byte-exact-correct.
+            # That is a HARNESS/skeleton bug, not a wrong translation: label it
+            # compile_fail (so batch triage stops filing it under model_hard/
+            # drafter_empty) and DO NOT log it as a DPO near-miss negative.
+            _test_compile_err = bool(_RUSTC_HINT_RE.search(_combined_out))
+            _divergence = "" if _test_compile_err else _distill_vector_divergence(_combined_out)
+            if _test_compile_err:
+                attempt.last_error = ("compile error (test harness did not build): "
+                                      + _top_lines(_combined_out, 3))
             self._trace_fill(
                 alg, crate_spec.name, module.name, iteration, "test",
                 (("DIVERGENCE: " + _divergence + "\n\n") if _divergence else "")
                 + _combined_out,
             )
-            previous_failure = (
-                f"## Previous iteration compiled but FAILED tests.\n\n"
-                f"You wrote:\n```rust\n{new_fn[:2500]}\n```\n\n"
-                + (_divergence + "\n" if _divergence else "")
-                + f"Test output:\n```\n{_top_lines(_combined_out, 40)}\n```\n\n"
-                f"The code compiles but produces wrong output. Check the "
-                f"expected values in the test and fix the algorithm logic. "
-                f"Most likely causes: off-by-one, wrong initial state, "
-                f"wrong constant, incorrect bit ordering."
-            )
+            if _test_compile_err:
+                previous_failure = (
+                    f"## The test harness FAILED TO COMPILE (this is NOT a wrong answer).\n\n"
+                    f"You wrote:\n```rust\n{new_fn[:2500]}\n```\n\n"
+                    f"Compiler errors:\n```\n{_top_lines(_combined_out, 40)}\n```\n\n"
+                    f"Fix ONLY the compile errors above; keep correct logic unchanged. "
+                    f"If an error points at code you did not write (a sibling function "
+                    f"or generated test), leave your body as-is."
+                )
+            else:
+                previous_failure = (
+                    f"## Previous iteration compiled but FAILED tests.\n\n"
+                    f"You wrote:\n```rust\n{new_fn[:2500]}\n```\n\n"
+                    + (_divergence + "\n" if _divergence else "")
+                    + f"Test output:\n```\n{_top_lines(_combined_out, 40)}\n```\n\n"
+                    f"The code compiles but produces wrong output. Check the "
+                    f"expected values in the test and fix the algorithm logic. "
+                    f"Most likely causes: off-by-one, wrong initial state, "
+                    f"wrong constant, incorrect bit ordering."
+                )
             _stuck_n = _stuck_n + 1 if _stuck_sig == "DIFF" else 1
             _stuck_sig = "DIFF"
             console.print(f"  [yellow]{alg.name}: tests failed on iter {iteration}[/yellow]")
             # DPO gold: this body compiled but diverged from the oracle. Log it
             # as a near-miss negative (paired with the eventual win downstream).
-            try:
-                self._log_near_miss(alg.name, iteration, new_fn, _divergence)
-            except Exception:  # noqa: BLE001
-                pass
+            # NEVER log on a test-harness compile error — the body may be correct,
+            # and a correct body as a DPO negative teaches the model the wrong thing.
+            if not _test_compile_err:
+                try:
+                    self._log_near_miss(alg.name, iteration, new_fn, _divergence)
+                except Exception:  # noqa: BLE001
+                    pass
 
             # Escalate to holistic
             if iteration >= self.holistic_after and iteration < self.max_iter_per_fn:
