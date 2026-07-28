@@ -2899,6 +2899,31 @@ def fuzz_parse_sequence_vectors(dll, group, specs=None, *, max_tokens: int = 128
     return out
 
 
+def classify_bcon_codec(by_name):
+    """B-Con-style byte codec pair (base64): an encoder taking a trailing int flag
+    and a decoder, both `size_t f(const byte in[], byte out[], size_t len, ...)`.
+    Returns {"encode","decode"} or None. Verified by the codec_io roundtrip
+    differential (see proptest_gen._proptest_codec_io_block)."""
+    _SIZE_RET = {"size_t", "int", "long", "ssize_t", "unsigned", "unsigned int", "uint32_t"}
+    enc = dec = None
+    for name, sig in by_name.items():
+        if (sig.return_type or "").strip() not in _SIZE_RET:
+            continue
+        ps = [(pp[1] or "").strip() for pp in (sig.params or [])]
+        lo = name.lower()
+        if (len(ps) == 4 and _is_const_byte_buf(ps[0]) and _is_mut_byte_buf(ps[1])
+                and _SIZE_T.match(ps[2]) and _INT_C_TYPES.match(ps[3])
+                and "decode" not in lo and "decrypt" not in lo and "decompress" not in lo):
+            enc = (name, sig)
+        elif (len(ps) == 3 and _is_const_byte_buf(ps[0]) and _is_mut_byte_buf(ps[1])
+                and _SIZE_T.match(ps[2])
+                and ("decode" in lo or "decompress" in lo)):
+            dec = (name, sig)
+    if enc and dec:
+        return {"encode": enc[0], "decode": dec[0]}
+    return None
+
+
 def build_diff_config(
     c_source_dir: Path,
     specs: list | None,
@@ -3012,6 +3037,19 @@ def build_diff_config(
         if _ok:
             used_signatures.append(by_name[_bc["setup"][0]])
             used_signatures.append(by_name[_enc])
+    _codec = classify_bcon_codec(by_name)
+    if _codec is not None:
+        _enc_n = _codec["encode"]
+        _dec_n = _codec["decode"]
+        harnesses.append(AlgorithmHarness(
+            algorithm=_enc_n, category="codec_io",
+            rust_call=f"rust_{_enc_n}(data.clone())",
+            c_call=f"c_{_enc_n}(data)", cases=2000,
+            input_strategy="prop::collection::vec(any::<u8>(), 1..384)",
+            codec_decode=_dec_n,
+        ))
+        used_signatures.append(by_name[_enc_n])
+        used_signatures.append(by_name[_dec_n])
     _hs = classify_hash_sequence(by_name, _structs)
     if _hs is not None:
         _fin = _hs["final"][0]

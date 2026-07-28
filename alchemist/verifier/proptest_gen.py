@@ -36,7 +36,7 @@ VALID_CATEGORIES = {
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
     "cipher_seq", "block_cipher", "alloc_seq", "hash_seq", "hash_digest_seq", "cbuf_out", "cstr_out", "buf_transform",
-    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip"}
+    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip", "codec_io"}
 
 
 @dataclass
@@ -88,6 +88,8 @@ class AlgorithmHarness:
     # 2D-schedule carrier (DES): schedule[bc_sched_r][bc_sched_w] byte array.
     bc_sched_w: int = 0
     bc_sched_r: int = 0
+    # codec_io (bcon base64): name of the paired decode fn (encode is `algorithm`).
+    codec_decode: str | None = None
     init_kinds: list | None = None
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.
@@ -246,6 +248,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_cipher_seq_block(h)
     if h.category == "block_cipher":
         return _proptest_block_cipher(h)
+    if h.category == "codec_io":
+        return _proptest_codec_io_block(h)
     if h.category == "alloc_seq":
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
@@ -522,6 +526,25 @@ def _proptest_cipher_seq_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference((key, outlen) in {strat}) {{
                 prop_assert_eq!(rust_{h.algorithm}(key.clone(), outlen), c_{h.algorithm}(key, outlen));
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_codec_io_block(h: AlgorithmHarness) -> str:
+    """Differential for a byte-codec pair (base64): fuzz random PLAINTEXT, run it
+    through encode->decode on both sides, and compare the (encoded, decoded) tuple.
+    Encode byte-exactness shows up in `encoded`; decode correctness in `decoded`
+    (which must recover the plaintext). The encoder mints the valid stream so the
+    C decoder never takes a UB path on malformed input."""
+    strategy = h.input_strategy or "prop::collection::vec(any::<u8>(), 1..384)"
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_codec_matches_c_reference(data in {strategy}) {{
+                prop_assert_eq!({h.rust_call}, {h.c_call});
             }}
         }}
     """).rstrip()

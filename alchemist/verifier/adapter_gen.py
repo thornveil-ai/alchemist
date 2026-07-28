@@ -848,6 +848,42 @@ def plan_adapters(
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
                                f"{fin_fn.name} (hash digest seq)",
                 ))
+            elif h.category == "codec_io":
+                # bcon base64: encode(in[], out[], len, flag=0) + decode(in[], out[], len),
+                # both returning the byte count written. Roundtrip: encode then decode,
+                # compare the (encoded, decoded) tuple. Out buffers sized to the 4:3
+                # base64 expansion (+slack); no newlines (flag=0).
+                enc_fn = _pick_unambiguous(h.algorithm, api)
+                dec_fn = _pick_unambiguous(h.codec_decode, api)
+                if enc_fn is None or dec_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt codec '{h.algorithm}': encode/decode fn not found")
+                ci = enc_fn.crate_ident
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(data: Vec<u8>) -> (Vec<u8>, Vec<u8>) {{\n"
+                    f"    let mut enc = vec![0u8; data.len() / 3 * 4 + 8];\n"
+                    f"    let n = {ci}::{enc_fn.name}(&data, &mut enc, data.len(), 0);\n"
+                    f"    enc.truncate(n);\n"
+                    f"    let mut dec = vec![0u8; enc.len() + 4];\n"
+                    f"    let m = {dec_fn.crate_ident}::{dec_fn.name}(&enc, &mut dec, enc.len());\n"
+                    f"    dec.truncate(m);\n"
+                    f"    (enc, dec)\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(data: Vec<u8>) -> (Vec<u8>, Vec<u8>) {{\n"
+                    f"    let mut enc = vec![0u8; data.len() / 3 * 4 + 8];\n"
+                    f"    let n = unsafe {{ {ffi_ident}::{h.algorithm}(data.as_ptr() as *const _, enc.as_mut_ptr() as *mut _, data.len(), 0) }};\n"
+                    f"    enc.truncate(n);\n"
+                    f"    let mut dec = vec![0u8; enc.len() + 4];\n"
+                    f"    let m = unsafe {{ {ffi_ident}::{h.codec_decode}(enc.as_ptr() as *const _, dec.as_mut_ptr() as *mut _, enc.len()) }};\n"
+                    f"    dec.truncate(m);\n"
+                    f"    (enc, dec)\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={enc_fn.crate, dec_fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{enc_fn.name}+{dec_fn.name} (bcon codec roundtrip)",
+                ))
             elif h.category == "block_cipher" and getattr(h, "bc_carrier", "struct") == "sched2d":
                 # DES-style: 2D byte schedule[R][W] carrier + enum mode (passed as 0).
                 setup_fn = _pick_unambiguous(h.seq_init, api)
