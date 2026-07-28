@@ -1,0 +1,7 @@
+[package]
+name = "parson-serialize"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+parson-core = { path = "../parson-core" }

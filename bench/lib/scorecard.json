@@ -1,0 +1,49 @@
+{
+  "libraries": 1,
+  "libraries_overall_pass": 0,
+  "total_functions": 4,
+  "verified": 1,
+  "refused": 3,
+  "overall_refusal_rate": 0.75,
+  "results": [
+    {
+      "library": "sha256",
+      "overall": "FAIL",
+      "total": 4,
+      "verified": 1,
+      "refused": 3,
+      "refusal_rate": 0.75,
+      "wins_by_tier": {
+        "cached": 0,
+        "template": 0,
+        "single": 1,
+        "multi_sample": 0,
+        "holistic": 0,
+        "decomposition": 0
+      },
+      "telemetry": {
+        "total_elapsed_s": 390.563,
+        "total_llm_calls": 75,
+        "total_output_tokens": 36391,
+        "slowest_fn": "sha256_final",
+        "slowest_fn_elapsed_s": 190.513,
+        "costliest_fn": "sha256_final",
+        "costliest_fn_output_tokens": 18302
+      },
+      "refused_fns": [
+        {
+          "name": "sha256_transform",
+          "reason": "LLM returned empty"
+        },
+        {
+          "name": "sha256_update",
+          "reason": "    Checking sha256-core v0.1.0 (/tmp/libbench_sha256_00js5k29/sha256-core)\nerror[E0277]: the type `[u8]` cannot be indexed by `u32`\n  --> s"
+        },
+        {
+          "name": "sha256_final",
+          "reason": "LLM returned empty"
+        }
+      ]
+    }
+  ]
+}

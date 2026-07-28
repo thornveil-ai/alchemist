@@ -1,512 +1,330 @@
 {
   "subjects": 26,
-  "subjects_overall_pass": 24,
-  "total_functions": 26,
-  "verified": 24,
-  "refused": 2,
-  "verified_rate": 0.9231,
-  "first_pass_rate": 0.9231,
-  "refusal_rate": 0.0769,
+  "subjects_overall_pass": 0,
+  "total_functions": 0,
+  "verified": 0,
+  "refused": 0,
+  "verified_rate": 0.0,
+  "first_pass_rate": 0.0,
+  "refusal_rate": 0.0,
   "by_category": {
     "checksum": {
-      "total": 8,
-      "verified": 8,
-      "first_pass": 8
+      "total": 0,
+      "verified": 0,
+      "first_pass": 0
     },
     "scalar": {
-      "total": 10,
-      "verified": 10,
-      "first_pass": 10
+      "total": 0,
+      "verified": 0,
+      "first_pass": 0
     },
     "cstr_scalar": {
-      "total": 1,
-      "verified": 1,
-      "first_pass": 1
+      "total": 0,
+      "verified": 0,
+      "first_pass": 0
     },
     "uncovered": {
-      "total": 2,
+      "total": 0,
       "verified": 0,
       "first_pass": 0
     },
     "cstr": {
-      "total": 3,
-      "verified": 3,
-      "first_pass": 3
+      "total": 0,
+      "verified": 0,
+      "first_pass": 0
     },
     "iarray_reduce": {
-      "total": 2,
-      "verified": 2,
-      "first_pass": 2
+      "total": 0,
+      "verified": 0,
+      "first_pass": 0
     }
   },
   "results": [
     {
       "subject": "adler32s",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "adler32s",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "clz32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "clz32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "count_char",
       "category": "cstr_scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "count_char",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "crc32b",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "crc32b",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "djb2buf",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "djb2buf",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "dsquare",
       "category": "uncovered",
       "overall": "FAIL",
-      "total": 1,
+      "total": 0,
       "verified": 0,
-      "refused": 1,
-      "refusal_rate": 1.0,
+      "refused": 0,
+      "refusal_rate": 0.0,
       "first_pass": 0,
-      "functions": [
-        {
-          "name": "dsquare",
-          "verified": false,
-          "iterations": 0,
-          "reason": "no verifiable test vectors \u2014 add spec.test_vectors, extend fuzz_vectors bindings, or add to standards catalog"
-        }
-      ]
+      "functions": []
     },
     {
       "subject": "fletcher16b",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "fletcher16b",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "fnv1a",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "fnv1a",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "gcd32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "gcd32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "hex_encode",
       "category": "cstr",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "hex_encode",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "imax_array",
       "category": "iarray_reduce",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "imax_array",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "imin",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "imin",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "isqrt32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "isqrt32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "jenkins_oaat",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "jenkins_oaat",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "myabs",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "myabs",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "negate_all",
       "category": "uncovered",
       "overall": "FAIL",
-      "total": 1,
+      "total": 0,
       "verified": 0,
-      "refused": 1,
-      "refusal_rate": 1.0,
+      "refused": 0,
+      "refusal_rate": 0.0,
       "first_pass": 0,
-      "functions": [
-        {
-          "name": "negate_all",
-          "verified": false,
-          "iterations": 0,
-          "reason": "no verifiable test vectors \u2014 add spec.test_vectors, extend fuzz_vectors bindings, or add to standards catalog"
-        }
-      ]
+      "functions": []
     },
     {
       "subject": "next_pow2",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "next_pow2",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "parity32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "parity32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "popcount32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "popcount32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "reverse_bits32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "reverse_bits32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "rot13",
       "category": "cstr",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "rot13",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "rotl32",
       "category": "scalar",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "rotl32",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "sdbm",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "sdbm",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "sum8",
       "category": "checksum",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "sum8",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "sum_array",
       "category": "iarray_reduce",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "sum_array",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     },
     {
       "subject": "to_upper",
       "category": "cstr",
-      "overall": "PASS",
-      "total": 1,
-      "verified": 1,
+      "overall": "FAIL",
+      "total": 0,
+      "verified": 0,
       "refused": 0,
       "refusal_rate": 0.0,
-      "first_pass": 1,
-      "functions": [
-        {
-          "name": "to_upper",
-          "verified": true,
-          "iterations": 1,
-          "reason": ""
-        }
-      ]
+      "first_pass": 0,
+      "functions": []
     }
   ]
 }

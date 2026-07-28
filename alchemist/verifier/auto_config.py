@@ -2069,6 +2069,22 @@ def _is_mut_byte_buf(t: str) -> bool:
     return bool(m and not m.group("const"))
 
 
+def _digest_len_fallback(fn_name, struct_name=""):
+    """Digest byte-count by well-known algorithm name, for when the spec can't encode
+    it (unsized `BYTE hash[]` params). Checked against both the final-fn name and the
+    context-struct name so e.g. sha256_final / SHA256_CTX both resolve to 32."""
+    hay = (str(fn_name) + " " + str(struct_name)).lower().replace("-", "").replace("_", "")
+    # order matters: longer/more-specific keys first (sha512 before sha1, etc.)
+    for key, n in (("sha3512", 64), ("sha3384", 48), ("sha3256", 32), ("sha3224", 28),
+                   ("sha512", 64), ("sha384", 48), ("sha256", 32), ("sha224", 28),
+                   ("sha1", 20), ("md5", 16), ("md4", 16), ("md2", 16),
+                   ("blake2b", 64), ("blake2s", 32), ("ripemd160", 20), ("ripemd", 20),
+                   ("keccak256", 32), ("whirlpool", 64)):
+        if key in hay:
+            return n
+    return None
+
+
 def _digest_len_from_specs(specs, fn_name) -> "int | None":
     """The digest byte-count for a `final` fn, read from its Rust lift: the extractor
     turns `void final(ctx, BYTE hash[])` into `final(ctx, hash: &mut [u8; N])` — N is
@@ -2121,6 +2137,8 @@ def classify_hash_digest_sequence(by_name, structs, specs=None):
         if not (init and update and final):
             continue
         digest_len = _digest_len_from_specs(specs, final[0])
+        if digest_len is None:
+            digest_len = _digest_len_fallback(final[0], sname)
         if digest_len is None:
             continue
         rust = _rust_name_from_spec(specs, init[0], _sl.rust_struct_name(sname))
