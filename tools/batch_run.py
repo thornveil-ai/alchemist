@@ -111,6 +111,30 @@ def _classify_refusal(reason: str) -> tuple[str, str]:
     return "model_hard", reason
 
 
+def _replace_subject_records(path: Path, subject: str, new_records: list) -> None:
+    """Idempotent per-subject write: drop every existing line for `subject` from
+    `path`, then append `new_records`. Kills two re-run bugs: double-appended
+    verified pairs, and STALE escalation entries for functions that later verified.
+    The corpus + queue therefore always reflect the latest run of each subject.
+    Serial batch loop => race-free read-modify-write."""
+    kept = []
+    if path.exists():
+        for ln in path.read_text(encoding="utf-8").splitlines():
+            if not ln.strip():
+                continue
+            try:
+                if json.loads(ln).get("subject") == subject:
+                    continue  # drop this subject's stale record
+            except Exception:  # noqa: BLE001
+                pass  # keep unparseable lines verbatim
+            kept.append(ln)
+    with path.open("w", encoding="utf-8") as f:
+        for ln in kept:
+            f.write(ln + "\n")
+        for r in new_records:
+            f.write(json.dumps(r) + "\n")
+
+
 def run_subject(subj: Path, timeout_s: int, collect_only: bool = False) -> dict:
     name = subj.name
     out_dir = f"/tmp/batch_out/{name}"
@@ -162,13 +186,11 @@ def run_subject(subj: Path, timeout_s: int, collect_only: bool = False) -> dict:
                 "class": cls,
                 "escalated_decomposition": fn.get("escalated_decomposition", False)})
 
-    # append corpus + escalation queue
-    with PAIRS.open("a", encoding="utf-8") as f:
-        for p in verified_pairs:
-            f.write(json.dumps(p) + "\n")
-    with ESCAL.open("a", encoding="utf-8") as f:
-        for e in escalations:
-            f.write(json.dumps(e) + "\n")
+    # corpus + escalation queue: idempotent per-subject write (drop this subject's
+    # old records first) so a --force re-run never double-appends pairs or leaves
+    # stale escalations for functions that have since verified.
+    _replace_subject_records(PAIRS, name, verified_pairs)
+    _replace_subject_records(ESCAL, name, escalations)
 
     tel = ledger.get("telemetry", {})
     return {
