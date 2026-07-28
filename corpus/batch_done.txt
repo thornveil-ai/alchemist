@@ -173,3 +173,9 @@ numtheory2
 modmath
 modmath2
 modmath3
+bits
+checksums2
+datetime
+encoding2
+reduce
+strchar

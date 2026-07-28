@@ -2531,25 +2531,122 @@
       "out_tokens": 1240,
       "llm_calls": 8,
       "elapsed_s": 970.6
+    },
+    {
+      "subject": "bits",
+      "status": "ok",
+      "total": 8,
+      "verified": 0,
+      "refused": 8,
+      "pairs_captured": 0,
+      "escalations": 8,
+      "reasons": {
+        "LLM returned empty": 8
+      },
+      "won_via": {},
+      "out_tokens": 14928,
+      "llm_calls": 162,
+      "elapsed_s": 137.7
+    },
+    {
+      "subject": "checksums2",
+      "status": "ok",
+      "total": 0,
+      "verified": 0,
+      "refused": 0,
+      "pairs_captured": 0,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {},
+      "out_tokens": 0,
+      "llm_calls": 0,
+      "elapsed_s": 0.8
+    },
+    {
+      "subject": "datetime",
+      "status": "ok",
+      "total": 10,
+      "verified": 0,
+      "refused": 10,
+      "pairs_captured": 0,
+      "escalations": 10,
+      "reasons": {
+        "LLM returned empty": 9,
+        "cargo output (reason-capture bug)": 1
+      },
+      "won_via": {},
+      "out_tokens": 76341,
+      "llm_calls": 188,
+      "elapsed_s": 521.8
+    },
+    {
+      "subject": "encoding2",
+      "status": "ok",
+      "total": 8,
+      "verified": 0,
+      "refused": 8,
+      "pairs_captured": 0,
+      "escalations": 8,
+      "reasons": {
+        "LLM returned empty": 8
+      },
+      "won_via": {},
+      "out_tokens": 18311,
+      "llm_calls": 161,
+      "elapsed_s": 167.6
+    },
+    {
+      "subject": "reduce",
+      "status": "ok",
+      "total": 10,
+      "verified": 0,
+      "refused": 10,
+      "pairs_captured": 0,
+      "escalations": 10,
+      "reasons": {
+        "LLM returned empty": 10
+      },
+      "won_via": {},
+      "out_tokens": 1171,
+      "llm_calls": 10,
+      "elapsed_s": 25.9
+    },
+    {
+      "subject": "strchar",
+      "status": "ok",
+      "total": 6,
+      "verified": 0,
+      "refused": 6,
+      "pairs_captured": 0,
+      "escalations": 6,
+      "reasons": {
+        "cargo output (reason-capture bug)": 1,
+        "LLM returned empty": 5
+      },
+      "won_via": {},
+      "out_tokens": 57014,
+      "llm_calls": 110,
+      "elapsed_s": 351.2
     }
   ],
   "totals": {
-    "subjects_ok": 148,
-    "functions": 932,
+    "subjects_ok": 154,
+    "functions": 974,
     "verified": 342,
     "pairs_captured": 342,
-    "escalations": 590,
+    "escalations": 632,
     "escalations_model_hard": 0,
-    "escalations_drafter_empty": 123,
+    "escalations_drafter_empty": 163,
     "escalations_oracle_gap": 203,
-    "escalations_reason_unclear": 18,
-    "out_tokens": 1591951,
+    "escalations_reason_unclear": 20,
+    "out_tokens": 1759716,
     "refusal_reason_histogram": {
       "no verifiable test vectors": 317,
-      "LLM returned empty": 246,
+      "LLM returned empty": 286,
       "Checking parson-core v0.1.0 (/tmp/parson": 14,
       "no correctness test available for this f": 8,
       "Checking http_parser v0.1.0 (/tmp/hpNEMO": 2,
+      "cargo output (reason-capture bug)": 2,
       "Checking fix16 v0.1.0 (/tmp/verano_fix16": 1,
       "Compiling siphash v0.1.0 (/tmp/libbench_": 1,
       "refused": 1
