@@ -848,6 +848,37 @@ def plan_adapters(
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
                                f"{fin_fn.name} (hash digest seq)",
                 ))
+            elif h.category == "block_cipher" and getattr(h, "bc_carrier", "struct") == "sched2d":
+                # DES-style: 2D byte schedule[R][W] carrier + enum mode (passed as 0).
+                setup_fn = _pick_unambiguous(h.seq_init, api)
+                enc_fn = _pick_unambiguous(h.algorithm, api)
+                if setup_fn is None or enc_fn is None:
+                    raise AdapterError(
+                        f"cannot adapt block-cipher '{h.algorithm}': setup/crypt fn not found")
+                ci = setup_fn.crate_ident
+                w = getattr(h, "bc_sched_w", 6) or 6
+                r = getattr(h, "bc_sched_r", 16) or 16
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(key: Vec<u8>, block: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut sched = [[0u8; {w}]; {r}];\n"
+                    f"    {ci}::{setup_fn.name}(&key, &mut sched, 0);\n"
+                    f"    let mut out = vec![0u8; block.len()];\n"
+                    f"    {enc_fn.crate_ident}::{enc_fn.name}(&block, &mut out, &sched);\n"
+                    f"    out\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(key: Vec<u8>, block: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut sched = [[0u8; {w}]; {r}];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(key.as_ptr() as *const _, sched.as_mut_ptr() as *mut _, 0); }}\n"
+                    f"    let mut out = vec![0u8; block.len()];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(block.as_ptr() as *const _, out.as_mut_ptr() as *mut _, sched.as_ptr() as *const _); }}\n"
+                    f"    out\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={setup_fn.crate, enc_fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{setup_fn.name}+{enc_fn.name} (block cipher, sched2d)",
+                ))
             elif h.category == "block_cipher" and getattr(h, "bc_carrier", "struct") == "array":
                 # AES-style: round keys in a WORD w[] array + keysize (bits). Alloc a
                 # Vec<u32> (AES-256 max), setup then encrypt one block; keysize=key.len()*8.

@@ -1889,6 +1889,9 @@ def _block_size_fallback(*names) -> int:
     return 16
 
 
+_2D_BYTE_ARR = re.compile(
+    r"^(?P<const>const\s+)?(?:BYTE|uint8_t|unsigned\s+char)\b[^,]*?"
+    r"\[\s*\]\s*\[\s*(?P<w>\d+)\s*\]\s*$")
 _WORD_ARR = re.compile(
     r"^(?P<const>const\s+)?(?:WORD|uint32_t|unsigned\s+int|u32|uint32)\b[^,]*?"
     r"\[\s*\d*\s*\]\s*$")
@@ -1947,6 +1950,29 @@ def classify_block_cipher(by_name, structs):
         return {"struct": None, "rust": None, "fields": None,
                 "setup": setup_a, "encrypt": enc_a, "decrypt": None,
                 "block_size": _block_size_fallback(enc_a[0]), "carrier": "array"}
+    # 2D-ARRAY SCHEDULE carrier (DES): setup(key[], BYTE sched[][W], MODE_enum) +
+    # crypt(in[], out[], const BYTE sched[][W]).
+    setup_2d = crypt_2d = None
+    mode_ty = None
+    sched_w = 0
+    for name, sig in by_name.items():
+        ps = [(p[1] or "").strip() for p in (sig.params or [])]
+        if (sig.return_type or "").strip() != "void" or len(ps) != 3:
+            continue
+        m1 = _2D_BYTE_ARR.match(ps[1])
+        m2 = _2D_BYTE_ARR.match(ps[2])
+        if _is_const_byte_buf(ps[0]) and m1 and not m1.group("const"):
+            setup_2d = (name, sig)
+            mode_ty = ps[2]
+            sched_w = int(m1.group("w"))
+        elif (_is_const_byte_buf(ps[0]) and _is_mut_byte_buf(ps[1])
+                and m2 and m2.group("const") and "decrypt" not in name.lower()):
+            crypt_2d = (name, sig)
+    if setup_2d and crypt_2d:
+        return {"struct": None, "rust": None, "fields": None,
+                "setup": setup_2d, "encrypt": crypt_2d, "decrypt": None,
+                "block_size": _block_size_fallback(crypt_2d[0]), "carrier": "sched2d",
+                "sched_w": sched_w, "sched_r": 16, "mode_type": mode_ty}
     return None
 
 
@@ -2939,7 +2965,23 @@ def build_diff_config(
         _enc = _bc["encrypt"][0]
         _bs = _bc["block_size"]
         _ok = True
-        if _bc.get("carrier") == "array":
+        if _bc.get("carrier") == "sched2d":
+            # DES: 2D BYTE schedule[R][W] carrier + a DES_MODE enum. Override the enum
+            # -> c_int (adapter passes 0 = encrypt). key + block are the block size.
+            _mt = (_bc.get("mode_type") or "").strip()
+            _mtname = _mt.split()[0] if _mt else ""
+            if _mtname and not _INT_C_TYPES.match(_mtname):
+                _typedef_overrides[_mtname] = "c_int"
+            harnesses.append(AlgorithmHarness(
+                algorithm=_enc, category="block_cipher",
+                rust_call=f"rust_{_enc}(key.clone(), block.clone())",
+                c_call=f"c_{_enc}(key, block)", cases=2000,
+                input_strategy=(f"(prop::collection::vec(any::<u8>(), {_bs}..={_bs}), "
+                                f"prop::collection::vec(any::<u8>(), {_bs}..={_bs}))"),
+                seq_init=_bc["setup"][0], seq_gen=_enc,
+                bc_carrier="sched2d", bc_sched_w=_bc["sched_w"], bc_sched_r=_bc["sched_r"],
+            ))
+        elif _bc.get("carrier") == "array":
             # AES-style WORD round-key array. keysize derived from key length;
             # keys are exactly 16/24/32 bytes. w[] sized to the AES-256 max (60).
             harnesses.append(AlgorithmHarness(

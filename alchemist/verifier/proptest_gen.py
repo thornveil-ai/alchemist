@@ -85,6 +85,9 @@ class AlgorithmHarness:
     # Block-cipher key-schedule carrier: "struct" (Blowfish) or "array" (AES WORD w[]).
     bc_carrier: str = "struct"
     bc_words: int = 0  # array-carrier: number of WORD round-key slots to allocate
+    # 2D-schedule carrier (DES): schedule[bc_sched_r][bc_sched_w] byte array.
+    bc_sched_w: int = 0
+    bc_sched_r: int = 0
     init_kinds: list | None = None
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.
