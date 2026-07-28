@@ -1,24 +1,24 @@
 {
-  "records": 329,
+  "records": 307,
   "by_category": {
-    "unknown": 131,
-    "hash": 39,
+    "intmath": 93,
+    "hash": 62,
+    "prng": 33,
     "fixedpoint": 32,
-    "prng": 29,
-    "intmath": 28,
+    "bitops": 21,
     "checksum": 20,
-    "utility": 14,
-    "bitops": 13,
+    "utility": 13,
+    "graphics": 10,
     "string": 9,
     "encoding": 7,
     "cipher": 6,
     "decompression": 1
   },
   "by_won_via": {
-    "single": 286,
-    "cached": 15,
-    "multi_sample": 25,
+    "single": 264,
+    "cached": 16,
+    "multi_sample": 24,
     "frontier-claude": 3
   },
-  "with_rationale": 27
+  "with_rationale": 25
 }
