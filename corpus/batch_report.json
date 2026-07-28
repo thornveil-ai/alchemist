@@ -1,705 +1,20 @@
 {
   "subjects": [
     {
-      "subject": "jsmn",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua_beach",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "pocsagbch",
-      "status": "ok",
-      "total": 3,
-      "verified": 3,
-      "refused": 0,
-      "pairs_captured": 3,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 3
-      },
-      "out_tokens": 461,
-      "llm_calls": 3,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "fletcher4",
-      "status": "ok",
-      "total": 1,
-      "verified": 1,
-      "refused": 0,
-      "pairs_captured": 1,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 1
-      },
-      "out_tokens": 374,
-      "llm_calls": 1,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "fix16core",
-      "status": "ok",
-      "total": 15,
-      "verified": 7,
-      "refused": 8,
-      "pairs_captured": 7,
-      "escalations": 8,
-      "reasons": {
-        "no verifiable test vectors": 2,
-        "Checking fix16 v0.1.0 (/tmp/verano_fix16": 1,
-        "no correctness test available for this f": 5
-      },
-      "won_via": {
-        "cached": 7
-      },
-      "out_tokens": 191229,
-      "llm_calls": 41,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua_beach_num",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "sha256",
+      "subject": "wj_sha512",
       "status": "ok",
       "total": 4,
-      "verified": 1,
-      "refused": 3,
-      "pairs_captured": 1,
-      "escalations": 3,
-      "reasons": {
-        "LLM returned empty": 3
-      },
-      "won_via": {
-        "single": 1
-      },
-      "out_tokens": 50851,
-      "llm_calls": 66,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "http-parser",
-      "status": "ok",
-      "total": 5,
       "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "Checking http_parser v0.1.0 (/tmp/hpNEMO": 2,
-        "no verifiable test vectors": 3
-      },
-      "won_via": {},
-      "out_tokens": 104000,
-      "llm_calls": 18,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua_beach_hexa",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua_beach_shiftl",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "siphash",
-      "status": "ok",
-      "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "pairs_captured": 0,
-      "escalations": 1,
-      "reasons": {
-        "Compiling siphash v0.1.0 (/tmp/libbench_": 1
-      },
-      "won_via": {},
-      "out_tokens": 50453,
-      "llm_calls": 30,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "base64",
-      "status": "ok",
-      "total": 2,
-      "verified": 2,
-      "refused": 0,
-      "pairs_captured": 2,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "multi_sample": 1,
-        "single": 1
-      },
-      "out_tokens": 11737,
-      "llm_calls": 16,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "tinychk",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua_beach_ceil",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "parson",
-      "status": "ok",
-      "total": 99,
-      "verified": 0,
-      "refused": 99,
-      "pairs_captured": 0,
-      "escalations": 99,
-      "reasons": {
-        "no verifiable test vectors": 85,
-        "Checking parson-core v0.1.0 (/tmp/parson": 14
-      },
-      "won_via": {},
-      "out_tokens": 33260,
-      "llm_calls": 420,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "lua_beach_prng",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "fix16sqrt",
-      "status": "ok",
-      "total": 1,
-      "verified": 1,
-      "refused": 0,
-      "pairs_captured": 1,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 1
-      },
-      "out_tokens": 472,
-      "llm_calls": 1,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "murmur3",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "zlib-dll",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "hashkit",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "sparkle",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "tinyjambu",
-      "status": "ok",
-      "total": 3,
-      "verified": 3,
-      "refused": 0,
-      "pairs_captured": 3,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "cached": 2,
-        "single": 1
-      },
-      "out_tokens": 1626,
-      "llm_calls": 1,
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "rc4",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "zlib",
-      "status": "no-ledger",
-      "elapsed_s": 0.0
-    },
-    {
-      "subject": "hashes",
-      "status": "ok",
-      "total": 9,
-      "verified": 0,
-      "refused": 9,
-      "pairs_captured": 0,
-      "escalations": 9,
-      "reasons": {
-        "LLM returned empty": 9
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 45.6
-    },
-    {
-      "subject": "checksums",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 35.6
-    },
-    {
-      "subject": "bits",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 14831,
-      "llm_calls": 160,
-      "elapsed_s": 173.6
-    },
-    {
-      "subject": "hashes",
-      "status": "ok",
-      "total": 9,
-      "verified": 0,
-      "refused": 9,
-      "pairs_captured": 0,
-      "escalations": 9,
-      "reasons": {
-        "LLM returned empty": 9
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 4.2
-    },
-    {
-      "subject": "checksums",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 5.7
-    },
-    {
-      "subject": "hashes",
-      "status": "ok",
-      "total": 9,
-      "verified": 7,
-      "refused": 2,
-      "pairs_captured": 7,
-      "escalations": 2,
-      "reasons": {
-        "LLM returned empty": 2
-      },
-      "won_via": {
-        "single": 1,
-        "cached": 6
-      },
-      "out_tokens": 6105,
-      "llm_calls": 2,
-      "elapsed_s": 58.7
-    },
-    {
-      "subject": "checksums",
-      "status": "ok",
-      "total": 8,
-      "verified": 7,
-      "refused": 1,
-      "pairs_captured": 7,
-      "escalations": 1,
-      "reasons": {
-        "LLM returned empty": 1
-      },
-      "won_via": {
-        "single": 7
-      },
-      "out_tokens": 667,
-      "llm_calls": 7,
-      "elapsed_s": 12.2
-    },
-    {
-      "subject": "bits",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 14970,
-      "llm_calls": 160,
-      "elapsed_s": 138.2
-    },
-    {
-      "subject": "crc",
-      "status": "ok",
-      "total": 10,
-      "verified": 2,
-      "refused": 8,
-      "pairs_captured": 2,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {
-        "single": 2
-      },
-      "out_tokens": 266,
-      "llm_calls": 2,
-      "elapsed_s": 49.0
-    },
-    {
-      "subject": "intmath",
-      "status": "ok",
-      "total": 13,
-      "verified": 13,
-      "refused": 0,
-      "pairs_captured": 13,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 12,
-        "multi_sample": 1
-      },
-      "out_tokens": 1560,
-      "llm_calls": 20,
-      "elapsed_s": 68.5
-    },
-    {
-      "subject": "varint",
-      "status": "ok",
-      "total": 6,
-      "verified": 6,
-      "refused": 0,
-      "pairs_captured": 6,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 5,
-        "multi_sample": 1
-      },
-      "out_tokens": 1088,
-      "llm_calls": 13,
-      "elapsed_s": 41.2
-    },
-    {
-      "subject": "prng",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 800,
-      "llm_calls": 8,
-      "elapsed_s": 46.2
-    },
-    {
-      "subject": "qfixed",
-      "status": "ok",
-      "total": 11,
-      "verified": 11,
-      "refused": 0,
-      "pairs_captured": 11,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 9,
-        "multi_sample": 2
-      },
-      "out_tokens": 1606,
-      "llm_calls": 23,
-      "elapsed_s": 61.9
-    },
-    {
-      "subject": "intalg",
-      "status": "ok",
-      "total": 9,
-      "verified": 5,
       "refused": 4,
-      "pairs_captured": 5,
+      "pairs_captured": 0,
       "escalations": 4,
       "reasons": {
         "no verifiable test vectors": 4
       },
-      "won_via": {
-        "single": 5
-      },
-      "out_tokens": 512,
-      "llm_calls": 5,
-      "elapsed_s": 192.8
-    },
-    {
-      "subject": "morehash",
-      "status": "ok",
-      "total": 8,
-      "verified": 2,
-      "refused": 6,
-      "pairs_captured": 2,
-      "escalations": 6,
-      "reasons": {
-        "LLM returned empty": 6
-      },
-      "won_via": {
-        "single": 2
-      },
-      "out_tokens": 504,
-      "llm_calls": 2,
-      "elapsed_s": 39.8
-    },
-    {
-      "subject": "strutil",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 953,
-      "llm_calls": 8,
-      "elapsed_s": 49.0
-    },
-    {
-      "subject": "xoodoo",
-      "status": "ok",
-      "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "pairs_captured": 0,
-      "escalations": 1,
-      "reasons": {
-        "LLM returned empty": 1
-      },
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 10.8
-    },
-    {
-      "subject": "libfixmath_full",
-      "status": "no-ledger",
-      "elapsed_s": 6.9
-    },
-    {
-      "subject": "amosnier_sha256",
-      "status": "no-ledger",
-      "elapsed_s": 22.0
-    },
-    {
-      "subject": "bcon_aes",
-      "status": "no-ledger",
-      "elapsed_s": 121.3
-    },
-    {
-      "subject": "bcon_arcfour",
-      "status": "ok",
-      "total": 2,
-      "verified": 0,
-      "refused": 2,
-      "pairs_captured": 0,
-      "escalations": 2,
-      "reasons": {
-        "no verifiable test vectors": 2
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 16.8
-    },
-    {
-      "subject": "bcon_base64",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 19.8
-    },
-    {
-      "subject": "bcon_blowfish",
-      "status": "no-ledger",
-      "elapsed_s": 22.5
-    },
-    {
-      "subject": "bcon_des",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 58.3
-    },
-    {
-      "subject": "bcon_md2",
-      "status": "ok",
-      "total": 3,
-      "verified": 0,
-      "refused": 3,
-      "pairs_captured": 0,
-      "escalations": 3,
-      "reasons": {
-        "no verifiable test vectors": 3
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 21.6
-    },
-    {
-      "subject": "bcon_md5",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "LLM returned empty": 4
-      },
-      "won_via": {},
-      "out_tokens": 31509,
-      "llm_calls": 63,
-      "elapsed_s": 228.9
-    },
-    {
-      "subject": "bcon_rot13",
-      "status": "no-ledger",
-      "elapsed_s": 10.8
-    },
-    {
-      "subject": "bcon_sha1",
-      "status": "ok",
-      "total": 2,
-      "verified": 0,
-      "refused": 2,
-      "pairs_captured": 0,
-      "escalations": 2,
-      "reasons": {
-        "LLM returned empty": 2
-      },
-      "won_via": {},
-      "out_tokens": 36438,
-      "llm_calls": 42,
-      "elapsed_s": 240.4
-    },
-    {
-      "subject": "bcon_sha256",
-      "status": "ok",
-      "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "pairs_captured": 0,
-      "escalations": 1,
-      "reasons": {
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 17860,
-      "llm_calls": 21,
-      "elapsed_s": 142.5
-    },
-    {
-      "subject": "monocypher",
-      "status": "no-ledger",
-      "elapsed_s": 11.3
-    },
-    {
-      "subject": "pcg_basic",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 29.0
-    },
-    {
-      "subject": "tiny_aes",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 50.5
+      "elapsed_s": 0.0
     },
     {
       "subject": "tiny_bignum",
@@ -713,122 +28,31 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 112.5
-    },
-    {
-      "subject": "wj_md5",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "no verifiable test vectors": 4
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 26.9
-    },
-    {
-      "subject": "wj_rc4",
-      "status": "ok",
-      "total": 3,
-      "verified": 0,
-      "refused": 3,
-      "pairs_captured": 0,
-      "escalations": 3,
-      "reasons": {
-        "no verifiable test vectors": 3
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 27.1
-    },
-    {
-      "subject": "wj_sha1",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 4,
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 16862,
-      "llm_calls": 20,
-      "elapsed_s": 122.2
-    },
-    {
-      "subject": "wj_sha256",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 4,
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 4260,
-      "llm_calls": 20,
-      "elapsed_s": 55.6
-    },
-    {
-      "subject": "wj_sha512",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 26.9
-    },
-    {
-      "subject": "tinyexpr",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 31.4
+      "elapsed_s": 0.0
     },
     {
       "subject": "genann",
       "status": "ok",
-      "total": 12,
+      "total": 13,
       "verified": 0,
-      "refused": 12,
+      "refused": 13,
       "pairs_captured": 0,
-      "escalations": 12,
+      "escalations": 13,
       "reasons": {
-        "no verifiable test vectors": 12
+        "no verifiable test vectors": 13
       },
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 54.6
+      "elapsed_s": 0.0
     },
     {
-      "subject": "tiny_regex",
+      "subject": "wj_sha256",
+      "status": "no-ledger",
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "pcg_basic",
       "status": "ok",
       "total": 0,
       "verified": 0,
@@ -839,77 +63,7 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 20.3
-    },
-    {
-      "subject": "picohttpparser",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 32.4
-    },
-    {
-      "subject": "monocypher",
-      "status": "no-ledger",
-      "elapsed_s": 256.3
-    },
-    {
-      "subject": "murmur3",
-      "status": "ok",
-      "total": 3,
-      "verified": 0,
-      "refused": 3,
-      "pairs_captured": 0,
-      "escalations": 3,
-      "reasons": {
-        "no verifiable test vectors": 3
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 30.0
-    },
-    {
-      "subject": "amosnier_sha256",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "LLM returned empty": 3,
-        "no verifiable test vectors": 1
-      },
-      "won_via": {},
-      "out_tokens": 91482,
-      "llm_calls": 57,
-      "elapsed_s": 601.0
-    },
-    {
-      "subject": "bcon_aes",
-      "status": "ok",
-      "total": 18,
-      "verified": 0,
-      "refused": 18,
-      "pairs_captured": 0,
-      "escalations": 18,
-      "reasons": {
-        "no verifiable test vectors": 18
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 155.6
+      "elapsed_s": 0.0
     },
     {
       "subject": "bcon_blowfish",
@@ -923,103 +77,24 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 24.6
+      "elapsed_s": 0.0
     },
     {
-      "subject": "bcon_rot13",
-      "status": "no-ledger",
-      "elapsed_s": 9.2
-    },
-    {
-      "subject": "libfixmath_full",
-      "status": "no-ledger",
-      "elapsed_s": 0.2
-    },
-    {
-      "subject": "murmur3",
+      "subject": "bcon_md5",
       "status": "ok",
-      "total": 3,
+      "total": 2,
       "verified": 0,
-      "refused": 3,
+      "refused": 2,
       "pairs_captured": 0,
-      "escalations": 3,
+      "escalations": 2,
       "reasons": {
-        "no verifiable test vectors": 3
+        "no correctness test available for this f": 1,
+        "LLM returned empty": 1
       },
       "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 35.1
-    },
-    {
-      "subject": "murmur3",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 38.7
-    },
-    {
-      "subject": "murmur3",
-      "status": "ok",
-      "total": 7,
-      "verified": 4,
-      "refused": 3,
-      "pairs_captured": 4,
-      "escalations": 3,
-      "reasons": {
-        "LLM returned empty": 1,
-        "no verifiable test vectors": 2
-      },
-      "won_via": {
-        "single": 4
-      },
-      "out_tokens": 529,
-      "llm_calls": 4,
-      "elapsed_s": 39.0
-    },
-    {
-      "subject": "amosnier_sha256",
-      "status": "ok",
-      "total": 5,
-      "verified": 1,
-      "refused": 4,
-      "pairs_captured": 1,
-      "escalations": 4,
-      "reasons": {
-        "no verifiable test vectors": 2,
-        "LLM returned empty": 2
-      },
-      "won_via": {
-        "multi_sample": 1
-      },
-      "out_tokens": 44074,
-      "llm_calls": 48,
-      "elapsed_s": 304.7
-    },
-    {
-      "subject": "bcon_aes",
-      "status": "ok",
-      "total": 16,
-      "verified": 0,
-      "refused": 16,
-      "pairs_captured": 0,
-      "escalations": 16,
-      "reasons": {
-        "no verifiable test vectors": 16
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 147.5
+      "out_tokens": 7742,
+      "llm_calls": 22,
+      "elapsed_s": 0.0
     },
     {
       "subject": "bcon_arcfour",
@@ -1035,7 +110,69 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 16.4
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "bcon_sha1",
+      "status": "ok",
+      "total": 1,
+      "verified": 0,
+      "refused": 1,
+      "pairs_captured": 0,
+      "escalations": 1,
+      "reasons": {
+        "LLM returned empty": 1
+      },
+      "won_via": {},
+      "out_tokens": 14752,
+      "llm_calls": 21,
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "wj_rc4",
+      "status": "ok",
+      "total": 4,
+      "verified": 0,
+      "refused": 4,
+      "pairs_captured": 0,
+      "escalations": 4,
+      "reasons": {
+        "no verifiable test vectors": 4
+      },
+      "won_via": {},
+      "out_tokens": 0,
+      "llm_calls": 0,
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "wj_md5",
+      "status": "ok",
+      "total": 5,
+      "verified": 0,
+      "refused": 5,
+      "pairs_captured": 0,
+      "escalations": 5,
+      "reasons": {
+        "no verifiable test vectors": 5
+      },
+      "won_via": {},
+      "out_tokens": 0,
+      "llm_calls": 0,
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "tiny_regex",
+      "status": "ok",
+      "total": 0,
+      "verified": 0,
+      "refused": 0,
+      "pairs_captured": 0,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {},
+      "out_tokens": 0,
+      "llm_calls": 0,
+      "elapsed_s": 0.0
     },
     {
       "subject": "bcon_base64",
@@ -1049,10 +186,10 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 19.8
+      "elapsed_s": 0.0
     },
     {
-      "subject": "bcon_blowfish",
+      "subject": "picohttpparser",
       "status": "ok",
       "total": 0,
       "verified": 0,
@@ -1063,91 +200,10 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 30.7
-    },
-    {
-      "subject": "bcon_des",
-      "status": "ok",
-      "total": 7,
-      "verified": 0,
-      "refused": 7,
-      "pairs_captured": 0,
-      "escalations": 7,
-      "reasons": {
-        "no verifiable test vectors": 7
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 59.7
+      "elapsed_s": 0.0
     },
     {
       "subject": "bcon_md2",
-      "status": "ok",
-      "total": 2,
-      "verified": 0,
-      "refused": 2,
-      "pairs_captured": 0,
-      "escalations": 2,
-      "reasons": {
-        "LLM returned empty": 2
-      },
-      "won_via": {},
-      "out_tokens": 18900,
-      "llm_calls": 42,
-      "elapsed_s": 142.4
-    },
-    {
-      "subject": "bcon_md5",
-      "status": "ok",
-      "total": 3,
-      "verified": 0,
-      "refused": 3,
-      "pairs_captured": 0,
-      "escalations": 3,
-      "reasons": {
-        "no correctness test available for this f": 2,
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 53727,
-      "llm_calls": 14,
-      "elapsed_s": 371.1
-    },
-    {
-      "subject": "bcon_rot13",
-      "status": "ok",
-      "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "pairs_captured": 0,
-      "escalations": 1,
-      "reasons": {
-        "no verifiable test vectors": 1
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 8.3
-    },
-    {
-      "subject": "bcon_sha1",
-      "status": "ok",
-      "total": 3,
-      "verified": 0,
-      "refused": 3,
-      "pairs_captured": 0,
-      "escalations": 3,
-      "reasons": {
-        "LLM returned empty": 3
-      },
-      "won_via": {},
-      "out_tokens": 57300,
-      "llm_calls": 51,
-      "elapsed_s": 378.1
-    },
-    {
-      "subject": "bcon_sha256",
       "status": "ok",
       "total": 3,
       "verified": 1,
@@ -1160,145 +216,12 @@
       "won_via": {
         "single": 1
       },
-      "out_tokens": 24122,
+      "out_tokens": 9887,
       "llm_calls": 43,
-      "elapsed_s": 173.9
+      "elapsed_s": 0.0
     },
     {
-      "subject": "genann",
-      "status": "ok",
-      "total": 12,
-      "verified": 0,
-      "refused": 12,
-      "pairs_captured": 0,
-      "escalations": 12,
-      "reasons": {
-        "no verifiable test vectors": 12
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 53.2
-    },
-    {
-      "subject": "monocypher",
-      "status": "no-ledger",
-      "elapsed_s": 288.4
-    },
-    {
-      "subject": "murmur3",
-      "status": "ok",
-      "total": 7,
-      "verified": 4,
-      "refused": 3,
-      "pairs_captured": 4,
-      "escalations": 3,
-      "reasons": {
-        "LLM returned empty": 1,
-        "no verifiable test vectors": 2
-      },
-      "won_via": {
-        "cached": 4
-      },
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 2.1
-    },
-    {
-      "subject": "pcg_basic",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 28.7
-    },
-    {
-      "subject": "picohttpparser",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 73.5
-    },
-    {
-      "subject": "tiny_aes",
-      "status": "ok",
-      "total": 7,
-      "verified": 0,
-      "refused": 7,
-      "pairs_captured": 0,
-      "escalations": 7,
-      "reasons": {
-        "no verifiable test vectors": 7
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 62.6
-    },
-    {
-      "subject": "tiny_bignum",
-      "status": "no-ledger",
-      "elapsed_s": 83.8
-    },
-    {
-      "subject": "tinyexpr",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 106.5
-    },
-    {
-      "subject": "tiny_regex",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 64.6
-    },
-    {
-      "subject": "wj_md5",
-      "status": "ok",
-      "total": 3,
-      "verified": 0,
-      "refused": 3,
-      "pairs_captured": 0,
-      "escalations": 3,
-      "reasons": {
-        "no verifiable test vectors": 3
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 40.7
-    },
-    {
-      "subject": "wj_rc4",
+      "subject": "bcon_sha256",
       "status": "ok",
       "total": 2,
       "verified": 0,
@@ -1306,12 +229,42 @@
       "pairs_captured": 0,
       "escalations": 2,
       "reasons": {
-        "no verifiable test vectors": 2
+        "LLM returned empty": 2
+      },
+      "won_via": {},
+      "out_tokens": 22601,
+      "llm_calls": 42,
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "bcon_rot13",
+      "status": "ok",
+      "total": 1,
+      "verified": 0,
+      "refused": 1,
+      "pairs_captured": 0,
+      "escalations": 1,
+      "reasons": {
+        "no verifiable test vectors": 1
       },
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 26.2
+      "elapsed_s": 0.0
+    },
+    {
+      "subject": "monocypher",
+      "status": "ok",
+      "total": 0,
+      "verified": 0,
+      "refused": 0,
+      "pairs_captured": 0,
+      "escalations": 0,
+      "reasons": {},
+      "won_via": {},
+      "out_tokens": 0,
+      "llm_calls": 0,
+      "elapsed_s": 0.0
     },
     {
       "subject": "wj_sha1",
@@ -1322,733 +275,13 @@
       "pairs_captured": 0,
       "escalations": 4,
       "reasons": {
-        "no verifiable test vectors": 4
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 21.0
-    },
-    {
-      "subject": "wj_sha256",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 27.9
-    },
-    {
-      "subject": "wj_sha512",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "no verifiable test vectors": 4
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 34.2
-    },
-    {
-      "subject": "tiny_bignum",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 85.3
-    },
-    {
-      "subject": "monocypher",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 299.8
-    },
-    {
-      "subject": "bitops2",
-      "status": "ok",
-      "total": 11,
-      "verified": 0,
-      "refused": 11,
-      "pairs_captured": 0,
-      "escalations": 11,
-      "reasons": {
-        "LLM returned empty": 11
-      },
-      "won_via": {},
-      "out_tokens": 37603,
-      "llm_calls": 220,
-      "elapsed_s": 360.9
-    },
-    {
-      "subject": "mix32",
-      "status": "ok",
-      "total": 10,
-      "verified": 10,
-      "refused": 0,
-      "pairs_captured": 10,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 9,
-        "multi_sample": 1
-      },
-      "out_tokens": 2127,
-      "llm_calls": 17,
-      "elapsed_s": 64.2
-    },
-    {
-      "subject": "mix64",
-      "status": "ok",
-      "total": 6,
-      "verified": 6,
-      "refused": 0,
-      "pairs_captured": 6,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 5,
-        "multi_sample": 1
-      },
-      "out_tokens": 7269,
-      "llm_calls": 13,
-      "elapsed_s": 103.7
-    },
-    {
-      "subject": "prng2",
-      "status": "ok",
-      "total": 7,
-      "verified": 7,
-      "refused": 0,
-      "pairs_captured": 7,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 5,
-        "multi_sample": 2
-      },
-      "out_tokens": 9257,
-      "llm_calls": 26,
-      "elapsed_s": 134.4
-    },
-    {
-      "subject": "modmath",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 7,
-        "multi_sample": 1
-      },
-      "out_tokens": 2681,
-      "llm_calls": 15,
-      "elapsed_s": 66.2
-    },
-    {
-      "subject": "encoding2",
-      "status": "ok",
-      "total": 7,
-      "verified": 0,
-      "refused": 7,
-      "pairs_captured": 0,
-      "escalations": 7,
-      "reasons": {
-        "LLM returned empty": 7
-      },
-      "won_via": {},
-      "out_tokens": 14645,
-      "llm_calls": 142,
-      "elapsed_s": 166.8
-    },
-    {
-      "subject": "checksums2",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 35.9
-    },
-    {
-      "subject": "hashes2",
-      "status": "ok",
-      "total": 8,
-      "verified": 7,
-      "refused": 1,
-      "pairs_captured": 7,
-      "escalations": 1,
-      "reasons": {
+        "no verifiable test vectors": 3,
         "LLM returned empty": 1
       },
-      "won_via": {
-        "single": 7
-      },
-      "out_tokens": 711,
-      "llm_calls": 7,
-      "elapsed_s": 53.1
-    },
-    {
-      "subject": "satmath",
-      "status": "ok",
-      "total": 13,
-      "verified": 12,
-      "refused": 1,
-      "pairs_captured": 12,
-      "escalations": 1,
-      "reasons": {
-        "LLM returned empty": 1
-      },
-      "won_via": {
-        "single": 10,
-        "multi_sample": 2
-      },
-      "out_tokens": 5221,
-      "llm_calls": 45,
-      "elapsed_s": 92.2
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
       "won_via": {},
-      "out_tokens": 1168,
-      "llm_calls": 10,
-      "elapsed_s": 53.9
-    },
-    {
-      "subject": "bitops2",
-      "status": "ok",
-      "total": 11,
-      "verified": 0,
-      "refused": 11,
-      "pairs_captured": 0,
-      "escalations": 11,
-      "reasons": {
-        "LLM returned empty": 11
-      },
-      "won_via": {},
-      "out_tokens": 35935,
-      "llm_calls": 220,
-      "elapsed_s": 287.3
-    },
-    {
-      "subject": "encoding2",
-      "status": "ok",
-      "total": 7,
-      "verified": 0,
-      "refused": 7,
-      "pairs_captured": 0,
-      "escalations": 7,
-      "reasons": {
-        "LLM returned empty": 7
-      },
-      "won_via": {},
-      "out_tokens": 13081,
-      "llm_calls": 142,
-      "elapsed_s": 119.4
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 1168,
-      "llm_calls": 10,
-      "elapsed_s": 23.0
-    },
-    {
-      "subject": "checksums2",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 0.8
-    },
-    {
-      "subject": "mix32b",
-      "status": "ok",
-      "total": 12,
-      "verified": 12,
-      "refused": 0,
-      "pairs_captured": 12,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 10,
-        "multi_sample": 2
-      },
-      "out_tokens": 3038,
-      "llm_calls": 26,
-      "elapsed_s": 73.2
-    },
-    {
-      "subject": "mix64b",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 968,
-      "llm_calls": 8,
-      "elapsed_s": 45.5
-    },
-    {
-      "subject": "prng3",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 672,
-      "llm_calls": 8,
-      "elapsed_s": 46.4
-    },
-    {
-      "subject": "numtheory",
-      "status": "ok",
-      "total": 9,
-      "verified": 8,
-      "refused": 1,
-      "pairs_captured": 8,
-      "escalations": 1,
-      "reasons": {
-        "no verifiable test vectors": 1
-      },
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 1287,
-      "llm_calls": 8,
-      "elapsed_s": 1239.6
-    },
-    {
-      "subject": "modmath2",
-      "status": "ok",
-      "total": 8,
-      "verified": 5,
-      "refused": 3,
-      "pairs_captured": 5,
-      "escalations": 3,
-      "reasons": {
-        "no verifiable test vectors": 3
-      },
-      "won_via": {
-        "single": 5
-      },
-      "out_tokens": 553,
-      "llm_calls": 5,
-      "elapsed_s": 186.9
-    },
-    {
-      "subject": "hashes3",
-      "status": "ok",
-      "total": 6,
-      "verified": 4,
-      "refused": 2,
-      "pairs_captured": 4,
-      "escalations": 2,
-      "reasons": {
-        "LLM returned empty": 2
-      },
-      "won_via": {
-        "single": 4
-      },
-      "out_tokens": 369,
-      "llm_calls": 4,
-      "elapsed_s": 50.4
-    },
-    {
-      "subject": "satmath2",
-      "status": "ok",
-      "total": 9,
-      "verified": 9,
-      "refused": 0,
-      "pairs_captured": 9,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 7,
-        "multi_sample": 2
-      },
-      "out_tokens": 12120,
-      "llm_calls": 21,
-      "elapsed_s": 114.8
-    },
-    {
-      "subject": "fixedpoint3",
-      "status": "ok",
-      "total": 10,
-      "verified": 10,
-      "refused": 0,
-      "pairs_captured": 10,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 9,
-        "multi_sample": 1
-      },
-      "out_tokens": 1108,
-      "llm_calls": 17,
-      "elapsed_s": 58.9
-    },
-    {
-      "subject": "intmath3",
-      "status": "ok",
-      "total": 11,
-      "verified": 10,
-      "refused": 1,
-      "pairs_captured": 10,
-      "escalations": 1,
-      "reasons": {
-        "no verifiable test vectors": 1
-      },
-      "won_via": {
-        "single": 10
-      },
-      "out_tokens": 1112,
-      "llm_calls": 10,
-      "elapsed_s": 103.5
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 1186,
-      "llm_calls": 10,
-      "elapsed_s": 57.1
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 1168,
-      "llm_calls": 10,
-      "elapsed_s": 50.8
-    },
-    {
-      "subject": "strchar",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 136175,
-      "llm_calls": 202,
-      "elapsed_s": 867.4
-    },
-    {
-      "subject": "datetime",
-      "status": "ok",
-      "total": 9,
-      "verified": 0,
-      "refused": 9,
-      "pairs_captured": 0,
-      "escalations": 9,
-      "reasons": {
-        "LLM returned empty": 8,
-        "no verifiable test vectors": 1
-      },
-      "won_via": {},
-      "out_tokens": 23900,
-      "llm_calls": 160,
-      "elapsed_s": 235.1
-    },
-    {
-      "subject": "colorpack",
-      "status": "ok",
-      "total": 9,
-      "verified": 9,
-      "refused": 0,
-      "pairs_captured": 9,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 9
-      },
-      "out_tokens": 1089,
-      "llm_calls": 9,
-      "elapsed_s": 61.4
-    },
-    {
-      "subject": "crcstep",
-      "status": "ok",
-      "total": 6,
-      "verified": 6,
-      "refused": 0,
-      "pairs_captured": 6,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "multi_sample": 1,
-        "single": 5
-      },
-      "out_tokens": 1474,
-      "llm_calls": 13,
-      "elapsed_s": 56.3
-    },
-    {
-      "subject": "mix32c",
-      "status": "ok",
-      "total": 9,
-      "verified": 9,
-      "refused": 0,
-      "pairs_captured": 9,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "multi_sample": 4,
-        "single": 5
-      },
-      "out_tokens": 6414,
-      "llm_calls": 45,
-      "elapsed_s": 99.7
-    },
-    {
-      "subject": "prng4",
-      "status": "ok",
-      "total": 9,
-      "verified": 9,
-      "refused": 0,
-      "pairs_captured": 9,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8,
-        "multi_sample": 1
-      },
-      "out_tokens": 8040,
-      "llm_calls": 16,
-      "elapsed_s": 103.7
-    },
-    {
-      "subject": "numtheory2",
-      "status": "ok",
-      "total": 10,
-      "verified": 10,
-      "refused": 0,
-      "pairs_captured": 10,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 10
-      },
-      "out_tokens": 1302,
-      "llm_calls": 10,
-      "elapsed_s": 52.2
-    },
-    {
-      "subject": "fixedpoint4",
-      "status": "ok",
-      "total": 11,
-      "verified": 11,
-      "refused": 0,
-      "pairs_captured": 11,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 11
-      },
-      "out_tokens": 2559,
-      "llm_calls": 18,
-      "elapsed_s": 67.4
-    },
-    {
-      "subject": "modmath3",
-      "status": "ok",
-      "total": 7,
-      "verified": 5,
-      "refused": 2,
-      "pairs_captured": 5,
-      "escalations": 2,
-      "reasons": {
-        "no verifiable test vectors": 2
-      },
-      "won_via": {
-        "single": 5
-      },
-      "out_tokens": 733,
-      "llm_calls": 5,
-      "elapsed_s": 1090.3
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 1190,
-      "llm_calls": 10,
-      "elapsed_s": 53.2
-    },
-    {
-      "subject": "bitops2",
-      "status": "ok",
-      "total": 12,
-      "verified": 12,
-      "refused": 0,
-      "pairs_captured": 12,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 12
-      },
-      "out_tokens": 1437,
-      "llm_calls": 12,
-      "elapsed_s": 81.4
-    },
-    {
-      "subject": "encoding2",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 20177,
-      "llm_calls": 162,
-      "elapsed_s": 216.6
-    },
-    {
-      "subject": "checksums2",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 49.2
-    },
-    {
-      "subject": "strchar",
-      "status": "ok",
-      "total": 6,
-      "verified": 0,
-      "refused": 6,
-      "pairs_captured": 0,
-      "escalations": 6,
-      "reasons": {
-        "LLM returned empty": 6
-      },
-      "won_via": {},
-      "out_tokens": 44602,
-      "llm_calls": 117,
-      "elapsed_s": 342.3
-    },
-    {
-      "subject": "datetime",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 9,
-        "refused": 1
-      },
-      "won_via": {},
-      "out_tokens": 91887,
-      "llm_calls": 188,
-      "elapsed_s": 661.0
+      "out_tokens": 22836,
+      "llm_calls": 20,
+      "elapsed_s": 0.0
     },
     {
       "subject": "amosnier_sha256",
@@ -2067,7 +300,7 @@
       },
       "out_tokens": 15256,
       "llm_calls": 28,
-      "elapsed_s": 136.3
+      "elapsed_s": 0.0
     },
     {
       "subject": "bcon_aes",
@@ -2084,180 +317,7 @@
       "won_via": {},
       "out_tokens": 49602,
       "llm_calls": 13,
-      "elapsed_s": 412.3
-    },
-    {
-      "subject": "bcon_arcfour",
-      "status": "ok",
-      "total": 2,
-      "verified": 0,
-      "refused": 2,
-      "pairs_captured": 0,
-      "escalations": 2,
-      "reasons": {
-        "no verifiable test vectors": 2
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 15.8
-    },
-    {
-      "subject": "bcon_base64",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 22.9
-    },
-    {
-      "subject": "bcon_blowfish",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 31.8
-    },
-    {
-      "subject": "bcon_des",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 51.8
-    },
-    {
-      "subject": "bcon_md2",
-      "status": "ok",
-      "total": 3,
-      "verified": 1,
-      "refused": 2,
-      "pairs_captured": 1,
-      "escalations": 2,
-      "reasons": {
-        "LLM returned empty": 2
-      },
-      "won_via": {
-        "single": 1
-      },
-      "out_tokens": 9887,
-      "llm_calls": 43,
-      "elapsed_s": 88.1
-    },
-    {
-      "subject": "bcon_md5",
-      "status": "ok",
-      "total": 2,
-      "verified": 0,
-      "refused": 2,
-      "pairs_captured": 0,
-      "escalations": 2,
-      "reasons": {
-        "no correctness test available for this f": 1,
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 7742,
-      "llm_calls": 22,
-      "elapsed_s": 87.0
-    },
-    {
-      "subject": "bcon_rot13",
-      "status": "ok",
-      "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "pairs_captured": 0,
-      "escalations": 1,
-      "reasons": {
-        "no verifiable test vectors": 1
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 9.3
-    },
-    {
-      "subject": "bcon_sha1",
-      "status": "ok",
-      "total": 1,
-      "verified": 0,
-      "refused": 1,
-      "pairs_captured": 0,
-      "escalations": 1,
-      "reasons": {
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 14752,
-      "llm_calls": 21,
-      "elapsed_s": 113.3
-    },
-    {
-      "subject": "bcon_sha256",
-      "status": "ok",
-      "total": 2,
-      "verified": 0,
-      "refused": 2,
-      "pairs_captured": 0,
-      "escalations": 2,
-      "reasons": {
-        "LLM returned empty": 2
-      },
-      "won_via": {},
-      "out_tokens": 22601,
-      "llm_calls": 42,
-      "elapsed_s": 171.3
-    },
-    {
-      "subject": "genann",
-      "status": "ok",
-      "total": 13,
-      "verified": 0,
-      "refused": 13,
-      "pairs_captured": 0,
-      "escalations": 13,
-      "reasons": {
-        "no verifiable test vectors": 13
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 63.6
-    },
-    {
-      "subject": "monocypher",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 299.3
+      "elapsed_s": 0.0
     },
     {
       "subject": "murmur3",
@@ -2276,35 +336,23 @@
       },
       "out_tokens": 302,
       "llm_calls": 3,
-      "elapsed_s": 44.7
+      "elapsed_s": 0.0
     },
     {
-      "subject": "pcg_basic",
+      "subject": "bcon_des",
       "status": "ok",
-      "total": 0,
+      "total": 5,
       "verified": 0,
-      "refused": 0,
+      "refused": 5,
       "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
+      "escalations": 5,
+      "reasons": {
+        "no verifiable test vectors": 5
+      },
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 29.6
-    },
-    {
-      "subject": "picohttpparser",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 73.8
+      "elapsed_s": 0.0
     },
     {
       "subject": "tiny_aes",
@@ -2322,21 +370,7 @@
       },
       "out_tokens": 58,
       "llm_calls": 1,
-      "elapsed_s": 65.1
-    },
-    {
-      "subject": "tiny_bignum",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 88.8
+      "elapsed_s": 0.0
     },
     {
       "subject": "tinyexpr",
@@ -2350,496 +384,45 @@
       "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 88.2
-    },
-    {
-      "subject": "tiny_regex",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 86.8
-    },
-    {
-      "subject": "wj_md5",
-      "status": "ok",
-      "total": 5,
-      "verified": 0,
-      "refused": 5,
-      "pairs_captured": 0,
-      "escalations": 5,
-      "reasons": {
-        "no verifiable test vectors": 5
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 27.1
-    },
-    {
-      "subject": "wj_rc4",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "no verifiable test vectors": 4
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 25.4
-    },
-    {
-      "subject": "wj_sha1",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "no verifiable test vectors": 3,
-        "LLM returned empty": 1
-      },
-      "won_via": {},
-      "out_tokens": 22836,
-      "llm_calls": 20,
-      "elapsed_s": 160.4
-    },
-    {
-      "subject": "wj_sha256",
-      "status": "no-ledger",
-      "elapsed_s": 28.1
-    },
-    {
-      "subject": "wj_sha512",
-      "status": "ok",
-      "total": 4,
-      "verified": 0,
-      "refused": 4,
-      "pairs_captured": 0,
-      "escalations": 4,
-      "reasons": {
-        "no verifiable test vectors": 4
-      },
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 33.8
-    },
-    {
-      "subject": "intalg",
-      "status": "ok",
-      "total": 10,
-      "verified": 10,
-      "refused": 0,
-      "pairs_captured": 10,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 10
-      },
-      "out_tokens": 1130,
-      "llm_calls": 10,
-      "elapsed_s": 976.4
-    },
-    {
-      "subject": "numtheory",
-      "status": "ok",
-      "total": 10,
-      "verified": 10,
-      "refused": 0,
-      "pairs_captured": 10,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 10
-      },
-      "out_tokens": 1811,
-      "llm_calls": 10,
-      "elapsed_s": 1137.3
-    },
-    {
-      "subject": "numtheory2",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 1037,
-      "llm_calls": 8,
-      "elapsed_s": 64.4
-    },
-    {
-      "subject": "modmath",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 61786,
-      "llm_calls": 193,
-      "elapsed_s": 593.5
-    },
-    {
-      "subject": "modmath2",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 1097,
-      "llm_calls": 8,
-      "elapsed_s": 969.8
-    },
-    {
-      "subject": "modmath3",
-      "status": "ok",
-      "total": 8,
-      "verified": 8,
-      "refused": 0,
-      "pairs_captured": 8,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 8
-      },
-      "out_tokens": 1240,
-      "llm_calls": 8,
-      "elapsed_s": 970.6
-    },
-    {
-      "subject": "bits",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 14928,
-      "llm_calls": 162,
-      "elapsed_s": 137.7
-    },
-    {
-      "subject": "checksums2",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
-      "out_tokens": 0,
-      "llm_calls": 0,
-      "elapsed_s": 0.8
-    },
-    {
-      "subject": "datetime",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 9,
-        "cargo output (reason-capture bug)": 1
-      },
-      "won_via": {},
-      "out_tokens": 76341,
-      "llm_calls": 188,
-      "elapsed_s": 521.8
-    },
-    {
-      "subject": "encoding2",
-      "status": "ok",
-      "total": 8,
-      "verified": 0,
-      "refused": 8,
-      "pairs_captured": 0,
-      "escalations": 8,
-      "reasons": {
-        "LLM returned empty": 8
-      },
-      "won_via": {},
-      "out_tokens": 18311,
-      "llm_calls": 161,
-      "elapsed_s": 167.6
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 1171,
-      "llm_calls": 10,
-      "elapsed_s": 25.9
+      "elapsed_s": 0.0
     },
     {
       "subject": "strchar",
       "status": "ok",
-      "total": 6,
-      "verified": 0,
-      "refused": 6,
-      "pairs_captured": 0,
-      "escalations": 6,
-      "reasons": {
-        "cargo output (reason-capture bug)": 1,
-        "LLM returned empty": 5
-      },
-      "won_via": {},
-      "out_tokens": 57014,
-      "llm_calls": 110,
-      "elapsed_s": 351.2
-    },
-    {
-      "subject": "datetime",
-      "status": "ok",
-      "total": 9,
-      "verified": 0,
-      "refused": 9,
-      "pairs_captured": 0,
-      "escalations": 9,
-      "reasons": {
-        "LLM returned empty": 9
-      },
-      "won_via": {},
-      "out_tokens": 36468,
-      "llm_calls": 181,
-      "elapsed_s": 311.6
-    },
-    {
-      "subject": "encoding2",
-      "status": "ok",
-      "total": 5,
-      "verified": 5,
+      "total": 7,
+      "verified": 7,
       "refused": 0,
-      "pairs_captured": 5,
+      "pairs_captured": 7,
       "escalations": 0,
       "reasons": {},
       "won_via": {
-        "single": 5
+        "cached": 7
       },
-      "out_tokens": 464,
-      "llm_calls": 5,
-      "elapsed_s": 45.8
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 9,
-      "verified": 0,
-      "refused": 9,
-      "pairs_captured": 0,
-      "escalations": 9,
-      "reasons": {
-        "LLM returned empty": 9
-      },
-      "won_via": {},
-      "out_tokens": 12466,
-      "llm_calls": 104,
-      "elapsed_s": 183.8
-    },
-    {
-      "subject": "strchar",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "cargo output (reason-capture bug)": 1,
-        "LLM returned empty": 9
-      },
-      "won_via": {},
-      "out_tokens": 118108,
-      "llm_calls": 175,
-      "elapsed_s": 888.7
-    },
-    {
-      "subject": "datetime",
-      "status": "ok",
-      "total": 9,
-      "verified": 6,
-      "refused": 3,
-      "pairs_captured": 6,
-      "escalations": 3,
-      "reasons": {
-        "cargo output (reason-capture bug)": 1,
-        "LLM returned empty": 2
-      },
-      "won_via": {
-        "cached": 6
-      },
-      "out_tokens": 60605,
-      "llm_calls": 48,
-      "elapsed_s": 410.9
-    },
-    {
-      "subject": "reduce",
-      "status": "ok",
-      "total": 9,
-      "verified": 9,
-      "refused": 0,
-      "pairs_captured": 9,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "single": 9
-      },
-      "out_tokens": 1084,
-      "llm_calls": 9,
-      "elapsed_s": 27.0
-    },
-    {
-      "subject": "strchar",
-      "status": "ok",
-      "total": 10,
-      "verified": 0,
-      "refused": 10,
-      "pairs_captured": 0,
-      "escalations": 10,
-      "reasons": {
-        "LLM returned empty": 10
-      },
-      "won_via": {},
-      "out_tokens": 127330,
-      "llm_calls": 178,
-      "elapsed_s": 827.4
-    },
-    {
-      "subject": "morehash",
-      "status": "ok",
-      "total": 8,
-      "verified": 3,
-      "refused": 5,
-      "pairs_captured": 3,
-      "escalations": 5,
-      "reasons": {
-        "LLM returned empty": 5
-      },
-      "won_via": {
-        "cached": 2,
-        "single": 1
-      },
-      "out_tokens": 139,
-      "llm_calls": 1,
-      "elapsed_s": 14.9
-    },
-    {
-      "subject": "crc",
-      "status": "ok",
-      "total": 10,
-      "verified": 3,
-      "refused": 7,
-      "pairs_captured": 3,
-      "escalations": 7,
-      "reasons": {
-        "LLM returned empty": 7
-      },
-      "won_via": {
-        "cached": 2,
-        "single": 1
-      },
-      "out_tokens": 142,
-      "llm_calls": 1,
-      "elapsed_s": 51.4
-    },
-    {
-      "subject": "checksums2",
-      "status": "ok",
-      "total": 0,
-      "verified": 0,
-      "refused": 0,
-      "pairs_captured": 0,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {},
       "out_tokens": 0,
       "llm_calls": 0,
-      "elapsed_s": 37.5
-    },
-    {
-      "subject": "bitops2",
-      "status": "ok",
-      "total": 13,
-      "verified": 13,
-      "refused": 0,
-      "pairs_captured": 13,
-      "escalations": 0,
-      "reasons": {},
-      "won_via": {
-        "cached": 11,
-        "single": 2
-      },
-      "out_tokens": 457,
-      "llm_calls": 2,
-      "elapsed_s": 59.5
+      "elapsed_s": 4.7
     }
   ],
   "totals": {
-    "subjects_ok": 165,
-    "functions": 1066,
-    "verified": 381,
-    "pairs_captured": 381,
-    "escalations": 685,
+    "subjects_ok": 25,
+    "functions": 88,
+    "verified": 13,
+    "pairs_captured": 13,
+    "escalations": 75,
     "escalations_model_hard": 0,
-    "escalations_drafter_empty": 214,
-    "escalations_oracle_gap": 203,
-    "escalations_reason_unclear": 22,
-    "out_tokens": 2116979,
+    "escalations_drafter_empty": 10,
+    "escalations_oracle_gap": 65,
+    "escalations_reason_unclear": 0,
+    "out_tokens": 143036,
     "refusal_reason_histogram": {
-      "LLM returned empty": 337,
-      "no verifiable test vectors": 317,
-      "Checking parson-core v0.1.0 (/tmp/parson": 14,
-      "no correctness test available for this f": 8,
-      "cargo output (reason-capture bug)": 4,
-      "Checking http_parser v0.1.0 (/tmp/hpNEMO": 2,
-      "Checking fix16 v0.1.0 (/tmp/verano_fix16": 1,
-      "Compiling siphash v0.1.0 (/tmp/libbench_": 1,
-      "refused": 1
+      "no verifiable test vectors": 64,
+      "LLM returned empty": 10,
+      "no correctness test available for this f": 1
     },
     "won_via_histogram": {
-      "single": 316,
-      "cached": 40,
-      "multi_sample": 25
+      "single": 5,
+      "multi_sample": 1,
+      "cached": 7
     }
   }
 }

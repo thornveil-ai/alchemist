@@ -1,22 +1,22 @@
 {
-  "records": 331,
+  "records": 338,
   "by_category": {
     "intmath": 107,
     "hash": 63,
     "prng": 33,
     "fixedpoint": 32,
-    "bitops": 28,
+    "bitops": 29,
     "checksum": 22,
+    "string": 14,
     "utility": 13,
     "graphics": 10,
-    "string": 9,
-    "encoding": 7,
+    "encoding": 8,
     "cipher": 6,
     "decompression": 1
   },
   "by_won_via": {
     "single": 267,
-    "cached": 37,
+    "cached": 44,
     "multi_sample": 24,
     "frontier-claude": 3
   },
