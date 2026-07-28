@@ -790,12 +790,16 @@ def plan_adapters(
                     f"    {gen_fn.crate_ident}::{gen_fn.name}(&mut st, &mut out);\n"
                     f"    out\n}}\n"
                 )
+                # Generic ptr casts (`as *const _` / `as *mut _`) so a `void*` key/
+                # buffer (WjCryptLib RC4) binds as well as a byte*; a no-op for byte*.
+                # A keyed cipher with a trailing drop-N param gets `, 0` appended.
+                _drop = ", 0" if getattr(h, "seq_init_drop", False) else ""
                 c_wrapper = (
                     f"pub fn c_{h.algorithm}(key: Vec<u8>, outlen: usize) -> Vec<u8> {{\n"
                     f"    let mut st: {ffi_ident}::{st} = unsafe {{ core::mem::zeroed() }};\n"
-                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(&mut st as *mut _, key.as_ptr(), key.len() as _); }}\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_init}(&mut st as *mut _, key.as_ptr() as *const _, key.len() as _{_drop}); }}\n"
                     f"    let mut out = vec![0u8; outlen];\n"
-                    f"    unsafe {{ {ffi_ident}::{h.seq_gen}(&mut st as *mut _, out.as_mut_ptr(), outlen as _); }}\n"
+                    f"    unsafe {{ {ffi_ident}::{h.seq_gen}(&mut st as *mut _, out.as_mut_ptr() as *mut _, outlen as _); }}\n"
                     f"    out\n}}\n"
                 )
                 plan.resolved.append(ResolvedAdapter(

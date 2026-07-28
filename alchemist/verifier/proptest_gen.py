@@ -80,6 +80,8 @@ class AlgorithmHarness:
     seq_struct: str | None = None
     seq_init: str | None = None
     seq_gen: str | None = None
+    # Cipher init has a trailing drop-N param (WjCryptLib RC4). adapter_gen passes 0.
+    seq_init_drop: bool = False
     init_kinds: list | None = None
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.

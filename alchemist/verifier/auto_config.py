@@ -1848,6 +1848,10 @@ def fuzz_scalar_mutator_vectors(dll, alg, sig, info, *, count: int = 40):
 
 _CONST_BYTE_PTR2 = re.compile(r"^const\s+(unsigned char|uint8_t|char)\s*\*$")
 _MUT_BYTE_PTR3 = re.compile(r"^(unsigned char|uint8_t|char)\s*\*$")
+# Cipher-lever #3 (keyed stream ciphers w/ a drop param, e.g. WjCryptLib RC4): a KEY
+# input or an OUTPUT buffer may be `void*`/`void const*` rather than a byte pointer.
+_CIPHER_KEY_PTR = re.compile(r"^(?:const\s+(?:unsigned char|uint8_t|char)|const\s+void|void\s+const)\s*\*$")
+_CIPHER_BUF_PTR = re.compile(r"^(?:(?:unsigned char|uint8_t|char)|void)\s*\*$")
 
 
 def _ct_for(rust):
@@ -1895,19 +1899,27 @@ def classify_cipher_sequence(by_name, structs):
         if any(f.is_ptr for f in fields):
             continue
         init = gen = None
+        init_drop = False
         for name, sig in fns_:
             ps = [(p[1] or "").strip() for p in sig.params]
-            ret_void = (sig.return_type or "").strip() == "void"
-            if (len(ps) == 3 and _CONST_BYTE_PTR2.match(ps[1])
-                    and _INT_C_TYPES.match(ps[2]) and ret_void):
+            ret = (sig.return_type or "").strip()
+            # init: `(S*, key, keylen)` or `(S*, key, keylen, dropn)`; key may be a
+            # byte* or `void const*`; return void OR int (Rc4Initialise returns 0/-1).
+            if (len(ps) in (3, 4) and _CIPHER_KEY_PTR.match(ps[1])
+                    and _INT_C_TYPES.match(ps[2])
+                    and (len(ps) == 3 or _INT_C_TYPES.match(ps[3]))
+                    and ret in ("void", "int")):
                 init = (name, sig)
-            elif (len(ps) == 3 and _MUT_BYTE_PTR3.match(ps[1])
-                    and _INT_C_TYPES.match(ps[2]) and ret_void):
+                init_drop = (len(ps) == 4)
+            # gen/output: `(S*, out, outlen)`; out may be a byte* or `void*`.
+            elif (len(ps) == 3 and _CIPHER_BUF_PTR.match(ps[1])
+                    and _INT_C_TYPES.match(ps[2]) and ret == "void"):
                 gen = (name, sig)
         if init and gen:
             return {
                 "struct": sname, "rust": _sl.rust_struct_name(sname),
                 "fields": fields, "init": init, "gen": gen,
+                "init_drop": init_drop,
             }
     return None
 
@@ -2845,6 +2857,7 @@ def build_diff_config(
                 cases=2000,
                 input_strategy="(prop::collection::vec(any::<u8>(), 1..64), 0usize..256)",
                 seq_struct=_cs["rust"], seq_init=_cs["init"][0], seq_gen=_gen_name,
+                seq_init_drop=_cs.get("init_drop", False),
             ))
             used_signatures.append(by_name[_cs["init"][0]])
             used_signatures.append(by_name[_gen_name])
