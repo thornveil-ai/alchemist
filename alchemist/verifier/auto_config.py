@@ -666,6 +666,61 @@ def _is_divide_shape(alg) -> bool:
         r"\b(modulo|remainder|divides?|divided|division|divisor)\b", txt))
 
 
+def _adapter_cpu_bounded(adapter, fn, vals, cpu_s=2):
+    """Run one compiled-C oracle call in a forked child with a hard CPU cap so an
+    input that triggers an unbounded loop in the C (huge loop-count arg) drops only
+    THAT vector instead of hanging the whole function's vector generation. Returns
+    (ok, value); ok=False means the call timed out/crashed and the vector is skipped.
+    Falls back to a direct in-process call on non-fork platforms."""
+    import os as _os, pickle as _pickle
+    if _os.name != "posix" or not hasattr(_os, "fork"):
+        return True, adapter(fn, vals)
+    r, w = _os.pipe()
+    pid = _os.fork()
+    if pid == 0:  # child
+        try:
+            _os.close(r)
+            try:
+                import resource as _res
+                _res.setrlimit(_res.RLIMIT_CPU, (cpu_s, cpu_s + 1))
+            except Exception:  # noqa: BLE001
+                pass
+            _os.write(w, _pickle.dumps(adapter(fn, vals)))
+        except BaseException:  # noqa: BLE001
+            pass
+        finally:
+            _os._exit(0)
+    _os.close(w)
+    import time as _t, select as _select
+    buf = b""
+    deadline = _t.monotonic() + cpu_s * 2 + 1
+    while True:
+        rem = deadline - _t.monotonic()
+        if rem <= 0:
+            break
+        rl, _, _ = _select.select([r], [], [], rem)
+        if not rl:
+            break
+        chunk = _os.read(r, 65536)
+        if not chunk:
+            break
+        buf += chunk
+    _os.close(r)
+    try:
+        wpid, _ = _os.waitpid(pid, _os.WNOHANG)
+        if wpid == 0:
+            _os.kill(pid, 9)
+            _os.waitpid(pid, 0)
+    except OSError:
+        pass
+    if not buf:
+        return False, None
+    try:
+        return True, _pickle.loads(buf)
+    except Exception:  # noqa: BLE001
+        return False, None
+
+
 def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
     """Mint fill-loop vectors for an all-scalar function from the compiled C oracle.
     Values are kept in [0, 2**31) so they compile as positive literals for any int
@@ -719,9 +774,16 @@ def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
         if nonzero:
             pool = [v for v in pool if v != 0]
         st = 0xD1B54A32D192ED03 ^ (hash(p_spec.name) & 0xFFFF)
+        # Bound the RANDOM fill magnitude so a loop-count arg (fib_mod/
+        # count_primes_below O(n^1.5)) terminates fast during vector-gen; the final
+        # full-range proptest differential is the real correctness gate, so bounded
+        # fill values do not weaken it. Env-tunable via ALCHEMIST_SCALAR_FILL_MAX.
+        _fill_max = int(_os.environ.get("ALCHEMIST_SCALAR_FILL_MAX", str(1 << 16)))
+        _flo = max(lo, -_fill_max)
+        _fhi = min(hi, _fill_max)
         while len(pool) < count:
             st = (st * 6364136223846793005 + 1442695040888963407) & ((1 << 64) - 1)
-            v = lo + ((st >> 3) % (hi - lo + 1))
+            v = _flo + ((st >> 3) % (_fhi - _flo + 1))
             if nonzero and v == 0:
                 continue
             pool.append(v)
@@ -734,7 +796,11 @@ def fuzz_scalar_vectors(dll, alg, sig, *, count: int = 40):
             continue
         seen.add(vals)
         try:
-            out = binding.adapter(fn, vals)
+            _ok, out = _adapter_cpu_bounded(
+                binding.adapter, fn, vals,
+                cpu_s=int(_os.environ.get("ALCHEMIST_SCALAR_VEC_CPU_S", "1")))
+            if not _ok:
+                continue  # unbounded-loop / crash on this input -> drop this vector only
         except Exception:  # noqa: BLE001
             continue
         row = {}
