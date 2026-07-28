@@ -3026,8 +3026,23 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
     return filters
 
 
+_CARGO_PROGRESS_RE = re.compile(
+    r"^\s*(Compiling|Checking|Finished|Building|Updating|Downloading|Downloaded|"
+    r"Running|Fresh|Blocking|Locking|Adding|Installing|Packaging|Documenting|"
+    r"Ignored|Removing|Verifying)\b")
+
+
 def _top_lines(text: str, n: int) -> str:
-    return "\n".join((text or "").splitlines()[:n])
+    """First n SUBSTANTIVE lines of compiler/test output, skipping cargo's leading
+    progress/status chatter ('Compiling foo v0.1.0 ...', 'Checking ...', 'Finished
+    ...', 'Running target/...') so the captured reason is the ACTUAL error, not build
+    noise. cargo status verbs are Capitalized; genuine content ('error[E...]',
+    'error:', 'running N tests', panic/assert lines) is kept. Falls back to the raw
+    head if everything was filtered — never returns empty when input is non-empty."""
+    lines = (text or "").splitlines()
+    meaningful = [ln for ln in lines if ln.strip() and not _CARGO_PROGRESS_RE.match(ln)]
+    picked = meaningful[:n] if meaningful else lines[:n]
+    return "\n".join(picked)
 
 
 _ASSERT_LR_RE = re.compile(
