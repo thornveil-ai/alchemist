@@ -118,10 +118,12 @@ def _load_specs_and_arch(
             normalize_byte_buffer_types,
             normalize_char_scalar_params,
             normalize_digest_specs,
+            normalize_scalar_return_types,
         )
         normalize_byte_buffer_types(subject, specs)
         normalize_char_scalar_params(subject, specs)
         normalize_digest_specs(subject, specs)
+        normalize_scalar_return_types(subject, specs)
     except Exception:  # noqa: BLE001
         pass
     try:

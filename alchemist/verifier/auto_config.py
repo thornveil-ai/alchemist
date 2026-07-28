@@ -1622,6 +1622,54 @@ def normalize_byte_buffer_types(c_source_dir, specs) -> int:
 _C_CHAR_SCALAR = re.compile(r"^(const\s+)?(signed\s+|unsigned\s+)?char$")
 
 
+def normalize_scalar_return_types(c_source_dir, specs) -> int:
+    """Reconcile a spec RETURN type against the C oracle's actual return type.
+    For a function whose C signature returns a PLAIN SCALAR (int/unsigned/int32_t/
+    uint8_t/...), the byte-exact differential compares that raw scalar, so the Rust
+    return MUST be the faithful mapping (int->i32, unsigned->u32, ...). The extractor
+    often guesses an idiomatic bool / Option<u8> / wrong-width-or-sign scalar, which
+    can NEVER typecheck against the oracle's plain-scalar asserts and fails the whole
+    crate's shared test-module compile (poisoning every sibling). Only rewrites a
+    scalar-FAMILY guess (bool / scalar / Option<scalar> / Result<scalar,_>); genuine
+    Vec/Box/String/&/ptr returns are untouched. Returns the count changed."""
+    from alchemist.verifier import struct_lift as _sl
+    _RUST_SCALARS = {"i8", "i16", "i32", "i64", "isize",
+                     "u8", "u16", "u32", "u64", "usize", "f32", "f64"}
+    _scalar_family = re.compile(
+        r"^(?:bool|i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64"
+        r"|Option\s*<\s*(?:bool|[iu](?:8|16|32|64|size)|f32|f64)\s*>"
+        r"|Result\s*<\s*(?:bool|[iu](?:8|16|32|64|size)|f32|f64)\s*,.*>)$")
+    try:
+        sigs = {si.name: si for si in collect_subject_signatures(Path(c_source_dir))}
+        typedefs = _sl.collect_scalar_typedefs(Path(c_source_dir))
+    except Exception:  # noqa: BLE001
+        return 0
+    changed = 0
+    for module in specs:
+        for alg in getattr(module, "algorithms", None) or []:
+            sig = sigs.get(alg.name)
+            if sig is None:
+                continue
+            cret = re.sub(r"\bconst\b", "", (sig.return_type or "")).strip()
+            faithful = _sl.c_scalar_to_rust(cret)
+            if faithful is None and cret in typedefs:
+                faithful = _sl.c_scalar_to_rust(typedefs[cret])
+            if faithful is None:  # C returns a pointer/struct/void — not our case
+                continue
+            cur = (alg.return_type or "").strip()
+            if cur == faithful:
+                continue
+            if not _scalar_family.match(cur):  # genuine Vec/Box/String/ptr — leave alone
+                continue
+            alg.return_type = faithful
+            try:
+                alg.outputs = []
+            except Exception:  # noqa: BLE001
+                pass
+            changed += 1
+    return changed
+
+
 def normalize_char_scalar_params(c_source_dir, specs) -> int:
     """A C `char` VALUE arg (a byte being compared/indexed, e.g. count_char's needle)
     gets lifted by the generic lifter to Rust `char` — a 4-byte Unicode scalar that has

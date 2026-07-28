@@ -882,6 +882,16 @@ def run_implement_stage(
             console.print(f"[cyan]digest-lift: {_nd} hash fn(s) -> `fn(&[u8]) -> Vec<u8>` (returns the digest)[/cyan]")
     except Exception as _e:  # noqa: BLE001
         console.print(f"[yellow]digest type-lift skipped: {_e}[/yellow]")
+    # Return-type reconciliation: a C plain-scalar-returning fn (int/unsigned/...) MUST
+    # have the faithful Rust scalar return (int->i32) for the byte-exact differential; the
+    # extractor's idiomatic bool/Option<u8>/wrong-width guess fails the whole crate compile.
+    try:
+        from alchemist.verifier.auto_config import normalize_scalar_return_types
+        _nr = normalize_scalar_return_types(source, specs)
+        if _nr:
+            console.print(f"[cyan]return-lift: {_nr} scalar-return fn(s) reconciled to faithful C scalar[/cyan]")
+    except Exception as _e:  # noqa: BLE001
+        console.print(f"[yellow]scalar-return type-lift skipped: {_e}[/yellow]")
     # Struct-carry (Phase 2): emit the safe state struct into the crate so stateful code
     # compiles cold (kills "cannot find type Rc4State"); C struct is the source of truth.
     # First make single-scalar state consistent across functions — the extractor sometimes
