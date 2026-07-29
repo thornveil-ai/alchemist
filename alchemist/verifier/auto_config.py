@@ -2971,6 +2971,45 @@ def classify_stream_xor(by_name):
     return None
 
 
+def fuzz_mac_vectors(dll, group, *, count: int = 12):
+    """Drive the compiled C one-shot MAC (Poly1305) over a random fixed-K key + a
+    0..N-byte message, capturing the T-byte tag as per-function fill-loop vectors.
+    Lengths mix block-boundary edges (0/1/15/16/17/64/127) + random tails."""
+    import ctypes
+    from alchemist.extractor.fuzz_vectors import _rng, _FUZZ_SEED, _bytes_to_rust_literal
+    from alchemist.extractor.schemas import TestVector as SpecTestVector
+    fn = group["fn"]
+    T = group["tag_len"]
+    K = group["key_len"]
+    try:
+        c_fn = getattr(dll, fn)
+    except AttributeError:
+        return {}
+    c_fn.restype = None
+    c_fn.argtypes = (ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_ubyte),
+                     ctypes.c_size_t, ctypes.POINTER(ctypes.c_ubyte))
+    rng = _rng(_FUZZ_SEED)
+    vecs = []
+    fixed_lens = [0, 1, 15, 16, 17, 64, 127]
+    for vi in range(count):
+        key = bytes(rng.randrange(0, 256) for _ in range(K))
+        mlen = fixed_lens[vi] if vi < len(fixed_lens) else rng.randrange(0, 300)
+        msg = bytes(rng.randrange(0, 256) for _ in range(mlen))
+        kbuf = (ctypes.c_ubyte * K)(*key)
+        mbuf = (ctypes.c_ubyte * mlen)(*msg) if mlen else (ctypes.c_ubyte * 0)()
+        tbuf = (ctypes.c_ubyte * T)()
+        c_fn(tbuf, mbuf, mlen, kbuf)
+        tag = bytes(tbuf[i] for i in range(T))
+        vecs.append(SpecTestVector(
+            description=f"mac_k{K}_len{mlen}",
+            source=f"C reference (MAC): {fn}",
+            inputs={"__key__": _bytes_to_rust_literal(key),
+                    "__msg__": _bytes_to_rust_literal(msg)},
+            expected_output=_bytes_to_rust_literal(tag),
+            tolerance=f"mac|{T}"))
+    return {fn: vecs}
+
+
 def fuzz_stream_xor_vectors(dll, group, *, count: int = 12):
     """Drive the compiled C stream cipher (ChaCha20/Salsa20) over random
     key/nonce/counter/plaintext and capture the ciphertext as per-function fill-loop
@@ -4025,6 +4064,17 @@ def _synthesize_c_vectors_impl(c_source_dir, specs, *, compiler: str = "gcc") ->
                 for alg in getattr(module, "algorithms", None) or []:
                     if alg.name in _byfn and _byfn[alg.name] and not getattr(alg, "test_vectors", None):
                         alg.test_vectors = _byfn[alg.name]
+                        augmented += 1
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _mc = classify_mac(by_name)
+        if _mc is not None:
+            _mcbyfn = fuzz_mac_vectors(dll, _mc)
+            for module in specs:
+                for alg in getattr(module, "algorithms", None) or []:
+                    if alg.name in _mcbyfn and _mcbyfn[alg.name] and not getattr(alg, "test_vectors", None):
+                        alg.test_vectors = _mcbyfn[alg.name]
                         augmented += 1
     except Exception:  # noqa: BLE001
         pass

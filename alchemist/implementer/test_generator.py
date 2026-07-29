@@ -440,6 +440,23 @@ def _emit_cipher_seq_test(fn_name: str, vec, idx: int) -> str:
     return "".join(lines)
 
 
+def _emit_mac_test(fn_name: str, vec, idx: int) -> str:
+    """One-shot MAC (Poly1305): call `f(tag_out, msg, len, key)` with the fuzzed key +
+    message and assert the tag equals the C oracle. tolerance = mac|{tag_len}."""
+    parts = (vec.tolerance or "").split("|")
+    tlen = parts[1] if len(parts) > 1 else "16"
+    key = vec.inputs.get("__key__", "&[]")
+    msg = vec.inputs.get("__msg__", "&[]")
+    lines = [f"    #[test]\n    fn test_{fn_name}_mac_{idx}() {{\n"]
+    lines.append(f"        let key: &[u8] = {key};\n")
+    lines.append(f"        let msg: &[u8] = {msg};\n")
+    lines.append(f"        let mut tag = alloc::vec![0u8; {tlen}];\n")
+    lines.append(f"        super::{fn_name}(&mut tag, msg, msg.len(), key);\n")
+    lines.append(f"        assert_eq!(&tag[..], {vec.expected_output}, \"{vec.description}\");\n")
+    lines.append("    }\n")
+    return "".join(lines)
+
+
 def _emit_stream_xor_test(fn_name: str, vec, idx: int) -> str:
     """Keyed stream cipher (ChaCha20/Salsa20): call the free fn
     `f(key, nonce, counter, in, out, len)` with the fuzzed inputs and assert the
@@ -777,6 +794,8 @@ def _emit_spec_test(
         return _emit_cipher_seq_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("stream_xor"):
         return _emit_stream_xor_test(fn_name, vec, idx)
+    if (vec.tolerance or "").startswith("mac"):
+        return _emit_mac_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("construct_observe"):
         return _emit_construct_observe_test(fn_name, vec, idx)
     if (vec.tolerance or "").startswith("scalar_mutator"):

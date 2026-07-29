@@ -3052,6 +3052,7 @@ def _test_filters_for_fn(fn_name: str) -> list[str]:
             # stateful subject (rc4 keystream, bump_alloc op, FNV update/final).
             f"test_{name}_seq_",     # cipher_seq keystream
             f"test_{name}_stream_",  # stream_xor (ChaCha20/Salsa20) ciphertext
+            f"test_{name}_mac_",     # one-shot MAC (Poly1305) tag
             f"test_{name}_aseq_",    # alloc_seq op
             f"test_{name}_ainit_",   # alloc_seq init
             f"test_{name}_hinit_",   # hash_seq init
