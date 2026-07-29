@@ -848,6 +848,32 @@ def plan_adapters(
                     resolution=f"{h.algorithm} -> {ci}::{init_fn.name}+{upd_fn.name}+"
                                f"{fin_fn.name} (hash digest seq)",
                 ))
+            elif h.category == "mac":
+                # One-shot MAC (Poly1305): f(tag_out, msg, len, key). rust/c wrappers
+                # take (key, data) -> tag; tag buffer sized to the declarator length.
+                fn = _pick_unambiguous(h.algorithm, api)
+                if fn is None:
+                    raise AdapterError(
+                        f"cannot adapt MAC '{h.algorithm}': fn not found")
+                ci = fn.crate_ident
+                tlen = getattr(h, "mac_tag_len", 16) or 16
+                rust_wrapper = (
+                    f"pub fn rust_{h.algorithm}(key: Vec<u8>, data: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut tag = vec![0u8; {tlen}];\n"
+                    f"    {ci}::{fn.name}(&mut tag, &data, data.len(), &key);\n"
+                    f"    tag\n}}\n"
+                )
+                c_wrapper = (
+                    f"pub fn c_{h.algorithm}(key: Vec<u8>, data: Vec<u8>) -> Vec<u8> {{\n"
+                    f"    let mut tag = vec![0u8; {tlen}];\n"
+                    f"    unsafe {{ {ffi_ident}::{h.algorithm}(tag.as_mut_ptr() as *mut _, data.as_ptr() as *const _, data.len(), key.as_ptr() as *const _); }}\n"
+                    f"    tag\n}}\n"
+                )
+                plan.resolved.append(ResolvedAdapter(
+                    harness=h, rust_wrapper=rust_wrapper, c_wrapper=c_wrapper,
+                    rust_crates={fn.crate},
+                    resolution=f"{h.algorithm} -> {ci}::{fn.name} (one-shot MAC)",
+                ))
             elif h.category == "stream_xor":
                 # ChaCha20/Salsa20 keyed stream cipher: encrypt = XOR plaintext with the
                 # keystream. rust/c wrappers take (key, nonce, counter, data) -> ciphertext.

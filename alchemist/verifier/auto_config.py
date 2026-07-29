@@ -2910,6 +2910,33 @@ _STREAM_CTR_TYPES = {
 }
 
 
+def classify_mac(by_name):
+    """One-shot MAC (Poly1305/HMAC-one-shot):
+      void f(byte tag[T], const byte msg[], size_t len, const byte key[K]).
+    tag is the leading mut sized byte array; key the trailing const sized byte
+    array; msg a const byte buffer. Returns {"fn","tag_len","key_len"} or None."""
+    for name, sig in by_name.items():
+        if (sig.return_type or "").strip() != "void":
+            continue
+        ps = [(pp[1] or "").strip() for pp in (sig.params or [])]
+        if len(ps) != 4:
+            continue
+        m0 = _STREAM_BYTE_ARR.match(ps[0])
+        if not (m0 and not m0.group("const") and m0.group("n")):
+            continue
+        mm = _STREAM_BYTE_ARR.match(ps[1])
+        msg_ok = (mm and mm.group("const") and not mm.group("n")) or _is_const_byte_buf(ps[1])
+        if not msg_ok:
+            continue
+        if not _SIZE_T.match(ps[2]):
+            continue
+        m3 = _STREAM_BYTE_ARR.match(ps[3])
+        if not (m3 and m3.group("const") and m3.group("n")):
+            continue
+        return {"fn": name, "tag_len": int(m0.group("n")), "key_len": int(m3.group("n"))}
+    return None
+
+
 def classify_stream_xor(by_name):
     """Keyed stream cipher (ChaCha20/Salsa20):
       void f(const byte key[K], const byte nonce[N], <uint> counter,
@@ -3131,6 +3158,16 @@ def build_diff_config(
         if _ok:
             used_signatures.append(by_name[_bc["setup"][0]])
             used_signatures.append(by_name[_enc])
+    _mac = classify_mac(by_name)
+    if _mac is not None:
+        _macfn = _mac["fn"]
+        harnesses.append(AlgorithmHarness(
+            algorithm=_macfn, category="mac",
+            rust_call=f"rust_{_macfn}(key.clone(), data.clone())",
+            c_call=f"c_{_macfn}(key, data)", cases=2000,
+            mac_tag_len=_mac["tag_len"], mac_key_len=_mac["key_len"],
+        ))
+        used_signatures.append(by_name[_macfn])
     _sx = classify_stream_xor(by_name)
     if _sx is not None:
         _sxfn = _sx["fn"]

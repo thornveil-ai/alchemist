@@ -36,7 +36,7 @@ VALID_CATEGORIES = {
     "filter", "controller", "transform", "data_structure",
     "protocol", "scheduler", "utility", "other", "scalar", "inplace", "scalar_mutator",
     "cipher_seq", "block_cipher", "alloc_seq", "hash_seq", "hash_digest_seq", "cbuf_out", "cstr_out", "buf_transform",
-    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip", "codec_io", "stream_xor"}
+    "iarray_reduce", "cstr_scalar", "buf_gen", "cstr_roundtrip", "codec_io", "stream_xor", "mac"}
 
 
 @dataclass
@@ -94,6 +94,9 @@ class AlgorithmHarness:
     sc_key_len: int = 0
     sc_nonce_len: int = 0
     sc_counter_ty: str = "u32"
+    # mac (Poly1305): tag + key byte lengths.
+    mac_tag_len: int = 0
+    mac_key_len: int = 0
     init_kinds: list | None = None
     # Hash-sequence (init; update(data); final() -> digest): the state primitive is
     # `state_rust`, `seq_init`/`seq_gen` name the init/update fns, `hash_ret` the digest type.
@@ -256,6 +259,8 @@ def _proptest_block(h: AlgorithmHarness) -> str:
         return _proptest_codec_io_block(h)
     if h.category == "stream_xor":
         return _proptest_stream_xor_block(h)
+    if h.category == "mac":
+        return _proptest_mac_block(h)
     if h.category == "alloc_seq":
         return _proptest_alloc_seq_block(h)
     if h.category == "hash_seq":
@@ -532,6 +537,28 @@ def _proptest_cipher_seq_block(h: AlgorithmHarness) -> str:
             #[test]
             fn {h.algorithm}_matches_c_reference((key, outlen) in {strat}) {{
                 prop_assert_eq!(rust_{h.algorithm}(key.clone(), outlen), c_{h.algorithm}(key, outlen));
+            }}
+        }}
+    """).rstrip()
+
+
+def _proptest_mac_block(h: AlgorithmHarness) -> str:
+    """Differential for a one-shot MAC (Poly1305): fuzz a fixed-size key + 0..384
+    bytes of message, compute the tag on both sides, compare. Random keys exercise
+    the r-clamp; random lengths exercise the partial-final-block padding."""
+    K = h.mac_key_len
+    return dedent(f"""\
+        proptest! {{
+            #![proptest_config(ProptestConfig::with_cases({h.cases}))]
+
+            #[test]
+            fn {h.algorithm}_matches_c_reference(
+                (key, data) in (
+                    prop::collection::vec(any::<u8>(), {K}..={K}),
+                    prop::collection::vec(any::<u8>(), 0..384),
+                )
+            ) {{
+                prop_assert_eq!({h.rust_call}, {h.c_call});
             }}
         }}
     """).rstrip()
