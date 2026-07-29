@@ -60,6 +60,34 @@ Six gates must pass before `TranslationReport.ok == True` (plus an optional seve
 
 `run_translate_all` chains these; the first `ok=False` short-circuits the rest so you see the actual root cause, not cascaded failures.
 
+### Oracle shape catalog (`verifier/auto_config.py`)
+
+The differential gate can only verify a function whose C API shape it knows how to
+drive. Each **shape** ("lever") teaches `auto_config` to classify a signature, emit a
+proptest harness, and adapt the FFI — so the model's output for that shape is
+byte-exact-or-refused automatically, no per-subject config. Adding a shape is the
+highest-leverage product work: it permanently widens what the model-driven converter
+can prove. Current shapes:
+
+- **scalar / iarray_reduce / cstr_scalar** — pure numeric & reduction leaves.
+- **buf_transform / codec_io** — variable-length byte codecs (incl. base64 roundtrip).
+- **cbuf_out / cstr_out / cstr_roundtrip / buf_gen** — string/buffer producers & decoders.
+- **ctx-digest** (`init`/`update`/`final`) + struct-wrapped-digest / `void*` variants —
+  SHA / MD / BLAKE hash contexts (digest length via sized-array or a name fallback).
+- **cipher-sequence** — keyed stream keystream (RC4-shaped, drop-N + `void*`).
+- **block-cipher** — three key-schedule carriers: struct (Blowfish), `WORD[]`+keysize
+  (AES), 2-D schedule + enum (DES).
+- **stream_xor** — keyed stream cipher `f(key, nonce, counter, in, out, len)`
+  (ChaCha20/Salsa20); wired into **both** the differential and the fill-loop fuzz
+  vectors so the *model* can be scored on it, not just a hand-crack.
+- **mac** — one-shot authenticator `f(tag, msg, len, key)` (Poly1305; reusable
+  HMAC/GMAC).
+- **scalar_mutator / alloc-seq / construct-observe / parse-sequence** — stateful &
+  structured shapes (PRNG state, allocators, tagged-union DOM, parsers).
+
+See [the teacher-corpus flywheel](CORPUS.md) for how new shapes + the verified training
+corpus compound toward a model that needs no hand-cracking.
+
 ## Data flow — types
 
 ```
@@ -123,6 +151,6 @@ Key invariants:
 
 ## What does NOT belong in the core
 
-- Hand-tuned algorithm ports. If you've got a verified-correct Rust implementation, ship it as its own crate and skip Alchemist — that's what it's FOR producing.
+- Hand-tuned algorithm ports **as pipeline output**. If you've got a verified-correct Rust implementation, ship it as its own crate and skip Alchemist — that's what it's FOR producing. (The one sanctioned place a frontier model hand-writes Rust is the **teacher corpus** — tagged `frontier-claude`, oracle-verified, never spliced into product output; see [CORPUS.md](CORPUS.md).)
 - Anything that calls cloud APIs. The "local Gemma-4-31B only" invariant is non-negotiable.
 - Language-specific hacks (adding string-mode patches, special-casing function names). The system works because every stage is driven by schemas, not string-matching. Adding a "when the function name contains X" hack anywhere is a signal the schema is missing a field.

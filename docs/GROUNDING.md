@@ -63,6 +63,42 @@ pipeline, invoke a model, or build generated Rust. Green CI ≠ a working conver
 IN PROGRESS; THEN (5) Lua the right way — the *model* translates leaf-up, gated by the
 differential + `e2e_oracle`, refusal-rate the metric. Never hand-write.
 
+## ⚠️ ADDENDUM 2026-07-29 — teacher-corpus track, oracle levers, the loop closing
+
+**THE ONE RULE STILL HOLDS** — never hand-write pipeline PRODUCT output. What is new is a
+**second, distinct artifact** that is NOT product and does not violate the rule: the
+**teacher corpus** (`corpus/pairs.jsonl`), training data for fine-tuning the local model.
+
+- A small, tagged fraction (`won_via: "frontier-claude"`) is hand-written by a frontier
+  model as *worked examples*, verified byte-exact through the SAME differential oracle
+  (2000+ fuzzed cases) + KATs, public-C only. It is never spliced into, or passed off as,
+  pipeline output. Full charter: `docs/CORPUS.md`. **Product output and teacher data are
+  separate universes; only the latter may ever be frontier-authored.**
+- Current split: **351 pairs, 95.4% local-model-authored, 4.6% frontier** (the hard
+  numeric/crypto tail). The frontier fraction is meant to SHRINK via fine-tune, not grow.
+
+**Oracle levers added (the real product work).** `verifier/auto_config.py` now gates
+9+ crypto/codec API shapes it could not before: ctx-digest (+ struct-wrapped / `void*`),
+cipher-sequence, block-cipher (struct / `WORD[]`+keysize / 2-D-schedule+enum carriers),
+codec_io, stream_xor, mac. Each is a permanent widening of byte-exact-or-refuse — the
+durable value, independent of who drafts any single translation.
+
+**The loop closed, live.** ChaCha20 + Salsa20 were first frontier-cracked, then — once
+the `stream_xor` lever existed AND a fill-prompt harness bug was fixed (12 x ~200-byte
+hex fuzz vectors were flooding the prompt -> empty completions) — the **local model
+produced both byte-exact on its own, first `solo` iteration, 2000 cases, no fine-tune.**
+Reconfirms the thesis a 4th time: **the model is not the bottleneck; the harness is.**
+Some of the crypto that was hand-cracked may not even have needed it. Discipline going
+forward: *build the lever, point the model at it FIRST, hand-crack only the residual.*
+
+**On-mission plan (updated).** Lua-via-model (#134) still stands. Ahead of it now:
+(a) **fine-tune the local model on the 351-pair corpus**, then re-run the hard
+primitives via `solo` and measure the frontier fraction dropping — the empirical answer
+to "how much must a frontier model still do"; (b) **P1**: full `translate` on a fresh
+unseen real library, publish the hands-off refusal-rate (<5% = first fundable claim) —
+the headline metric that sat idle while crypto corpus grew. Corpus growth is a MEANS to
+(a); the product metric is (b). Do not let hand-cracking crowd out P1.
+
 ## The two pipelines
 
 **1. The shipping pipeline (the real product).** Entry point `alchemist.cli:app`

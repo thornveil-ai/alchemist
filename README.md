@@ -359,9 +359,46 @@ numeric = "mypkg.numeric:PLUGIN"
 
 ## Roadmap
 
-Alchemist works end-to-end. The current gap to "100% reliable on any C" is driven almost entirely by LLM disambiguation on multi-variant algorithms (e.g. CRC-32 reflected vs non-reflected). The roadmap closes that.
+Alchemist runs end-to-end today. The gap to the dream — *point it at any C library and
+get byte-exact safe Rust or an honest refusal, hands-off* — is now driven by two
+things: (1) breadth of oracle **shape coverage** (what the differential can gate), and
+(2) local-model **capability** on the hard tail (deep numeric / stateful cores). Both
+have concrete closers.
 
-### Tier 1 — LLM convergence (current)
+### Where we are (honest, 2026-07-29)
+
+- **Leaf & mid-complexity: the model does it.** Across a 351-function verified corpus,
+  **95% of the byte-exact Rust was written by the local model**; only the hard **4.6%**
+  tail (130-bit / field crypto, hard fixed-point division) was frontier-authored as
+  teacher data. Leaf-benchmark refusal is ~5–8%.
+- **Whole library: proven on zlib** — deflate + inflate, byte-exact round-trip, zero
+  `unsafe`.
+- **Crypto breadth:** SHA/MD family, AES/DES/Blowfish/RC4, base64, **ChaCha20, Salsa20,
+  Poly1305** — all byte-exact through the oracle. ChaCha20 and Salsa20 the **local
+  model produced unaided** once the `stream_xor` lever + a harness fix landed — the
+  flywheel closing (see [the teacher-corpus flywheel](docs/CORPUS.md)).
+
+### The path to the dream (tangible)
+
+1. **Fine-tune the local model on the corpus we have** (351 pairs, incl. 16 frontier
+   worked-examples). Re-run the hard primitives via `solo` and measure how many the
+   model now does unaided — success is the frontier fraction *shrinking*. This is how
+   the hard tail (Poly1305, X25519, Lua cores) becomes model-native.
+2. **P1 — the fundable claim:** point Alchemist at a *fresh, unseen* real library (not
+   in the corpus), run the full `translate`, publish the hands-off refusal-rate. Target
+   <5%. This is the headline metric the dream lives or dies on.
+3. **Widen shape coverage:** every remaining common C API shape gets an oracle lever so
+   the differential can gate it (recent: ctx-digest, cipher-sequence, block-cipher,
+   codec, stream-cipher, MAC — see [architecture](docs/architecture.md)).
+4. **Up the ladder:** C++ constructs → embedded (no-alloc / interrupt) → the ArduPilot
+   endgame, every rung held to the same byte-exact-or-refuse contract. Full map in
+   [docs/MASTER_TRACKER.md](docs/MASTER_TRACKER.md).
+
+### Tier 1 — LLM convergence (much of this has shipped)
+
+> Multi-sample TDD, decomposed generation, per-family semantic lints, and reference-C
+> injection are **implemented**. The list below is the original convergence plan, kept
+> for provenance.
 
 - [ ] **Reference implementation library** — bundled known-good Rust for Adler-32, every CRC variant, SHA-1/224/256/384/512, MD5, AES-128/192/256, HMAC-SHA256. Injected into the TDD prompt when `referenced_standards` matches. Stop asking the model to invent canonical algorithms.
 - [ ] **Variant disambiguator** — one extra LLM hop that forces a single algorithmic variant decision (reflected vs non-reflected CRC, ECB vs CBC cipher mode). Records the decision in the spec.
@@ -392,10 +429,20 @@ Alchemist works end-to-end. The current gap to "100% reliable on any C" is drive
 
 ### Validated so far
 
-- ✅ **Adler-32 (RFC 1950)** — fully generated from C source, verified byte-exact across RFC 1950 test vectors including Wikipedia (0x11E60398).
-- ✅ **Fletcher-16** — fully generated + compiles clean.
-- ✅ **CRC-32 table init** — correct 256-entry lookup table generated with reflected polynomial 0xEDB88320.
-- 🚧 **CRC-32 compute** — failed to converge on tinychk (5 iterations); resolvable once Tier 1.1 lands.
+Byte-exact through the differential oracle (compiled-C reference, thousands of fuzzed
+inputs per function) unless noted:
+
+- ✅ **zlib** — deflate + inflate, full byte-exact round-trip, zero `unsafe` ([case study](docs/zlib_case_study.md)).
+- ✅ **Checksums** — Adler-32 (RFC 1950), Fletcher-16, CRC-32 family.
+- ✅ **Hashes** — SHA-256, SHA-1, SHA-512, MD5, MD2 (init/update/final contexts).
+- ✅ **Ciphers** — AES-128/192/256, DES, Blowfish, RC4; **ChaCha20, Salsa20** — the last two produced by the **local model unaided**, verified over 2000 fuzzed cases.
+- ✅ **MAC** — Poly1305 (RFC 8439), byte-exact including the 130-bit mod-2¹³⁰−5 arithmetic.
+- ✅ **Encoding** — Base64 (RFC 4648) encode/decode roundtrip.
+- ✅ **Fixed-point** — libfixmath (`fix16_sqrt`, `fix16_div`/`sdiv`/`mod`, …).
+
+**351 verified `(C, Rust)` pairs total — 95% authored by the local model**, 5% (the
+hard numeric/crypto tail) frontier-authored as teacher data. See [the teacher-corpus
+flywheel](docs/CORPUS.md) for how that 5% feeds a fine-tune and shrinks over time.
 
 ---
 
