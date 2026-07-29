@@ -1328,10 +1328,26 @@ class TDDGenerator:
         _tv = alg.test_vectors or []
         _rust_body = [v for v in _tv if (v.tolerance or "") == "rust_body"]
         _plain = [v for v in _tv if (v.tolerance or "") != "rust_body"]
+        # Byte-array shapes (stream_xor ChaCha20/Salsa20, and any codec whose
+        # inputs/outputs are long hex vectors) must NOT be dumped inline: 12
+        # vectors x ~200-byte key/nonce/plaintext/ciphertext arrays is ~9KB of
+        # random hex that overflows the model and yields an EMPTY completion —
+        # exactly the rust_body problem below. Inline only SMALL scalar vectors;
+        # summarize the big ones by count (the differential still gates them).
+        def _vsize(v):
+            return len(str(v.inputs or "")) + len(str(v.expected_output or ""))
+        _plain_small = [v for v in _plain if _vsize(v) <= 240]
+        _plain_big = [v for v in _plain if _vsize(v) > 240]
         _lines = [
             f"- inputs={v.inputs} → expected={v.expected_output}  ({v.description})"
-            for v in _plain
+            for v in _plain_small
         ]
+        if _plain_big:
+            _lines.append(
+                f"- (+{len(_plain_big)} differential vectors with large byte-array "
+                "inputs/outputs verify this function byte-for-byte over random "
+                "inputs; write the faithful algorithm from the C source + spec and "
+                "they will all pass)")
         if _rust_body:
             # Inline the SHORT, single-line rust_body assertions (str_lookup string
             # tables, scalar checks) so the model COPIES the known expected outputs
@@ -1512,7 +1528,7 @@ class TDDGenerator:
             tool_name="impl",
             tool_schema=schema,
             cached_context=self._cached_ctx,
-            max_tokens=6000,
+            max_tokens=_fill_max_tokens(),
             temperature=temperature,
             force_thinking=escalate_thinking,
         )
@@ -3200,6 +3216,20 @@ def _rewrite_std_for_no_std(code: str) -> str:
     # `std::format!`/`std::vec!` macros also live in alloc.
     code = _re.sub(r"\bstd::(vec|format)\s*!", lambda m: "alloc::" + m.group(1) + "!", code)
     return _re.sub(r"\bstd::([a-z_]+)", _repl, code)
+
+
+def _fill_max_tokens() -> int:
+    """Completion-token budget for a single fill draft. Default 6000; raise via
+    ALCHEMIST_FILL_MAX_TOKENS for hard functions where forced-thinking reasoning
+    would otherwise consume the whole budget and yield an EMPTY completion (the
+    ChaCha20 case: 20-round ARX cipher, long chain-of-thought, no room left for
+    the code). Clamped so it never exceeds a sane ceiling."""
+    import os
+    try:
+        v = int(os.environ.get("ALCHEMIST_FILL_MAX_TOKENS", "6000") or "6000")
+    except ValueError:
+        v = 6000
+    return max(2000, min(v, 14000))
 
 
 def _distill_vector_divergence(test_output: str) -> str:
