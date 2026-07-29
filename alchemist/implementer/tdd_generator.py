@@ -2759,26 +2759,27 @@ class TDDGenerator:
                 else:
                     tag = oracle_tag_for_file("dll", dll_path)
                 _accept(mod, alg, vectors, tag)
-        # Stream cipher (ChaCha20/Salsa20): key/nonce/counter/plaintext -> ciphertext.
-        # A one-function GROUP shape (6 args incl. fixed-size key/nonce) the per-alg
-        # generic fuzzer can't drive; handled here like the pipeline's synthesize path
-        # so `solo` can iterate a model candidate against real vectors.
-        if generic_subject and dll is not None:
+        # GROUP / sequence shapes (ctx-digest, cipher-sequence, hash-sequence,
+        # alloc-sequence, stream_xor, construct-observe, parse-sequence): these are
+        # minted by auto_config.synthesize_c_vectors -- the SAME generator the pipeline
+        # and verify stage use. Delegate to it for any generic subject so `solo` can
+        # score the model on ANY gateable shape, not just single-fn shapes. Without
+        # this, a fresh crypto subject gets zero vectors for its sequence functions and
+        # refuses "no test vectors" -- which is exactly why hard primitives were being
+        # hand-cracked instead of model-translated. synthesize only fills algs that
+        # still lack vectors, so it composes with the per-alg loop above.
+        if generic_subject and src_root is not None:
             try:
-                from alchemist.verifier.auto_config import (
-                    classify_stream_xor, fuzz_stream_xor_vectors,
-                )
-                _sx = classify_stream_xor(subject_sigs)
-                if _sx is not None:
-                    _sxbyfn = fuzz_stream_xor_vectors(dll, _sx)
-                    for _mod in specs:
-                        for _alg in _mod.algorithms:
-                            if (_alg.name in _sxbyfn and _sxbyfn[_alg.name]
-                                    and not _alg.test_vectors):
-                                _accept(_mod, _alg, _sxbyfn[_alg.name],
-                                        oracle_tag_for_file("dll", dll_path))
-            except Exception:  # noqa: BLE001
-                pass
+                from alchemist.verifier.auto_config import synthesize_c_vectors
+                _pre = {id(a) for m in specs for a in (m.algorithms or []) if a.test_vectors}
+                synthesize_c_vectors(Path(src_root), specs)
+                for m in specs:
+                    for a in (m.algorithms or []):
+                        if a.test_vectors and id(a) not in _pre:
+                            added += len(a.test_vectors)
+                            touched_modules.add(m.name)
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[yellow]solo: group-shape vector synth skipped ({e})[/yellow]")
         # Restore any cleared vectors whose oracle produced no replacement —
         # the oracle that minted them isn't available in this environment.
         restored = 0
