@@ -1,7 +1,12 @@
-"""LLM client for Alchemist — local-first via RigRun (Gemma 4 31B Dense).
+"""LLM client for Alchemist — local-first, model-agnostic.
 
-All inference runs on the local GPU via vLLM's OpenAI-compatible API.
-No cloud API calls. No data leaves the machine.
+All inference runs against a local OpenAI-compatible endpoint (vLLM or
+equivalent) on your own GPU. No cloud API calls. No data leaves the machine.
+
+Which model sits behind that endpoint is deliberately not this module's
+business: it is set by ALCHEMIST_ENDPOINT / ALCHEMIST_MODEL, so swapping the
+model is configuration rather than a code change. Model-specific quirks are
+handled where they are observed and named there, not asserted here.
 
 For structured output, we use JSON mode + schema-in-prompt + Pydantic validation
 instead of tool_use (which is Claude-specific).

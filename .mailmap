@@ -1,0 +1,5 @@
+# Normalise author identities without rewriting history. Commits authored from the
+# build host or under a GitHub handle are the same person.
+Jesse Morgan <jesse@thornveil.ai> <jmathdog@gmail.com>
+Jesse Morgan <jesse@thornveil.ai> jeranaias <jmathdog@gmail.com>
+Jesse Morgan <jesse@thornveil.ai> exx <exx@sn4622129582.tail5bcfa2.ts.net>
