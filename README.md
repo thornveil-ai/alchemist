@@ -1,122 +1,152 @@
 # Alchemist
 
-> **Public OSS. Research-prototype.** Apache-2.0 algorithm-aware C-to-Rust translation that runs entirely on your own GPU. See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the honest maturity assessment.
+**Algorithm-aware C-to-Rust translation with a proof obligation.**
+
+Point it at C. Get back safe Rust that has been proved byte-identical to the compiled
+original — or get a refusal that names the function and says exactly what could not be
+established. Nothing in between. Nothing leaves your machine.
 
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](#requirements)
-[![rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](#requirements)
-[![tests](https://img.shields.io/badge/tests-655%20passing-success.svg)](#testing)
-[![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 [![status](https://img.shields.io/badge/status-research--prototype-yellow.svg)](PRODUCTION_READINESS.md)
+[![zlib](https://img.shields.io/badge/zlib-byte--exact%20round--trip-brightgreen.svg)](docs/zlib_case_study.md)
 
 ---
 
-```bash
+```
 $ alchemist translate ./my-c-lib --name my-rs
 
   [PASS] analyze     78 files, 412 fns, 9 modules
-  [PASS] extract     specs OK — 0 constants deviate from RFCs
+  [PASS] extract     specs OK
   [PASS] architect   7-crate workspace validated
-  [PASS] implement   TDD: 411/412 fns pass tests; API complete
-  [PASS] verify      compile ✓  anti-stub ✓  cargo test ✓  differential (10K/10K) ✓
-  [PASS] report      metrics written
+  [PASS] implement   TDD: 411/412 fns pass tests
+  [PASS] verify      compile ✓  anti-stub ✓  no-unsafe ✓  cargo test ✓  differential (10K/10K) ✓
+  [PASS] report      metrics + receipt written
 
-  OVERALL: PASS
-  wall-time: 11m 42s   cost: $0.00
+  OVERALL: PASS      wall-time: 11m 42s      cost: $0.00
 ```
 
-That's the whole pitch. Point it at C, get Rust back that compiles, passes every test, and byte-for-byte matches the original across thousands of random inputs. No rubber-stamping, no "looks right," no `unsafe` by default. If any gate fails the pipeline refuses to claim success.
+The cost line is not a rounding error. The model runs on your GPU.
 
 ---
 
-## 🎯 Proven on zlib — byte-exact, in safe Rust
+## The one idea
 
-The flagship result: Alchemist translated **zlib** — compressor *and* decompressor — from C into pure safe Rust, and proved it with a **full byte-exact round-trip**.
+Most C-to-Rust tools optimise for producing output. Alchemist optimises for **being right about
+whether the output is correct**.
+
+Every translated function is executed against the *compiled original* over thousands of
+generated inputs — not a golden file, not the model's opinion, the actual `.so` built from your
+C. Disagree on one byte and the function does not ship. It gets an `unimplemented!` carrying the
+reason, and the run says so out loud.
+
+That property is the product. A translator that is right 80% of the time and cannot tell you
+*which* 80% is unusable for anything that matters. One that refuses out loud is something you
+can build on.
+
+---
+
+## What it has actually done
+
+**zlib — compressor and decompressor — in pure safe Rust, proved by a full byte-exact
+round-trip.**
 
 ```
 Rust deflate  →  Rust inflate  →  the original bytes        (identical, 21/21)
 ```
 
-- **`deflate`** byte-exact vs the reference C at levels **1–9** + `Z_HUFFMAN_ONLY` + `Z_RLE`
-- **`inflate`** byte-exact on stored, dynamic, and fixed Huffman streams (with LZ77 back-references)
-- **Zero `unsafe`.** The whole ~30-state decode machine, `goto`, `union`s, pointer aliasing, and bit-twiddling re-expressed in safe Rust's ownership model.
+- `deflate` byte-exact against the reference C at levels 1–9, plus `Z_HUFFMAN_ONLY` and `Z_RLE`
+- `inflate` byte-exact on stored, fixed and dynamic Huffman streams, LZ77 back-references intact
+- **Zero `unsafe`.** A ~30-state decode machine, `goto` spaghetti, `union`s, pointer aliasing and
+  bit-level packing — all re-expressed inside Rust's ownership model, not transliterated around it
 
-Why it counts: the differential oracle didn't just translate — it **caught ~9 real integration bugs** that every isolated unit test passed clean over (a whole-state wipe, a shift overflow, a pointer-aliasing gap, and more). That's byte-exact-or-refused doing its job.
+The part worth noticing is what the oracle caught on the way: **roughly nine real integration
+bugs** that every isolated unit test passed clean over. A whole-state wipe. A shift overflow. A
+pointer-aliasing gap that only appeared once two correct-looking functions were composed.
+Byte-exact-or-refuse is not ceremony — it finds things unit tests structurally cannot.
 
-**→ Read the full write-up, including honest limitations: [docs/zlib_case_study.md](docs/zlib_case_study.md)**
+→ **[Full write-up, including where it falls down](docs/zlib_case_study.md)**
 
----
-
-## Research track: `alchemist/autonomy/`
-
-A parallel, push-button auto-translation engine (`alchemist/autonomy/`) was
-prototyped, then **retired** (2026-07-06) after a full-repo audit found it mostly
-duplicated more-mature shipping modules. Its four genuine additions were **promoted
-into the shipping pipeline**: a **Miri** UB-freedom gate (`alchemist verify --miri`),
-**sanitizer-diff** divergence analysis (`verifier/sanitizer_diff.py`), **performance
-parity** (`reporter/perf.py`), and **auto-synthesis of the stateful differential
-shim** (`extractor/shim_synth.py`). See [docs/GROUNDING.md](docs/GROUNDING.md).
+The translation corpus stands at **351 verified `(C, Rust)` pairs**, **95% authored by the local
+model** rather than a frontier one. Every pair clears the same differential regardless of who
+drafted it — provenance is recorded, never assumed.
 
 ---
 
-## Table of Contents
+## What makes this hard
 
-- [Why Alchemist](#why-alchemist)
-- [How it works (30 seconds)](#how-it-works-30-seconds)
-- [Install](#install)
-- [Quickstart](#quickstart)
-- [The six stages](#the-six-stages)
-- [The six gates](#the-six-gates)
-- [Architecture](#architecture)
-- [Comparison vs alternatives](#comparison-vs-alternatives)
-- [Plugins](#plugins)
-- [Documentation](#documentation)
-- [What's next](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
+C says things Rust's type system will not repeat. The interesting work is in the gap:
 
----
+| The C does | Rust has to |
+|---|---|
+| `goto` into the middle of a loop nest | become a state machine that provably matches |
+| `union` reinterpretation and type punning | become explicit, bounded conversion |
+| Two pointers into the same object | satisfy the borrow checker without changing behaviour |
+| `static` state mutating across calls | carry that state without `unsafe` or a global |
+| Read a buffer whose length is nowhere in the signature | know the real extent before it can be fuzzed |
+| Signed overflow, out-of-range shifts — undefined | match the compiled reference *where it is defined*, and refuse to claim the rest |
 
-## Why Alchemist
-
-DARPA's TRACTOR program and every academic cousin (c2rust, Corrode, CRUST-Bench) treat C→Rust as a **syntactic** problem: walk the AST, emit equivalent Rust. The output compiles. It's also **95-100% `unsafe`** by line count — pointer arithmetic, union punning, and manual memory management have no direct safe-Rust analogue. You get Rust that looks like C wearing a hat.
-
-Alchemist takes the other road. It treats translation as an **algorithmic** problem:
-
-> 1. What is this C function *actually doing*, mathematically?
-> 2. What would an experienced Rust engineer write to do the same thing?
-> 3. Does the Rust output match the C byte-for-byte across ten thousand random inputs?
-
-If you recover the **spec** first and implement **from the spec**, you get Rust that's safe by construction — not safe because a pattern-matcher happened to catch this case.
-
-The methodology was validated by hand on **Meridian**, a from-scratch Rust re-implementation of ArduPilot at 74,530 lines across 47 crates with 1,200+ tests and full parity. Alchemist is that workflow, automated, with an LLM in the loop and a wall of safety gates around it.
-
-### The three things that make this different
-
-**1. It refuses to ship broken code.** Every stage has a hard gate. The spec validator catches `BASE = 255` before anyone writes a line of Rust. The anti-stub detector rejects `unimplemented!()` and the model's favorite evasion: `// Since we don't have the actual algorithm, we use a simple heuristic`. The differential gate runs 10,000 random inputs through both the C reference and the Rust output. If *any* gate fails, `alchemist translate` exits non-zero with a report telling you exactly which one.
-
-**2. It runs entirely on your hardware.** No cloud API. No per-token bill. No data egress. The reference setup is a single RTX PRO 6000 running Gemma 4 31B Dense via vLLM. Your C source never leaves your LAN.
-
-**3. It's test-driven from the first pass.** Stage 4 is TDD: emit the signatures as stubs, emit failing tests from the standards catalog (RFC 1950 Adler-32 vectors, NIST CAVP AES vectors, etc.), then per-function fill in the real impl with `cargo test` as the supervisor. The model never sees green without actually being green.
+Alchemist handles these as a **shape system**: a growing set of recognised C API shapes, each
+with an oracle that knows how to drive it and compare it. Checksum and digest contexts. Keyed
+stream ciphers. Block ciphers with a key schedule. Codec round-trips. One-shot authenticators.
+Bare-pointer buffers with no length parameter. A shape the oracle cannot drive is refused, not
+guessed at — which is why coverage grows by building levers, not by loosening standards.
 
 ---
 
-## How it works (30 seconds)
+## Verification, concretely
 
-```
-   your-c-lib/                                          your-c-lib-rs/
-   ┌──────────┐                                        ┌──────────┐
-   │  *.c *.h │──► analyze ──► extract ──► architect ──► implement ──► verify ──► │  Rust    │
-   └──────────┘     ▲             ▲             ▲           ▲            ▲        │  workspace│
-                    │             │             │           │            │        └──────────┘
-                 tree-sitter   per-fn LLM    LLM+validator  TDD loop   6-gate     + proptest
-                 (determ.)     + spec-check  (gates)       + anti-    verifier    harness
-                                                            stub                  (refuses
-                                                                                   silent
-                                                                                   success)
-```
+Six stages, then a gate stack that must pass before anything is called a translation:
 
-Every stage is checkpointed in `.alchemist/`. Re-running after a crash picks up where it left off. Each stage can be invoked individually (`alchemist analyze`, `alchemist extract`, …) or via `alchemist translate` for the whole pipeline.
+| Stage | What it does |
+|---|---|
+| **analyze** | tree-sitter parse, call graph, algorithmic module detection |
+| **extract** | recover a language-neutral spec per algorithm; constants pulled deterministically |
+| **architect** | design and validate a Rust workspace — crates, shared types, ownership |
+| **implement** | generate each function test-first, iterating against a real oracle |
+| **verify** | the gates below, all mandatory |
+| **report** | metrics, plus a receipt recording exactly what was proved |
+
+The gates: **compiles clean** · **anti-stub** (no `todo!`, no placeholder bodies masquerading as
+work) · **structural no-unsafe proof** · **semantic lints** · **`cargo test`** · **differential
+equivalence against the compiled C**.
+
+Fail-closed by construction: **no oracle means no claim.** A function whose behaviour cannot be
+established is refused rather than guessed, and lands in a refusal ledger with its reason — so a
+run's honest coverage is always legible, including to you six months later.
+
+Where the C is undefined on part of its input space, Alchemist **narrows the claim instead of
+overreaching**: it verifies across the defined domain, emits, and explicitly declines to assert
+anything outside it. The receipt records the domain. A translation that quietly "fixed" your
+undefined behaviour would be a different program wearing your program's name.
+
+→ [Architecture](docs/architecture.md) · [Design grounding](docs/GROUNDING.md) · [API reference](docs/api_reference.md)
+
+---
+
+## Why local-only is a design decision
+
+The code you most need to translate is usually the code you are least able to upload. Legacy
+control systems. Regulated codebases. Anything under an export or classification regime.
+
+So the model runs on your GPU, the oracle compiles and fuzzes on your machine, and nothing is
+transmitted. That costs raw model capability — and buys the ability to run at all in the
+environments where memory-unsafe C is most entrenched and most consequential.
+
+It also keeps the pipeline **model-agnostic**. The LLM sits behind an interface; swapping it is
+configuration, not a rewrite. Reasoning models, instruct models, whatever ships next year.
+
+---
+
+## Maturity
+
+A **research prototype**, and the docs say so in detail rather than burying it.
+
+Strong on leaf and mid-complexity functions across a wide range of C. Honest about what it
+refuses. Whole-project translation at scale — thousands of functions, deep cross-module state —
+is active work, not a shipped claim.
+
+→ **[PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)** is the unvarnished version. Read it
+before forming an opinion.
 
 ---
 
@@ -124,388 +154,44 @@ Every stage is checkpointed in `.alchemist/`. Re-running after a crash picks up 
 
 ```bash
 git clone https://github.com/thornveil-ai/alchemist
-cd alchemist
-pip install -e .
-
-alchemist doctor
+cd alchemist && pip install -e .
+alchemist --help
 ```
 
-`alchemist doctor` verifies your environment — Rust toolchain, C compiler, LLM server, standards catalog, plugins. Expect something like:
-
-```
-            alchemist environment check
-┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ check              ┃ status ┃ detail                                 ┃
-┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ cargo              │ OK     │ ~/.cargo/bin/cargo                     │
-│ rustc              │ OK     │ ~/.cargo/bin/rustc                     │
-│ gcc                │ OK     │ /usr/bin/gcc                           │
-│ local LLM server   │ OK     │ http://your-llm-host:8090/v1 → 200    │
-│ standards catalog  │ OK     │ 12 algorithms loaded                   │
-│ scrubber           │ OK     │ 30 rules loaded                        │
-│ anti-stub detector │ OK     │ loaded                                 │
-│ plugins            │ OK     │ 1 loaded: crypto                       │
-└────────────────────┴────────┴────────────────────────────────────────┘
-```
-
-### Requirements
-
-- **Python** 3.12+
-- **Rust** 1.75+ (with `cargo`, `rustc`, `clippy`)
-- **A C toolchain** (gcc / clang / MinGW) — needed to build the C reference DLL for differential testing
-- **A local LLM server** serving a strong code model. The reference config runs **Gemma 4 31B Dense** via vLLM on port 8090. Any OpenAI-compatible endpoint serving a comparable (or stronger) local code model works — set `ALCHEMIST_ENDPOINT` to point at it.
-
-No API keys. No network calls outside your LAN.
+Python 3.12+, Rust 1.75+, and a local OpenAI-compatible endpoint.
+[docs/tutorial.md](docs/tutorial.md) walks the first translation.
 
 ---
 
-## Quick Start
+## Working on something related?
 
-### Translate a whole codebase
+Built and maintained by **[Thornveil LLC](https://github.com/thornveil-ai)**.
 
-```bash
-alchemist translate ./subjects/zlib --name zlib-rs
-```
+The interesting problems here are not finished, and most of what has been learned lives in the
+engineering rather than in a paper. If this overlaps with what you are doing, get in touch rather
+than guessing from the source:
 
-Runs all six stages. Output lands in `./subjects/zlib/.alchemist/output/` as a ready-to-use Cargo workspace. The command exits 0 on success, non-zero on any gate failure.
+- **Translating a real codebase** and want to know whether this holds up on it
+- **Evaluating C-to-Rust approaches** for a program or a team, and want the honest scope
+- **Air-gapped or regulated environment** where cloud translation is a non-starter
+- **Researching translation verification** — oracles, differential equivalence, principled refusal
 
-### Translate one stage at a time
+📧 **jesse@thornveil.ai** · or [open an issue](https://github.com/thornveil-ai/alchemist/issues)
 
-```bash
-alchemist analyze   ./subjects/zlib
-alchemist extract   ./subjects/zlib
-alchemist architect ./subjects/zlib --name zlib-rs
-alchemist implement ./subjects/zlib
-alchemist verify    ./subjects/zlib ./subjects/zlib/.alchemist/output
-alchemist report    ./subjects/zlib/.alchemist/output
-```
-
-Each stage is checkpointed — you can re-run just one without re-doing the others.
-
-### Browse the standards catalog
-
-```bash
-alchemist standards list           # every algorithm with vectors
-alchemist standards show sha256    # dump the vectors + sources
-```
-
-### Scaffold a new project
-
-```bash
-alchemist new my-translation
-cd my-translation
-# drop your .c/.h files under ./src
-alchemist translate ./src --name my-translation
-```
-
-### Debugging overrides (use with care)
-
-```bash
-alchemist translate ./src --force        # bypass the architecture validator
-alchemist translate ./src --no-verify    # skip the differential gate (NOT for shipping)
-alchemist translate ./src --no-tdd       # use the legacy per-file generator
-```
+A C pattern that does not convert cleanly is genuinely useful to us. That is how the shape system
+grows.
 
 ---
 
-## The six stages
-
-| # | Stage | What it does | LLM? |
-|---|-------|--------------|------|
-| 1 | **Analyze** | tree-sitter parses C with full recursive `#ifdef` traversal, builds the call graph, runs Tarjan SCC, detects algorithmic modules with a 21-pattern signature library (CRC variants, Huffman, Kalman, DEFLATE, …). | No |
-| 2 | **Extract** | One LLM call per significant function produces a `FunctionSpec`: mathematical description, inputs/outputs in idiomatic Rust types, invariants, preconditions, cited standards, test vectors. **Per-function, never bulk** — bulk extraction on 40 functions returns 128K garbled tokens; per-function crashes safely and checkpoints to `specs/_functions/<mod>/<fn>.json`. | Yes |
-| 3 | **Architect** | LLM designs the Cargo workspace: crate boundaries along ownership/cohesion lines, trait hierarchy (`Checksum`, `Compressor`, `Decoder`), error enums with `thiserror` conventions, `no_std` flags per crate. Validator rejects dep cycles, orphan-rule violations, and unassigned modules. | Yes |
-| 4 | **Implement** | TDD. Three sub-phases: (A) deterministic skeleton with types + `unimplemented!()` bodies that **must** compile; (B) catalog + spec test emission — tests compile but fail because the bodies are stubs; (C) per-function fill-in loop with `cargo test` as supervisor, anti-stub scrubber, holistic escalation. | Yes (per-fn) |
-| 5 | **Verify** | Six gates in order: `cargo check`, anti-stub scan, no-unsafe, semantic lints, `cargo test`, differential proptest (plus an optional Miri UB-freedom gate, `--miri`). Differential auto-generates FFI bindings, builds the C as a DLL, emits a proptest harness with 10K-case strategies per algorithm category (byte-exact for checksum/hash, roundtrip for compression/cipher, ULP tolerance for FP). **Refuses to claim success without this gate.** | No |
-| 6 | **Report** | Per-crate metrics: `unsafe` line count, clippy score, proptest pass/fail, head-to-head c2rust baseline comparison. Writes a JSON dashboard. | No |
-
----
-
-## The six gates
-
-The production bar. Every gate must pass before `TranslationReport.ok == True`.
-
-| # | Gate | Catches |
-|---|------|---------|
-| 1 | **Spec validator** | Mathematical lies in the extracted spec — "Adler-32 uses `BASE = 255`" when RFC 1950 says `65521`. Cross-checked against the standards catalog at extract time, before any Rust is written. |
-| 2 | **Architecture validator** | Dep cycles, orphan-rule violations, modules that don't map to any spec, type producers that don't exist. Rejected before code generation starts. |
-| 3 | **Anti-stub** | `unimplemented!()`, `todo!()`, `panic!("not implemented")`, and the model's favorite stealth moves: `// Since we don't have the actual algorithm`, `// For this spec, we simulate the process`, functions that take `&[u8]` input but return `Ok(())` without ever reading the slice. |
-| 4 | **Semantic lints** | Code that compiles and runs but implements the wrong algorithm *variant* — a big-endian CRC braid XORing unswapped little-endian table entries, Adler-32 seeded at 0, SHA-256 with little-endian length padding. Family-specific invariants checked against each function's spec, workspace-wide. |
-| 5 | **Test gate** | `cargo test --workspace` must exit 0. Tests come from RFC/NIST/IEEE standards, not from the model's imagination. |
-| 6 | **Differential gate** | Thousands of random inputs fed through both the C reference (via FFI to a compiled DLL) and the generated Rust, through wrappers generated against the *actual* generated API. A harness that can't be adapted becomes a failing test, never a silent skip. |
-
-Want to ship Rust that's actually correct? All six must be green. Any one fails → the whole translation fails → the pipeline exits non-zero. No exceptions.
-
----
-
-## Architecture
-
-```
-alchemist/
-├── analyzer/           Stage 1: tree-sitter + call graph + module detection
-├── extractor/          Stage 2: per-fn spec extraction + second-pass validator
-├── architect/          Stage 3: crate workspace design + structural validator
-├── implementer/        Stage 4: TDD
-│   ├── skeleton.py         Phase 4A — types + unimplemented!() bodies
-│   ├── test_generator.py   Phase 4B — catalog + spec tests
-│   ├── tdd_generator.py    Phase 4C — per-fn loop, anti-stub, splicing
-│   ├── anti_stub.py        the "refuses stubs" detector
-│   ├── api_completeness.py every source_function must have pub fn
-│   ├── scrubber.py         30 deterministic fix rules with tests
-│   └── holistic.py         whole-crate escalation fixer
-├── verifier/           Stage 5: compile / anti-stub / test / differential gates
-│   ├── auto_ffi.py         C → Rust FFI + gcc -shared build
-│   ├── proptest_gen.py     per-category harness emission
-│   ├── differential_tester.py  the Stage 5 gate itself
-│   └── zlib_config.py      reference DifferentialConfig for zlib
-├── reporter/           Stage 6: metrics + dashboards
-├── standards/          RFC/NIST/FIPS test-vector catalog (JSON per family)
-├── plugins/            domain plugins (crypto built-in)
-├── llm/                local vLLM client, nonce injection, schema-guided output
-├── pipeline.py         run_translate_all — the orchestrator
-└── cli.py              alchemist CLI
-
-docs/
-├── tutorial.md                   walk-through
-├── api_reference.md              programmatic API
-├── architecture.md               this diagram + invariants
-├── plugins.md                    plugin authoring
-├── phase_d_playbook.md           how to declare a translation "verified correct"
-└── troubleshooting.md            every failure mode we've seen
-
-tests/                            655 passing / 7 skipped
-.github/workflows/                CI across Ubuntu + Windows, py3.11 + 3.12
-```
-
-```mermaid
-graph LR
-    C[C source] --> S1[1 Analyzer<br/>tree-sitter + call graph]
-    S1 --> S2[2 Extractor<br/>per-fn spec + validator]
-    S2 --> S3[3 Architect<br/>crate workspace design]
-    S3 --> S4[4 Implementer<br/>TDD + anti-stub + scrubber]
-    S4 --> S5[5 Verifier<br/>compile/anti-stub/test/differential]
-    S5 --> S6[6 Reporter<br/>metrics + dashboards]
-    S5 -.gate fails.-> Refuse[Pipeline refuses to claim success]
-    S6 --> R[Rust crate]
-```
-
-See [`docs/architecture.md`](docs/architecture.md) for a detailed walk-through of the data flow, LLM boundaries, and extension points.
-
----
-
-## Comparison vs alternatives
-
-| System | Input | Safe-Rust % | Verification | Cost | Scale proven |
-|--------|-------|-------------|--------------|------|--------------|
-| **c2rust** | Any C | **~0%** (100% `unsafe`) | Compile only | Free | Millions of LOC |
-| **Corrode** | C99 subset | ~0% | Compile only | Free | Small utilities |
-| **ENCRUST** (academic) | Small C utils | ~85% | Test-based | LLM API | Coreutils subset |
-| **CRUST-Bench SOTA** (o3 + repair) | Benchmark C | ~60% | Test-based | ~$10/fn | 48% test pass |
-| **Alchemist** | **Real-world C libs** | **Target >95%** | **6-gate incl. differential vs C** | **$0** (local GPU) | **zlib 23K LOC + TDD-verified small subjects** |
-
-Alchemist is slower per function than c2rust and costs more upfront (the local GPU). What you get back is Rust you can actually read, review, and ship.
-
----
-
-## Plugins
-
-Domain-specific safety nets. Built-in plugins:
-
-- **`crypto`** — injects NIST CAVP test vectors for AES/SHA/MD5 at extract time; constant-time lint catches branches-on-secret, `match` on secret u8s, early-return inside secret-iterating loops.
-
-Writing your own is ~15 lines:
-
-```python
-from alchemist.plugins import DomainPlugin
-
-def numeric_stability_lint(workspace_dir, specs):
-    findings = []
-    for rs in Path(workspace_dir).rglob("*.rs"):
-        if "f32" in rs.read_text() and "tolerance" not in rs.read_text():
-            findings.append((str(rs), 1, "f32_no_tolerance",
-                             "f32 usage without documented tolerance"))
-    return findings
-
-PLUGIN = DomainPlugin(
-    name="numeric",
-    description="Flags FP code without tolerance docs.",
-    lints=[numeric_stability_lint],
-)
-```
-
-Register via `pyproject.toml`:
-
-```toml
-[project.entry-points."alchemist.plugins"]
-numeric = "mypkg.numeric:PLUGIN"
-```
-
-`alchemist doctor` picks it up automatically. See [`docs/plugins.md`](docs/plugins.md) for the full contract.
-
----
-
-## Documentation
-
-| Doc | What you'll find |
-|-----|------------------|
-| [`docs/tutorial.md`](docs/tutorial.md) | End-to-end walkthrough, typical translation session |
-| [`docs/api_reference.md`](docs/api_reference.md) | Python API — call stages directly, inspect reports |
-| [`docs/architecture.md`](docs/architecture.md) | Data flow, LLM boundaries, extension points |
-| [`docs/plugins.md`](docs/plugins.md) | Plugin authoring contract with crypto example |
-| [`docs/phase_d_playbook.md`](docs/phase_d_playbook.md) | Eight-item checklist for declaring a translation "verified correct" |
-| [`docs/troubleshooting.md`](docs/troubleshooting.md) | Every failure mode we've hit, with fixes |
-
----
-
-## Roadmap
-
-Alchemist runs end-to-end today. The gap to the dream — *point it at any C library and
-get byte-exact safe Rust or an honest refusal, hands-off* — is now driven by two
-things: (1) breadth of oracle **shape coverage** (what the differential can gate), and
-(2) local-model **capability** on the hard tail (deep numeric / stateful cores). Both
-have concrete closers.
-
-### Where we are (honest, 2026-07-29)
-
-- **Leaf & mid-complexity: the model does it.** Across a 351-function verified corpus,
-  **95% of the byte-exact Rust was written by the local model**; only the hard **4.6%**
-  tail (130-bit / field crypto, hard fixed-point division) was frontier-authored as
-  teacher data. Leaf-benchmark refusal is ~5–8%.
-- **Whole library: proven on zlib** — deflate + inflate, byte-exact round-trip, zero
-  `unsafe`.
-- **Crypto breadth:** SHA/MD family, AES/DES/Blowfish/RC4, base64, **ChaCha20, Salsa20,
-  Poly1305** — all byte-exact through the oracle. ChaCha20 and Salsa20 the **local
-  model produced unaided** once the `stream_xor` lever + a harness fix landed — the
-  flywheel closing (see [the teacher-corpus flywheel](docs/CORPUS.md)).
-
-### The path to the dream (tangible)
-
-1. **Fine-tune the local model on the corpus we have** (351 pairs, incl. 16 frontier
-   worked-examples). Re-run the hard primitives via `solo` and measure how many the
-   model now does unaided — success is the frontier fraction *shrinking*. This is how
-   the hard tail (Poly1305, X25519, Lua cores) becomes model-native.
-2. **P1 — the fundable claim:** point Alchemist at a *fresh, unseen* real library (not
-   in the corpus), run the full `translate`, publish the hands-off refusal-rate. Target
-   <5%. This is the headline metric the dream lives or dies on.
-3. **Widen shape coverage:** every remaining common C API shape gets an oracle lever so
-   the differential can gate it (recent: ctx-digest, cipher-sequence, block-cipher,
-   codec, stream-cipher, MAC — see [architecture](docs/architecture.md)).
-4. **Up the ladder:** C++ constructs → embedded (no-alloc / interrupt) → the ArduPilot
-   endgame, every rung held to the same byte-exact-or-refuse contract. Full map in
-   [docs/MASTER_TRACKER.md](docs/MASTER_TRACKER.md).
-
-### Tier 1 — LLM convergence (much of this has shipped)
-
-> Multi-sample TDD, decomposed generation, per-family semantic lints, and reference-C
-> injection are **implemented**. The list below is the original convergence plan, kept
-> for provenance.
-
-- [ ] **Reference implementation library** — bundled known-good Rust for Adler-32, every CRC variant, SHA-1/224/256/384/512, MD5, AES-128/192/256, HMAC-SHA256. Injected into the TDD prompt when `referenced_standards` matches. Stop asking the model to invent canonical algorithms.
-- [ ] **Variant disambiguator** — one extra LLM hop that forces a single algorithmic variant decision (reflected vs non-reflected CRC, ECB vs CBC cipher mode). Records the decision in the spec.
-- [ ] **Multi-sample parallel TDD** — at iteration ≥ 3, sample 4 parallel completions at `temp=0.35`, pick best by test-pass rate. Dramatically widens the search vs current single-sample low-temp.
-- [ ] **Decomposed generation** — emit constants → verify → main loop → verify compile → finalization → verify tests. Each sub-step has a narrower correction surface.
-- [ ] **Semantic lints per algorithm family** — CRC polynomial/shift-direction consistency, checksum seed-is-consumed, cipher block-size/round-count sanity. Catches "compiled but mathematically wrong."
-
-### Tier 2 — Self-healing pipeline
-
-- [ ] **Test-vector amplification** — once catalog vectors pass, fuzz 100K random inputs via the differential harness. Any mismatch becomes a new `spec.test_vectors` entry and triggers regen.
-- [ ] **Architectural search** — run the architect 3× in parallel, validator-score each, pick cleanest.
-- [ ] **Escape-valve holistic fixer** — opt-in fallback to a stronger remote model for the ~5% of functions the local model can't solve. Keeps local-first default.
-- [ ] **Cross-function regression checks** — after writing fn B, verify fn A still compiles/tests.
-
-### Tier 3 — Long-tail C patterns
-
-- [ ] **Global state rewriter** — deterministic decisions for every C global: `const fn` at compile time, `OnceCell` lazy init, or owned struct field.
-- [ ] **Preprocessor pre-parse** — `gcc -E` expand macros before tree-sitter for libraries with heavy `#define` config.
-- [ ] **Multi-file refactoring pass** — auto-propose type relocations when cross-crate orphan-rule conflicts recur.
-- [ ] **Declarative unsafe fence** — `alchemist.toml` whitelist for modules allowed to use `unsafe`; everything else rejected outright.
-
-### Tier 4 — Scale
-
-- [ ] **Parallelize Stage 4** — independent algorithms generate concurrently. 3-5× wall-time reduction.
-- [ ] **Incremental re-runs** — change one C file, re-extract only that file's functions.
-- [ ] **Progress events** — structured JSON events for frontend integration.
-- [ ] **Domain plugins**: RTOS (FreeRTOS / Zephyr semantics), networking (lwIP state machines), embedded (interrupt handlers, no-alloc).
-
-### Validated so far
-
-Byte-exact through the differential oracle (compiled-C reference, thousands of fuzzed
-inputs per function) unless noted:
-
-- ✅ **zlib** — deflate + inflate, full byte-exact round-trip, zero `unsafe` ([case study](docs/zlib_case_study.md)).
-- ✅ **Checksums** — Adler-32 (RFC 1950), Fletcher-16, CRC-32 family.
-- ✅ **Hashes** — SHA-256, SHA-1, SHA-512, MD5, MD2 (init/update/final contexts).
-- ✅ **Ciphers** — AES-128/192/256, DES, Blowfish, RC4; **ChaCha20, Salsa20** — the last two produced by the **local model unaided**, verified over 2000 fuzzed cases.
-- ✅ **MAC** — Poly1305 (RFC 8439), byte-exact including the 130-bit mod-2¹³⁰−5 arithmetic.
-- ✅ **Encoding** — Base64 (RFC 4648) encode/decode roundtrip.
-- ✅ **Fixed-point** — libfixmath (`fix16_sqrt`, `fix16_div`/`sdiv`/`mod`, …).
-
-**351 verified `(C, Rust)` pairs total — 95% authored by the local model**, 5% (the
-hard numeric/crypto tail) frontier-authored as teacher data. See [the teacher-corpus
-flywheel](docs/CORPUS.md) for how that 5% feeds a fine-tune and shrinks over time.
-
----
-
-## Testing
-
-```bash
-pytest tests/ --ignore=tests/test_local_llm.py
-# 901 passed, 8 skipped in ~145s (909 collected)
-```
-
-The suite covers:
-
-- **Anti-stub** — 19 tests including "must flag ≥18 stubs in the pre-Phase-A zlib output."
-- **Standards catalog** — 34 tests; every vector re-verified against Python `zlib` / `hashlib`.
-- **Auto-FFI** — 29 tests including a live `gcc -shared` compile.
-- **Proptest harness emission** — 11 tests per category (checksum/hash/cipher/compression/FP/smoke).
-- **Differential tester** — 8 tests confirming Stage 5 refuses to claim success without a `DifferentialConfig`.
-- **Skeleton** — 12 tests including live `cargo check --workspace` on generated output.
-- **Test generator** — 9 tests including end-to-end skeleton → failing tests (the TDD forcing function).
-- **API completeness** — 11 tests.
-- **TDD generator** — 5 tests; end-to-end with a fake LLM returning a correct Adler-32 produces a passing crate.
-- **Spec validator** — 11 tests; BASE=255 and wrong CRC polynomial get caught pre-implementation.
-- **Pipeline integration** — 4 tests; full Phase C wiring.
-- **Plugins** — 12 tests; crypto CAVP injection + constant-time lint.
-- **Phase D (zlib)** — 6 tests; confirm Stage 5 correctly rejects the pre-Phase-A zlib output.
-- **Scrubber** — 30/30 tests (every rule has a regression fixture).
-
-Phase A acceptance criteria: **all green.** Phase B acceptance: **all green.** Phase C integration: **all green.** Phase D infrastructure: **all green.** Phase E plugin: **all green.** Phase F docs/CI: **all green.**
-
----
-
-## Contributing
-
-Pull requests welcome. Before submitting:
-
-1. `alchemist doctor` must print OK across the board.
-2. `pytest tests/ --ignore=tests/test_local_llm.py` must pass.
-3. New features need a test. A green `pytest` run is the floor.
-4. The scrubber has 30 rules, each with a regression fixture in `tests/test_scrubber.py`. New scrubber rules follow the same pattern.
-5. Domain plugins live in `alchemist/plugins/` with sibling tests in `tests/test_plugins.py`.
-
-Commit style: one concern per commit, imperative mood, no Co-Authored-By or AI attribution. See the existing log for examples.
-
----
-
-## Prior art and acknowledgments
-
-The algorithm-first methodology was developed and validated by hand on **Meridian**, a from-scratch Rust re-implementation of the ArduPilot autopilot stack — 74,530 lines across 47 crates with 1,200+ tests and full parity verified by a 20-expert review panel. Alchemist is the tooling that makes that workflow reproducible without a human holding the pen.
-
-Thanks to the **DARPA TRACTOR** team for publishing **CRUST-Bench** and framing C-to-Rust rigorously — it gave us something to benchmark against. Thanks to the **ENCRUST** authors for demonstrating that LLM-based translation clears 80%+ safe-Rust on small inputs. Alchemist asks whether that result scales to libraries people actually ship.
-
-Standards-catalog vectors sourced from RFC 1321 (MD5), RFC 1950 (Adler-32), RFC 1951 (DEFLATE), RFC 1952 (CRC-32), FIPS 180-4 (SHA-1/2 family), FIPS 197 (AES), NIST SP 800-38A (block-cipher modes), and independently verified against Python `zlib` / `hashlib` at catalog build time.
-
----
+## Prior art
+
+Alchemist stands on other people's work: c2rust for mapping what mechanical transpilation can and
+cannot reach, and the wider research community for framing LLM-based translation rigorously
+enough to be measured at all. Public C-to-Rust benchmark corpora have been valuable for
+evaluating this against something we did not write ourselves.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
-
----
-
-Alchemist is an experiment in what C-to-Rust could be if we stopped pretending syntax was enough. If you're translating a codebase, try it. If you hit a pattern that doesn't convert cleanly, [open an issue](https://github.com/thornveil-ai/alchemist/issues) — that's how the roadmap grows.
-
----
+Apache-2.0. See [LICENSE](LICENSE).
 
 A Thornveil system. See [other Thornveil systems](https://github.com/thornveil-ai).
